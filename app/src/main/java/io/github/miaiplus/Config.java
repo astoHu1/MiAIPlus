@@ -6,7 +6,7 @@ import android.content.SharedPreferences;
 /** Credentials persist only in module-private storage; global mode shares them with the scoped native client in memory. */
 public final class Config {
     public final boolean enabled, globalModel;
-    public final String endpoint, apiKey, model, protocol, planner;
+    public final String endpoint, apiKey, model, protocol, planner, api, reasoning;
     public final int maxSteps;
     public Config(Context context) {
         SharedPreferences p = prefs(context);
@@ -14,6 +14,9 @@ public final class Config {
         endpoint = p.getString("endpoint", "").trim();
         apiKey = p.getString("apiKey", "");
         model = p.getString("model", "").trim();
+        api = ModelProtocol.resolve(p.getString("api", "auto"), model);
+        reasoning = ReasoningPolicy.normalize(model, api,
+            p.getString(ReasoningPolicy.preferenceKey(endpoint, model, api), "default"));
         protocol = p.getString("protocol", "computer");
         planner = p.getString("planner", "native");
         globalModel = p.getBoolean("globalModel", false);
@@ -23,5 +26,5 @@ public final class Config {
     public static String validateEndpoint(String endpoint) {
         return Endpoint.validate(endpoint);
     }
-    public String completionsUrl() { return validateEndpoint(endpoint) + "/chat/completions"; }
+    public String completionsUrl() { return validateEndpoint(endpoint) + ModelProtocol.path(api); }
 }

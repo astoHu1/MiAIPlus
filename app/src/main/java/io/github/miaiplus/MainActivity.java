@@ -14,10 +14,13 @@ import android.widget.*;
 public final class MainActivity extends Activity {
     private EditText endpoint, key, model, steps, query;
     private Switch enabled, globalModel;
-    private Spinner protocol, mode, planner;
+    private Spinner protocol, mode, planner, api;
     private TextView status, result;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private String job;
+    private final Runnable frameworkStatus = new Runnable() {
+        @Override public void run() { refresh(); handler.postDelayed(this, 1000); }
+    };
     private final Runnable poll = new Runnable() {
         @Override public void run() {
             if (job == null) return;
@@ -46,6 +49,11 @@ public final class MainActivity extends Activity {
         endpoint = field(root, "API Base URL（含 /v1）", c.endpoint, false);
         key = field(root, "API Key（本地服务可留空）", c.apiKey, true);
         model = field(root, "模型名称", c.model, false);
+        label(root, "模型 API 协议", 16);
+        api = spinner(root, new String[]{"自动（GPT-6 系列用 Responses）", "Responses", "Chat Completions"});
+        String selectedApi = Config.prefs(this).getString("api", "auto");
+        api.setSelection("responses".equals(selectedApi) ? 1 : "chat".equals(selectedApi) ? 2 : 0);
+        label(root, "GPT-6.1 Sol 的工具调用需要 Responses；服务使用自定义模型别名时请手动选择。此选项也用于全局替换、记忆和路由请求。", 14);
         button(root, "从服务获取模型列表", v -> fetchModels());
         label(root, "控屏动作协议", 16);
         protocol = spinner(root, new String[]{"computer：视觉 + function calling", "autoglm：Open-AutoGLM 动作协议"});
@@ -58,6 +66,7 @@ public final class MainActivity extends Activity {
             android.net.Uri.parse("package:" + getPackageName()))));
         label(root, "小米系统如无法自动打开应用，请在其他权限中允许“后台弹出界面”。权限弹窗出现时请手动处理后重新发起任务。", 14);
         button(root, "刷新状态", v -> refresh());
+        button(root, "安装更新后热重载模块", v -> { HotReload.request(); refresh(); });
         status = label(root, "", 14);
         label(root, "直接测试", 21);
         mode = spinner(root, new String[]{"识屏控屏任务", "第三方模型纯对话"});
@@ -72,8 +81,8 @@ public final class MainActivity extends Activity {
         if (saved != null) { job = saved.getString("job"); query.setText(saved.getString("query", "")); }
         refresh();
     }
-    @Override protected void onResume() { super.onResume(); if (status != null) refresh(); handler.removeCallbacks(poll); if (job != null) handler.post(poll); }
-    @Override protected void onPause() { super.onPause(); handler.removeCallbacks(poll); }
+    @Override protected void onResume() { super.onResume(); if (status != null) handler.post(frameworkStatus); handler.removeCallbacks(poll); if (job != null) handler.post(poll); }
+    @Override protected void onPause() { super.onPause(); handler.removeCallbacks(poll); handler.removeCallbacks(frameworkStatus); }
     @Override protected void onSaveInstanceState(Bundle out) { super.onSaveInstanceState(out); out.putString("job", job); out.putString("query", query.getText().toString()); }
     private boolean save() {
         try {
@@ -85,6 +94,7 @@ public final class MainActivity extends Activity {
             if (external && model.getText().toString().isBlank()) throw new IllegalArgumentException("请填写模型名称");
             Config.prefs(this).edit().putBoolean("enabled", enabled.isChecked()).putString("endpoint", url)
                 .putString("apiKey", key.getText().toString()).putString("model", model.getText().toString().trim())
+                .putString("api", new String[]{"auto", "responses", "chat"}[api.getSelectedItemPosition()])
                 .putBoolean("globalModel", globalModel.isChecked()).putString("planner", planner.getSelectedItemPosition() == 1 ? "external" : "native")
                 .putString("protocol", protocol.getSelectedItemPosition() == 1 ? "autoglm" : "computer").putInt("maxSteps", n).apply();
             if (!enabled.isChecked()) BridgeProvider.cancelActive();
@@ -105,7 +115,7 @@ public final class MainActivity extends Activity {
     }
     private void refresh() {
         var p = Config.prefs(this);
-        status.setText("无障碍：" + (ScreenService.instance == null ? "未连接" : "已连接") + "\n小爱 Hook：" + p.getString("hook_report", "尚未收到；请在 LSPosed 启用模块并重启小爱")
+        status.setText("热重载：" + HotReload.status() + "\n无障碍：" + (ScreenService.instance == null ? "未连接" : "已连接") + "\n小爱 Hook：" + p.getString("hook_report", "尚未收到；请在 LSPosed 启用模块并重启小爱")
             + (p.getLong("hook_at", 0) == 0 ? "" : "\n报告时间：" + new java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.CHINA).format(new java.util.Date(p.getLong("hook_at", 0)))));
     }
     private void fetchModels() {

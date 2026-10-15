@@ -4,3 +4,7 @@ This project includes an Android implementation of phone automation action proto
 and agent-loop ideas adapted from Open-AutoGLM (zai-org/Open-AutoGLM), Apache License 2.0.
 The upstream notice, license and source revision are in third_party/open-autoglm/.
 No Xiaomi application binaries, model weights or decompiled sources are distributed.
+
+MiAIPlus bundles libxposed service and interface 102.0.0 (libxposed contributors),
+Apache License 2.0. The API is a compile-only dependency supplied by the framework.
+Upstream references and the license are in third_party/libxposed/.

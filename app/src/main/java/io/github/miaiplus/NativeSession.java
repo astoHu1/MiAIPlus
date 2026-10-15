@@ -11,6 +11,7 @@ import java.util.concurrent.TimeUnit;
 public final class NativeSession {
     private static final java.util.concurrent.ScheduledExecutorService TIMER = Executors.newSingleThreadScheduledExecutor();
     private static volatile State active;
+    private static volatile boolean executing;
     private static final class State {
         final String id = UUID.randomUUID().toString();
         final String goal;
@@ -26,14 +27,21 @@ public final class NativeSession {
         }
     }
     public static synchronized String handle(Config config, String query, int owner) throws Exception {
+        executing = true;
+        try { return handleStep(config, query, owner); }
+        finally { executing = false; }
+    }
+    private static String handleStep(Config config, String query, int owner) throws Exception {
         if (active != null && (active.run.cancelled.get() || android.os.SystemClock.elapsedRealtime() >= active.run.deadline)) close();
         State s = active;
+        boolean ownsStep = false;
         try {
             if (!query.startsWith("MIAIPLUS:")) {
                 if (s != null) throw new IllegalStateException("已有控屏会话，请先停止");
                 ScreenService screen = ScreenService.instance;
                 if (screen == null) throw new IllegalStateException("请先开启 MiAIPlus 无障碍服务");
                 s = new State(query, owner, config.maxSteps, screen); active = s;
+                ownsStep = true;
                 State scheduled = s;
                 s.timeout = TIMER.schedule(() -> { scheduled.run.cancel(); scheduled.screen.hideControls(); }, 240, TimeUnit.SECONDS);
                 screen.showControls(s.run); s.run.pause(800);
@@ -41,6 +49,7 @@ public final class NativeSession {
                 JSONObject request = new JSONObject(query.substring(9));
                 if (s == null || s.run.owner != owner || !s.id.equals(request.optString("session")))
                     throw new IllegalStateException("控屏会话不存在或已过期，请重新提交完整任务");
+                ownsStep = true;
                 s.run.check();
                 double scale = Math.min(1, 1280.0 / Math.max(s.frame.width(), s.frame.height()));
                 Action action = new Action(Coordinates.normalize(request.getJSONObject("action"), request.optString("coordinate_space", "normalized"),
@@ -78,7 +87,7 @@ public final class NativeSession {
                 + frameToken + "\n" + s.frame.tree().substring(0, Math.min(12000, s.frame.tree().length()));
         } catch (Exception e) {
             // A foreign/stale session cannot cancel another caller's current task.
-            if (s != null && s.run.owner == owner) close();
+            if (ownsStep) close();
             throw e;
         }
     }
@@ -96,4 +105,5 @@ public final class NativeSession {
         State s = active;
         return s != null && !s.run.cancelled.get() && android.os.SystemClock.elapsedRealtime() < s.run.deadline;
     }
+    public static boolean hasPendingOperation() { return executing || hasActiveSession(); }
 }

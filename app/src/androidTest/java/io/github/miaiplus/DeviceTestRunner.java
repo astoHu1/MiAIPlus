@@ -9,13 +9,14 @@ import java.util.Map;
 
 /** Instrumented end-to-end test against scripts/mock_model.py, no paid model required. */
 public final class DeviceTestRunner extends LiveProbeRunner {
-    private boolean hookMode, liveMode;
-    @Override public void onCreate(Bundle arguments) { liveMode = "true".equals(arguments.getString("live")); hookMode = "true".equals(arguments.getString("hook")); super.onCreate(arguments); }
+    private boolean hookMode, liveMode, reloadMode;
+    private String transportApi;
+    @Override public void onCreate(Bundle arguments) { reloadMode = "true".equals(arguments.getString("reload")); transportApi = arguments.getString("api", "chat"); liveMode = "true".equals(arguments.getString("live")); hookMode = "true".equals(arguments.getString("hook")); super.onCreate(arguments); }
     private void check(boolean ok, String message) { if (!ok) throw new AssertionError(message); }
     private void signal(String text) { Bundle status = new Bundle(); status.putString("stream", text + "\n"); sendStatus(1, status); }
     private void configure(String protocol) {
         Config.prefs(getTargetContext()).edit().putBoolean("enabled", true).putString("endpoint", "http://127.0.0.1:18765/v1")
-            .putString("apiKey", "test-key").putString("model", "fixture-model").putString("planner", "external").putString("protocol", protocol).putInt("maxSteps", 8).commit();
+            .putString("api", transportApi).putString("apiKey", "test-key").putString("model", "responses".equals(transportApi) ? "fixture-responses-model" : "fixture-model").putString("planner", "external").putString("protocol", protocol).putInt("maxSteps", 8).commit();
     }
     private Bundle startJob(String mode, String query) {
         Bundle b = new Bundle(); b.putString("mode", mode); b.putString("query", query);
@@ -48,6 +49,7 @@ public final class DeviceTestRunner extends LiveProbeRunner {
         } catch (java.io.FileNotFoundException expected) { }
     }
     @Override public void onStart() {
+        if (reloadMode) { ReloadProbeRunner.run(this, true); return; }
         if (hookMode || liveMode) { super.onStart(); return; }
         Bundle report = new Bundle();
         int resultCode = Activity.RESULT_CANCELED;

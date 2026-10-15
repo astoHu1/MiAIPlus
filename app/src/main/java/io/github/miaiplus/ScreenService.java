@@ -205,7 +205,7 @@ public final class ScreenService extends AccessibilityService {
         onMain(() -> {
             removeOverlay();
             Button stop = new Button(this); stop.setText("■ 停止 MiAIPlus");
-            stop.setOnClickListener(v -> run.cancel());
+            stop.setOnClickListener(v -> { BridgeProvider.cancelActive(); hideControls(); });
             addOverlay(stop); return null;
         });
     }
@@ -227,7 +227,8 @@ public final class ScreenService extends AccessibilityService {
     private void addOverlay(View v) {
         WindowManager.LayoutParams p = new WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, android.graphics.PixelFormat.TRANSLUCENT);
-        p.gravity = Gravity.TOP | Gravity.END; p.y = 64;
+        p.gravity = Gravity.TOP | Gravity.END;
+        p.y = (int)(120 * getResources().getDisplayMetrics().density);
         getSystemService(WindowManager.class).addView(v, p); overlay = v;
     }
     private void removeOverlay() { if (overlay != null) { getSystemService(WindowManager.class).removeView(overlay); overlay = null; } }

@@ -78,6 +78,7 @@ public final class AgentEngine {
                 run.check();
                 JSONObject historyMessage = ModelClient.message("assistant", auto ? response.getString("content") : JSONObject.NULL);
                 if (!auto) historyMessage.put("tool_calls", response.getJSONArray("tool_calls"));
+                if (response.has("_responses_output")) historyMessage.put("_responses_output", response.getJSONArray("_responses_output"));
                 messages.put(historyMessage);
                 if (action.name.equals("finish")) return "模型报告任务完成：" + action.data.optString("message", "完成");
                 if (Set.of("take_over", "ask_user").contains(action.name))

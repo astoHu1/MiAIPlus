@@ -2,7 +2,7 @@
 
 兼容性分析发现，旧 `UIAgentServiceForOSBot.controlApp(String)` 在一次实机请求中等待云端响应十秒后超时。该记录只证明该次响应失败，不能说明全部设备的服务永久停用。原模型的工具范围说明也限制了部分应用，仅替换底层执行器不足以解决路由问题。
 
-`AgentLlmOverride` 只有模型 ID、思考/采样/上下文配置，不能通过它单独增加任意 API 地址。`0.2.3` 将控屏执行和模型选择分开。
+`AgentLlmOverride` 只有模型 ID、思考/采样/上下文配置，不能通过它单独增加任意 API 地址。`0.2.5` 将控屏执行、模型选择和模型 API 协议分开。
 
 ```mermaid
 flowchart TD
@@ -30,14 +30,32 @@ flowchart TD
 
 原官方模型及其传输链是否支持图片需要单独确认；不支持时有无障碍树可用，但纯图片页面受限。该实现没有内置 AutoGLM 模型权重，不能把模型名称与执行器协议混为一谈。
 
+## 原聊天入口的外部模型推理档位
+
+`NativeReasoningHook` 只在 `globalModel` 开启时接管两套原生入口：`StandardEditInputView` 的模式 popup，以及全屏 `FunctionBarView` 的模式 popup。原生 AUTO/QUICK/EXPERT 枚举、回调和持久化保持原状；外部选择经 UID 校验的 `set_reasoning` IPC 写入模块私有配置，以 endpoint/model/api 的摘要分别存储。写入前校验当前模型身份与有效档位，拒绝过期菜单写入。关闭外部模式时原菜单照常执行。
+
+`ReasoningPolicy` 为已确认模型提供不同档位，未知名称只允许默认，不推测任意网关能力。独立 `ModelClient` 与原生隔离客户端均在最终线上请求阶段注入参数；Responses 用 `reasoning.effort`，Chat 使用已确认的标准或服务扩展字段。隔离客户端按协议及档位缓存，每次新建请求按当时选择取得客户端，不在协程异步发送期间读取共享线程局部状态。清除原生 enableThinking 布尔值的影响；模型默认不继承小爱原模式所产生的关闭思考参数。原 Responses 适配器同时承担 Chat 请求的思考参数注入；Chat 响应保持原样解析。
+
+## 聊天页普通文字发送路由
+
+实机确认 AUTO/QUICK 下的普通文字聊天会走 AIVS `Nlp.Request`，不经过 OSBot 客户端；仅替换推理档位菜单不能替换这条链路。`NativeChatRoutingHook` 在精确版本的 `ll1.f0.C()` 入口，仅在全局外部模型开启时选择原生 MiClaw 分支。原发送函数继续完成设备支持、附件、停止旧会话和卡片/历史处理，然后进入已适配的 OSBot 模型客户端。默认模式执行原判断，不改原枚举或持久化。配置读取失败在文字提交入口提示并停止，防止 Hook 异常被框架忽略后发送到旧后端。该修复覆盖聊天页文字发送，不能外推到所有语音、图片和独立 SDK 入口。
+
 ## 可选全局主模型替换
 
 在当前精确支持版本上，`qm.c` 为 DynLlmClient，负责根据 `sm.a` 选择 Taiyi / OpenAI / Anthropic；`um.h` 是直接 Taiyi 客户端；同时接入 `qm.i`（OpenAI Chat Completions）、`qm.j`（OpenAI Responses）、`qm.b`（Anthropic）直接传输入口，覆盖绕开分发器构造客户端的调用。
-开关关闭时不改推理配置；打开时为这些调用构造临时 OpenAI 配置，保留原消息列表、工具列表、systemPrompt、协程 Continuation 和原生 SSE 事件解析。使用原生 `qm.i` 客户端保留小爱原工具调用结果处理。为外部请求单独创建干净的 Ktor/OkHttp 客户端，仅安装 JSON 序列化与超时插件，关闭重定向，不使用原应用的 ServiceToken、设备签名、账号认证与网络日志拦截器。
+开关关闭时不改推理配置；打开时为这些调用构造临时 OpenAI 配置，保留原消息列表、工具列表、systemPrompt、协程 Continuation 和原生 SSE 事件解析。使用原生 `qm.i` 作为消息/工具序列化和 Agent 事件前端，保留小爱原工具调用结果处理；它不再决定外部服务的线上协议。为外部请求单独创建干净的 Ktor/OkHttp 客户端，仅安装 JSON 序列化与超时插件，关闭重定向，不使用原应用的 ServiceToken、设备签名、账号认证与网络日志拦截器。
 
 API Key 仅在显式启用全局替换时经 UID 校验 IPC 交给小爱进程内存，不改小爱配置文件。该范围覆盖通过上述 OSBot 入口的聊天、Agent 与辅助推理；语音识别/合成、独立系统服务、独立云端推理入口不在这个 Hook 的声明范围内。切换后需重启小爱，清除已构造的客户端/描述和会话状态。
 
 内部干净 OpenAI 委托使用同步线程重入保护，避免其被再次重定向；保护在原生 Flow 创建后即释放，不抑制其他调用。记忆摘要另走 `ep.j.o` 的非流式请求：同样替换临时模型配置，在同步构造请求期间通过线程局部标记替换 `er.a0.getClient()`，保留原重试、隐私编码、响应解析与协程取消机制；`finally` 对应的 Hook 后置阶段恢复标记。
+
+`ModelProtocol` 按独立的 API 配置选择 Chat Completions 或 Responses；自动模式将 `gpt-6` 前缀路由到 Responses，服务别名可显式选择。`NativeResponsesAdapter` 只安装到模块创建的独立 OkHttp 客户端，把原生 Chat 格式转换为 `/responses`：system/user/assistant 消息、input_text/input_image、扁平 function 工具、function_call 与 function_call_output。这样记忆摘要及路由/gate 的非流式请求也遵循同一选择，而不必替换各自协程、重试和解析代码。转换采用允许字段，丢弃原私有请求字段及 Chat 专用采样参数；显式 `store:false`，保留原可选参数 schema（strict:false），禁并行工具调用。
+
+`ResponsesStream` 逐帧读取 Responses SSE，文字 delta 即时转为原生流；仅在 response.completed 且完整输出通过检查后释放工具调用及结束事件。failed、incomplete、拒绝和提前 EOF 作为失败，不释放未完成调用。ResponseBody 包装继续使用原网络读取/关闭机制，保留取消与超时。OkHttp/Okio 反射绑定是该精确小爱版本的混淆类名。
+
+`TransportBoundary` 在整个自定义拦截器边界展开 Xposed/Java 反射与代理包装，保留原始 IOException。否则取消、断连产生的 IOException 被 Xposed 包装成 InvocationTargetError 后，会逃出 OkHttp 异步线程并杀死小爱进程。其他适配异常转为不附带请求内容的 IOException，虚拟机致命错误仍上抛；响应转换失败会关闭原 body。
+
+独立 `ModelClient` 将原始 Responses output 附到内存历史，下轮连同工具结果回传，以保留加密 reasoning 和 assistant phase。原生历史不支持这些字段，网络适配器按服务地址/模型/完整 call_id+工具名+参数组暂存最近输出（最多 64 组、约 200 万字符），命中时回放；超限或进程重启后仅重建函数调用上下文。缓存只在进程内存在，不写盘。独立请求预留 16384 输出 token；GPT-6 原生请求至少 8192，避免沿用小额纯文本预算导致推理耗尽。未完成时仍停止。
 
 全局模式复用原消息与 SSE 解析，但隔离网络认证；消息历史/会话缓存仍由原应用管理，与模块独立 `ModelClient` 不同。
 
@@ -60,3 +78,9 @@ Hook 仅安装在精确校验的小爱版本：工具入口、描述构造、Pro
 原主模型/工具选择、无障碍支持、动态页面、模型图片能力、系统权限及原生 Agent 的回合预算都会影响结果。支付/发送等确认依赖模型标记；不绕过锁屏、安全窗口、密码框、验证码。无应用白名单不等于任意页面都可成功操作。
 
 独立外部循环只保留最新截图与有限历史；默认原生循环的历史与图片生命周期由小爱原消息管理控制。具体通过及待验证项目见 `IMPLEMENTATION-STATUS.md`。
+
+## API 102 和控屏交互
+
+现代入口为 `XiaoAiHook extends XposedModule`，元数据位于 `META-INF/xposed`。`Hooks` 对所有拦截及外部代理执行计数，重载先冻结新工作，空闲时释放 UI/广播/客户端/工具代理，新一代主动重新安装 Hook。设置进程通过 service 102 请求重载，配置 IPC 仍经过 BridgeProvider UID 检查。
+
+`InteractionUi` 在小爱 UID 发布 HyperOS 原生焦点模板；`screen_ready` 握手成功之前执行器不触摸屏幕。保存交互入口只发生于整个控屏会话开始；多步 CONTINUE 不重置入口。全屏移动原任务到后台，快捷键系统浮窗隐藏并关闭触摸/焦点；独立观察线程确认执行已经退出才恢复全屏或发布展开的完成岛。停止请求等待实际执行退出，避免恢复页面与末尾动作竞争。详见 [迁移与专项验证](api102-migration.md)。

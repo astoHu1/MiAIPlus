@@ -8,7 +8,7 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
-/** OpenAI-compatible Chat Completions transport; no provider SDK and no vendor default. */
+/** OpenAI-compatible Responses / Chat Completions transport; no provider default. */
 public final class ModelClient {
     public static String[] listModels(String endpoint, String key) throws Exception {
         HttpURLConnection c = (HttpURLConnection)new URL(Config.validateEndpoint(endpoint) + "/models").openConnection();
@@ -38,6 +38,8 @@ public final class ModelClient {
         JSONObject body = new JSONObject().put("model", config.model).put("messages", messages)
             .put("stream", false).put("temperature", 0).put("max_tokens", 2048);
         if (tools != null) body.put("tools", tools).put("tool_choice", "required").put("parallel_tool_calls", false);
+        if ("responses".equals(config.api)) body = ModelProtocol.request(body.put("max_tokens", 16384));
+        ReasoningPolicy.apply(body, config.model, config.api, config.reasoning);
         HttpURLConnection c = (HttpURLConnection) new URL(config.completionsUrl()).openConnection();
         run.connection = c;
         try {
@@ -63,7 +65,9 @@ public final class ModelClient {
                 response = out.toString(StandardCharsets.UTF_8.name());
             }
             run.check();
-            return new JSONObject(response).getJSONArray("choices").getJSONObject(0).getJSONObject("message");
+            JSONObject result = new JSONObject(response);
+            return "responses".equals(config.api) ? ModelProtocol.message(result)
+                : result.getJSONArray("choices").getJSONObject(0).getJSONObject("message");
         } finally { run.connection = null; c.disconnect(); }
     }
 }

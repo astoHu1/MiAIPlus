@@ -20,6 +20,7 @@ public final class BridgeProvider extends ContentProvider {
     private static final java.util.concurrent.ExecutorService WORKER = Executors.newSingleThreadExecutor();
     private static final java.util.concurrent.ScheduledExecutorService WATCHDOG = Executors.newSingleThreadScheduledExecutor();
     private static volatile RunState active;
+    private static volatile String screenResult = "";
     @Override public boolean onCreate() { return true; }
     private void enforceCaller() {
         int uid = Binder.getCallingUid();
@@ -37,17 +38,39 @@ public final class BridgeProvider extends ContentProvider {
             Config.prefs(getContext()).edit().putString("hook_report", report).putLong("hook_at", System.currentTimeMillis()).apply();
             return b;
         }
+        if (method.equals("stop_screen")) { cancelActive(); return b; }
+        if (method.equals("screen_state")) {
+            RunState current = active;
+            b.putBoolean("active", NativeSession.hasPendingOperation()
+                || (current != null && current.screen && current.status.equals("running")));
+            b.putString("result", screenResult);
+            return b;
+        }
         if (method.equals("flags")) {
             b.putBoolean("enabled", config.enabled);
             b.putBoolean("nativePlanner", config.planner.equals("native"));
             b.putBoolean("accessibility", ScreenService.instance != null);
             return b;
         }
-        if (method.equals("model_config")) {
+        if (method.equals("set_reasoning")) {
+            if (!config.globalModel || extras == null
+                || !config.endpoint.equals(extras.getString("endpoint"))
+                || !config.model.equals(extras.getString("model")) || !config.api.equals(extras.getString("api")))
+                throw new IllegalStateException("模型配置已更改，请重新打开推理强度菜单");
+            String effort = extras.getString("reasoning", "default");
+            if (!ReasoningPolicy.choices(config.model, config.api).contains(effort))
+                throw new IllegalArgumentException("当前模型不支持该推理强度");
+            if (!Config.prefs(getContext()).edit().putString(
+                ReasoningPolicy.preferenceKey(config.endpoint, config.model, config.api), effort).commit())
+                throw new IllegalStateException("推理强度保存失败");
+        }
+        if (method.equals("model_config") || method.equals("set_reasoning")) {
             b.putBoolean("globalModel", config.globalModel);
             if (config.globalModel) {
                 // Ephemeral IPC to the scoped XiaoAi UID; never write credentials into its files.
                 b.putString("endpoint", config.endpoint); b.putString("apiKey", config.apiKey); b.putString("model", config.model);
+                b.putString("api", config.api);
+                b.putString("reasoning", method.equals("set_reasoning") ? extras.getString("reasoning", "default") : config.reasoning);
             }
             return b;
         }
@@ -59,6 +82,9 @@ public final class BridgeProvider extends ContentProvider {
             if (NativeSession.hasActiveSession() && (!mode.equals("screen") || !config.planner.equals("native"))) {
                 b.putString("error", "已有小爱逐步控屏会话，请先停止"); return b;
             }
+            if (NativeSession.hasActiveSession() && (query == null || !query.startsWith("MIAIPLUS:"))) {
+                b.putString("error", "已有控屏会话，请先停止或继续当前会话"); return b;
+            }
             synchronized (JOBS) {
                 if (active != null) { b.putString("error", "已有任务执行中，请先停止"); return b; }
                 JOBS.entrySet().removeIf(e -> !e.getValue().status.equals("running")
@@ -66,10 +92,15 @@ public final class BridgeProvider extends ContentProvider {
                 if (JOBS.size() >= 16) JOBS.values().stream().filter(r -> !r.status.equals("running"))
                     .min(java.util.Comparator.comparingLong(r -> r.deadline)).ifPresent(r -> JOBS.remove(r.id));
                 RunState run = new RunState(UUID.randomUUID().toString(), Binder.getCallingUid());
+                run.screen = mode.equals("screen");
+                if (!run.screen || extras == null || !extras.getBoolean("screen_ui")) run.screenReady.countDown();
                 active = run; JOBS.put(run.id, run);
                 var timeout = WATCHDOG.schedule(run::cancel, 240, java.util.concurrent.TimeUnit.SECONDS);
                 WORKER.execute(() -> {
                     try {
+                        if (!run.screenReady.await(6, java.util.concurrent.TimeUnit.SECONDS))
+                            throw new IllegalStateException("小爱交互界面未就绪，已停止");
+                        run.check();
                         String text = AgentEngine.run(config, mode, query, run);
                         run.result = text.length() > 24000 ? text.substring(0, 24000) + "\n[结果过长已截断]" : text;
                         run.check(); run.status = "done";
@@ -77,7 +108,10 @@ public final class BridgeProvider extends ContentProvider {
                     catch (Exception e) {
                         // Keep exception details out of IPC to avoid echoing API bodies or typed content.
                         run.result = run.cancelled.get() ? "任务已停止或超时" : publicError(e); run.status = "error";
-                    } finally { timeout.cancel(false); synchronized (JOBS) { active = null; } }
+                    } finally {
+                        if (run.screen) screenResult = run.result;
+                        timeout.cancel(false); synchronized (JOBS) { active = null; }
+                    }
                 });
                 b.putString("id", run.id); return b;
             }
@@ -86,7 +120,8 @@ public final class BridgeProvider extends ContentProvider {
         if (run == null || (run.owner != Binder.getCallingUid() && Binder.getCallingUid() != Process.myUid())) {
             b.putString("error", "任务不存在或不可访问"); return b;
         }
-        if (method.equals("cancel")) run.cancel();
+        if (method.equals("screen_ready")) run.screenReady.countDown();
+        else if (method.equals("cancel")) run.cancel();
         else if (!method.equals("poll")) throw new IllegalArgumentException("Unknown bridge method");
         b.putString("status", run.status); b.putString("result", run.result); b.putString("progress", run.progress);
         return b;

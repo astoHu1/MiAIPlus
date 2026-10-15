@@ -2,8 +2,8 @@
 
 为超级小爱增加本机控屏工具及可选的 OpenAI 兼容主模型替换。**全新安装不预填任何服务地址、API Key 或模型名。**
 
-当前精确适配超级小爱 **8.2.65.4714 / versionCode 508002065**，Android 13+，LSPosed Legacy API 82+。
-其他小爱版本跳过 Hook。`0.2.1` 是预发布测试版。
+当前精确适配超级小爱 **8.2.65.4714 / versionCode 508002065**，Android 13+，支持 libxposed API 102 的 LSPosed。
+其他小爱版本跳过 Hook。`0.3.0` 是预发布测试版，包含 HyperOS 焦点通知岛、原页面恢复和 API 102 热重载。
 
 ## 三种使用方式
 
@@ -16,7 +16,7 @@
 默认模式优先使用原生结构化函数 `miaiplus_computer`：首次传 `goal`，后续传 `session` 和 `action`。默认坐标为截图 JPEG 像素；可用 `coordinate_space` 明确指定截图像素、屏幕像素或归一化坐标。兼容入口 `voiceassist__controlApp` 首次接收完整任务，工具返回截图、无障碍树、会话号与 `CONTINUE`；小爱当前模型继续调用同一工具，每次一个原子动作，直至观察确认完成。**不再要求第二个视觉 API。**
 截图经一次性私有管道送回小爱，转换为原生 `Message.images`，不把整张图塞进 Binder Bundle。模型或官方传输链不支持图片时，仍有无障碍树，但对纯图片页面的能力会受限。
 
-“全局外部模型”接入小爱的 OSBot 统一模型入口和直接 Taiyi / OpenAI / Responses / Anthropic 客户端，以及记忆摘要、记忆 gate、能力判断和语义路由请求，保留原消息历史、提示词、流式响应、工具定义与工具执行链。主对话、子 Agent 和经这些入口的辅助推理使用所选模型。它不把语音识别、语音合成、搜索引擎或米家服务改造成第三方服务，也不宣称覆盖 APK 内所有独立云服务。
+“全局外部模型”接入小爱的 OSBot 统一模型入口和直接 Taiyi / OpenAI / Responses / Anthropic 客户端，以及记忆摘要、记忆 gate、能力判断和语义路由请求，保留原消息历史、提示词、流式响应、工具定义与工具执行链。自定义 API 开启时，聊天页普通文字发送也转入原生 MiClaw/OSBot 链路，避免 AUTO/QUICK 模式绕回旧云端；不改写小爱原模式。主对话、子 Agent 和经这些入口的辅助推理使用所选模型。它不把语音识别、语音合成、搜索引擎或米家服务改造成第三方服务，也不宣称覆盖 APK 内所有独立云服务。
 
 ## 安装与配置
 
@@ -27,7 +27,27 @@
 5. 在小爱中提出明确的应用内任务。普通聊天、搜索、手机设置和已有专用工具继续使用原链路。
 
 可选外部服务：填写实际 API Base URL（含 `/v1`）、Key 与模型名；可从服务获取模型列表。
+模型 API 协议可选“自动 / Responses / Chat Completions”，与 computer / autoglm 动作协议独立。自动模式下 `gpt-6` 开头的模型使用 `/responses`，其他名称保持 `/chat/completions`；自定义别名或仅提供 Responses 的网关请显式选择 Responses。`gpt-6.1-sol` 工具调用要求 Responses，纯文本可用 Chat Completions，见 [官方模型说明](https://developers.openai.com/api/docs/models/gpt-6.1-sol)。地址仍填写 Base URL（例如服务提供的 `/v1`），无需手动附加 `/responses`。
+Responses 同时用于全局主模型、记忆摘要、gate/能力判断/路由，以及独立文字和控屏循环；转换图片、工具定义、call_id 与结果，并回传可用的加密推理上下文。Responses 请求使用 `store:false`，不发送固定 temperature/top_p；独立请求输出预算为 16384 tokens，GPT-6 原生请求的小额文本预算至少调整为 8192 tokens，以容纳推理。该预算包含推理 token，仍可能耗尽；响应 incomplete/failed、拒绝或流中断时不执行未完成工具调用。
 要替换小爱主模型，开启“小爱全局使用外部模型”，保存并重启小爱。要使用独立的控屏模型循环，另选“独立外部视觉模型循环”。两者是独立选项。
+自定义 API 启用后，小爱聊天页原来的“自动 / 快速 / 专家”入口切换为所选模型的推理档位（普通输入栏和全屏功能栏均适配）。关闭全局外部模型后仍使用小爱原菜单；自定义档位按服务地址、模型名和 API 协议单独保存，不改写小爱原模式。选择立即用于下一次新请求；已在执行的请求保持开始时的参数。“模型默认”不发送显式思考参数。
+
+| 自定义模型 | 可选档位（均含“模型默认”） |
+| --- | --- |
+| GPT‑6.1 Sol、GPT‑6 Astra | low / medium / high / xhigh / max |
+| GPT‑6 Sol / Luna、GPT‑5.6 Sol | none / low / medium / high / xhigh / max |
+| GPT‑5.5 / 5.4 / 5.2 | none / low / medium / high / xhigh |
+| GPT‑5.3 Codex | low / medium / high / xhigh |
+| GPT‑5.1 | none / low / medium / high |
+| GPT‑5 | minimal / low / medium / high |
+| DeepSeek Flash (`deepseek-flash`) | 关闭 / low / high / max |
+| 已识别的 Qwen 混合思考模型（Chat Completions） | 关闭思考 / 开启思考 |
+| 未识别别名、其他模型或未经确认的协议组合 | 模型默认 |
+
+OpenAI 在 Responses 中使用 `reasoning.effort`，Chat 中使用 `reasoning_effort`；GPT‑6.1 Sol 不提供不受支持的 none/minimal。DeepSeek Chat 使用 `thinking.type` 与 `reasoning_effort`；Qwen Chat 使用 `enable_thinking`，不把 SDK 的 `extra_body` 包装发到服务端。Qwen 仅识别已确认的混合模型名称，思考专用模型不显示关闭开关；网关的不同扩展字段不能仅凭兼容端点推断。当前不直接转换原生 Anthropic/Gemini 协议，也不为它们虚构通用强度。
+
+档位依据 [OpenAI GPT‑6.1 Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol)、[OpenAI reasoning guide](https://developers.openai.com/api/docs/guides/reasoning)、[DeepSeek 思考模式](https://api-docs.deepseek.com/guides/thinking_mode) 和 [Qwen 深度思考](https://help.aliyun.com/zh/model-studio/deep-thinking)；具体识别名单见 `ReasoningPolicy.java`。模型升级或网关别名可能需要更新名单。
+
 `computer` 协议要求模型支持图片与 function calling；`autoglm` 使用 Open-AutoGLM `do(...)` / `finish(...)` 协议。切换主模型时仍应选支持小爱工具调用的模型。
 
 设置页直接测试适用于独立外部循环和第三方纯对话。默认控屏模式需在小爱里提交任务，因为规划模型就在小爱内部。明确的“用第三方模型回答……”可走独立文字请求，需填写外部配置，不读取屏幕。
@@ -47,7 +67,7 @@
 
 ## 构建与发布
 
-需要 JDK 17+、Android SDK platform 35 / build-tools 35.0.0。
+需要 JDK 17+、Android SDK platform 37 / build-tools 37.0.0。项目使用 Gradle 9.6.0、AGP 9.4.1，targetSdk 仍为 35。LSPosed 运行时需要支持 libxposed API 102；首次从旧入口迁移后要重启一次小爱，后续可在设置页请求热重载。
 
 ```sh
 ./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug :app:assembleRelease :app:lintRelease
@@ -56,7 +76,7 @@ python3 scripts/package_release.py
 
 `dist/` 提供未签名 release APK、开发签名预览 APK、源码压缩包及 SHA256 校验。release 变体不含测试页面和调试广播接收器。开发签名仅便于测试；正式分发请使用自己的长期私有签名，升级需保持同一签名。
 源码包按文件白名单生成，排除原始 APK、反编译文件、实机日志、个人配置、工具链缓存和签名密钥。
-详见 [发布说明](docs/releasing.md)。
+详见 [发布说明](docs/releasing.md) 和 [API 102 / 控屏交互说明](docs/api102-migration.md)。
 
 ## 测试
 
@@ -69,9 +89,21 @@ adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
 python3 scripts/device_test.py
 # 需要在 LSPosed 启用模块；只在已授权测试设备运行进程内诊断
 python3 scripts/device_test.py --hook
+# Responses 协议的独立循环和原生 Hook 回归
+python3 scripts/device_test.py --responses
+python3 scripts/device_test.py --hook --responses
+python3 scripts/device_test.py --hook --responses --reasoning
+python3 scripts/device_test.py --hook --reasoning
 adb reverse --remove tcp:18765
 ```
 
 设备测试临时修改模块自己的配置，结束时恢复；重连模块无障碍服务，保留其他服务。测试使用独立测试页面，不操作个人应用内容。`--hook` 会重启小爱，并在 debug 模块内进行真实 Hook/原生模型客户端诊断。
 真实凭据和官方模型的完整自然语言任务验证另见 [验证状态](IMPLEMENTATION-STATUS.md)。
+不修改 API 配置的网络异常回归（debug 模块，已启用 LSPosed 并打开小爱）：
+
+```sh
+adb shell am broadcast -a io.github.miaiplus.DEBUG_PROBE -p com.miui.voiceassist --es frame MIAIPLUS_TRANSPORT_FAILURE
+```
+
+结果写入模块状态报告；使用进程内 loopback 服务，不调用付费模型，检查 Chat/Responses 的断连、取消和异常 JSON 是否进入原生 IOException 回调。
 开源参考及许可见 [架构](docs/architecture.md) 与 `third_party/open-autoglm/`。

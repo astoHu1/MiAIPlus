@@ -2,9 +2,9 @@ package io.github.miaiplus;
 
 import android.content.Context;
 import android.os.Bundle;
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
+import io.github.miaiplus.hook.HookCallback;
+import io.github.miaiplus.hook.Hooks;
+import io.github.miaiplus.hook.Reflector;
 import java.util.List;
 import java.util.Map;
 
@@ -29,6 +29,22 @@ public final class NativeComputerTool {
         """;
     private static Object definition;
     private static volatile boolean registered;
+    private static final java.util.Set<Object> registries = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
+    private static void register(Object registry, Object tool) {
+        Reflector.callMethod(registry, "registerSystem", tool);
+        synchronized (registries) { registries.add(registry); }
+        registered = true;
+    }
+    static void dispose() {
+        synchronized (registries) {
+            for (Object registry : registries) {
+                Reflector.callMethod(registry, "unregister", NAME);
+                ((java.util.Set<?>)Reflector.getObjectField(registry, "systemToolNames")).remove(NAME);
+            }
+            registries.clear();
+        }
+        registered = false; definition = null;
+    }
     static boolean available(Context context) {
         try {
             Bundle flags = context.getContentResolver().call(BridgeProvider.URI, "flags", null, null);
@@ -36,12 +52,12 @@ public final class NativeComputerTool {
         } catch (Exception e) { return false; }
     }
     static Object json(ClassLoader loader, String text) {
-        return XposedHelpers.callMethod(XposedHelpers.getStaticObjectField(XposedHelpers.findClass("s92.b", loader), "d"), "parseToJsonElement", text);
+        return Reflector.callMethod(Reflector.getStaticObjectField(Reflector.findClass("s92.b", loader), "d"), "parseToJsonElement", text);
     }
-    public static void install(Context context, ClassLoader loader, List<XC_MethodHook.Unhook> hooks) {
+    public static void install(Context context, ClassLoader loader, List<HookCallback.Unhook> hooks) {
         Object schema = json(loader, SCHEMA);
-        definition = XposedHelpers.newInstance(XposedHelpers.findClass("com.aios.osbot.llm.model.ToolDefinition", loader), NAME, DESCRIPTION, schema);
-        Class<?> toolType = XposedHelpers.findClass("com.aios.osbot.tools.Tool", loader);
+        definition = Reflector.newInstance(Reflector.findClass("com.aios.osbot.llm.model.ToolDefinition", loader), NAME, DESCRIPTION, schema);
+        Class<?> toolType = Reflector.findClass("com.aios.osbot.tools.Tool", loader);
         Object tool = java.lang.reflect.Proxy.newProxyInstance(loader, new Class<?>[]{toolType}, (proxy, method, args) -> {
             return switch (method.getName()) {
                 case "getName", "getDisplayName" -> NAME;
@@ -53,19 +69,22 @@ public final class NativeComputerTool {
                 case "getDisplayDescriptionResId" -> 0;
                 case "getTimeoutMs", "resolveTimeoutMs" -> 245000L;
                 case "isStoppable" -> false;
-                case "onCancel" -> XposedHelpers.getStaticObjectField(XposedHelpers.findClass("kotlin.Unit", loader), "INSTANCE");
+                case "onCancel" -> Reflector.getStaticObjectField(Reflector.findClass("kotlin.Unit", loader), "INSTANCE");
                 case "execute" -> {
+                    Hooks.enter();
+                    try {
                     String text;
                     try {
                         if (!available(context)) throw new IllegalStateException("本机逐步控屏未启用");
                         org.json.JSONObject request = new org.json.JSONObject(args[0].toString());
                         if (request.has("action") && !request.has("coordinate_space")) request.put("coordinate_space", "image_pixels");
                         String query = request.has("action") ? "MIAIPLUS:" + request : request.getString("goal");
-                        Object service = XposedHelpers.newInstance(XposedHelpers.findClass("com.xiaomi.voiceassistant.UIAgentServiceForOSBot", loader));
-                        Object result = XposedHelpers.callMethod(service, "controlApp", query);
-                        text = String.valueOf(XposedHelpers.callMethod(result, "getText"));
+                        Object service = Reflector.newInstance(Reflector.findClass("com.xiaomi.voiceassistant.UIAgentServiceForOSBot", loader));
+                        Object result = Reflector.callMethod(service, "controlApp", query);
+                        text = String.valueOf(Reflector.callMethod(result, "getText"));
                     } catch (Exception e) { text = "控屏停止：" + (e instanceof org.json.JSONException ? "缺少goal或session/action参数" : e.getMessage()); }
-                    yield XposedHelpers.newInstance(XposedHelpers.findClass("com.aios.osbot.tools.ToolResult$Success", loader), text, Map.of(), null, List.of(), false, null, false);
+                    yield Reflector.newInstance(Reflector.findClass("com.aios.osbot.tools.ToolResult$Success", loader), text, Map.of(), null, List.of(), false, null, false);
+                    } finally { Hooks.leave(); }
                 }
                 case "toString" -> NAME;
                 case "hashCode" -> System.identityHashCode(proxy);
@@ -73,14 +92,16 @@ public final class NativeComputerTool {
                 default -> throw new UnsupportedOperationException(method.getName());
             };
         });
-        Class<?> registry = XposedHelpers.findClass("com.aios.osbot.tools.ToolRegistry", loader);
-        hooks.addAll(XposedBridge.hookAllConstructors(registry, new XC_MethodHook() {
-            @Override protected void afterHookedMethod(MethodHookParam p) { XposedHelpers.callMethod(p.thisObject, "registerSystem", tool); registered = true; }
+        Class<?> registry = Reflector.findClass("com.aios.osbot.tools.ToolRegistry", loader);
+        Object existing = Reflector.getStaticObjectField(registry, "instance");
+        if (existing != null) register(existing, tool);
+        hooks.addAll(Hooks.hookAllConstructors(registry, new HookCallback() {
+            @Override protected void afterHookedMethod(MethodHookParam p) { register(p.thisObject, tool); }
         }));
     }
-    static void addDefinition(Context context, XC_MethodHook.MethodHookParam p) {
+    static void addDefinition(Context context, HookCallback.MethodHookParam p) {
         if (!registered || !available(context) || definition == null || !(p.args[1] instanceof List<?> old)) return;
-        for (Object value : old) if (NAME.equals(XposedHelpers.callMethod(value, "getName"))) return;
+        for (Object value : old) if (NAME.equals(Reflector.callMethod(value, "getName"))) return;
         var tools = new java.util.ArrayList<Object>(old); tools.add(definition); p.args[1] = tools;
     }
 }

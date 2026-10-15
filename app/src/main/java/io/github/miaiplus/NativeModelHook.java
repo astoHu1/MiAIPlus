@@ -3,9 +3,9 @@ package io.github.miaiplus;
 import android.content.Context;
 import android.net.Uri;
 import android.os.Bundle;
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
+import io.github.miaiplus.hook.HookCallback;
+import io.github.miaiplus.hook.Hooks;
+import io.github.miaiplus.hook.Reflector;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
@@ -20,6 +20,7 @@ public final class NativeModelHook {
     private static final ThreadLocal<Boolean> delegating = ThreadLocal.withInitial(() -> false);
     private static final ThreadLocal<Boolean> memoryTransport = ThreadLocal.withInitial(() -> false);
     private static long fetchedAt;
+    static synchronized void invalidateConfig() { fetchedAt = 0; }
     static synchronized Bundle config(Context context) {
         long now = android.os.SystemClock.elapsedRealtime();
         if (modelConfig != null && now - fetchedAt < 2000) return modelConfig;
@@ -28,16 +29,18 @@ public final class NativeModelHook {
         if (value == null) throw new IllegalStateException("MiAIPlus 模型配置不可用");
         modelConfig = value; fetchedAt = now; return value;
     }
-    public static void install(Context context, ClassLoader loader, List<XC_MethodHook.Unhook> hooks) throws Exception {
+    public static void install(Context context, ClassLoader loader, List<HookCallback.Unhook> hooks) throws Exception {
         NativeComputerTool.install(context, loader, hooks);
         NativeIntentHook.install(context, loader, hooks);
-        Class<?> message = XposedHelpers.findClass("com.aios.osbot.agent.model.Message", loader);
-        Class<?> image = XposedHelpers.findClass("com.aios.osbot.agent.model.ImageContent", loader);
+        NativeReasoningHook.install(context, loader, hooks);
+        NativeChatRoutingHook.install(context, loader, hooks);
+        Class<?> message = Reflector.findClass("com.aios.osbot.agent.model.Message", loader);
+        Class<?> image = Reflector.findClass("com.aios.osbot.agent.model.ImageContent", loader);
         var imageConstructor = image.getConstructor(String.class, String.class, String.class, int.class, int.class, Long.class);
         // Only the canonical constructor; a Kotlin synthetic constructor delegates here.
         for (var constructor : message.getDeclaredConstructors()) {
             if (constructor.getParameterCount() != 12 || constructor.getParameterTypes()[2] != String.class) continue;
-            hooks.add(XposedBridge.hookMethod(constructor, new XC_MethodHook() {
+            hooks.add(Hooks.hookMethod(constructor, new HookCallback() {
                 @Override protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                     if (!(param.args[2] instanceof String content) || !String.valueOf(param.args[1]).equals("TOOL")) return;
                     var matcher = FRAME.matcher(content);
@@ -55,10 +58,10 @@ public final class NativeModelHook {
         }
         // Native UI/CLI wrappers may mark app-tool output as a final direct answer.
         // Only our structured ongoing observations must be fed back into the agent loop.
-        Class<?> toolSuccess = XposedHelpers.findClass("com.aios.osbot.tools.ToolResult$Success", loader);
+        Class<?> toolSuccess = Reflector.findClass("com.aios.osbot.tools.ToolResult$Success", loader);
         var successConstructor = toolSuccess.getDeclaredConstructor(String.class, java.util.Map.class,
             List.class, List.class, boolean.class, String.class, boolean.class);
-        hooks.add(XposedBridge.hookMethod(successConstructor, new XC_MethodHook() {
+        hooks.add(Hooks.hookMethod(successConstructor, new HookCallback() {
             @Override protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                 if (!(param.args[0] instanceof String text) || !text.contains("CONTINUE：控屏尚未完成。")) return;
                 var marker = FRAME.matcher(text);
@@ -80,22 +83,22 @@ public final class NativeModelHook {
                 }
             }
         }));
-        Class<?> nativeConfig = XposedHelpers.findClass("sm.a", loader);
+        Class<?> nativeConfig = Reflector.findClass("sm.a", loader);
         var configConstructor = nativeConfig.getConstructor(String.class, double.class, Integer.class, double.class,
             String.class, String.class, String.class, String.class, boolean.class, String.class, String.class,
-            boolean.class, XposedHelpers.findClass("sm.f", loader), XposedHelpers.findClass("bk.a", loader), boolean.class);
+            boolean.class, Reflector.findClass("sm.f", loader), Reflector.findClass("bk.a", loader), boolean.class);
         // Cover the dispatcher and every concrete OSBot transport, including callers
         // that construct OpenAI, Responses or Anthropic clients directly.
-        Class<?> openai = XposedHelpers.findClass("qm.i", loader);
-        Class<?> ktor = XposedHelpers.findClass("io.ktor.client.HttpClient", loader);
+        Class<?> openai = Reflector.findClass("qm.i", loader);
+        Class<?> ktor = Reflector.findClass("io.ktor.client.HttpClient", loader);
         var openaiConstructor = openai.getConstructor(String.class, String.class, ktor);
         Method nativeStream = openai.getDeclaredMethod("streamCompletion", List.class, List.class, nativeConfig,
-            XposedHelpers.findClass("kotlin.coroutines.Continuation", loader));
+            Reflector.findClass("kotlin.coroutines.Continuation", loader));
         for (String className : new String[]{"qm.c", "um.h", "qm.i", "qm.j", "qm.b"}) {
-            Class<?> client = XposedHelpers.findClass(className, loader);
+            Class<?> client = Reflector.findClass(className, loader);
             Method stream = client.getDeclaredMethod("streamCompletion", List.class, List.class, nativeConfig,
-                XposedHelpers.findClass("kotlin.coroutines.Continuation", loader));
-            hooks.add(XposedBridge.hookMethod(stream, new XC_MethodHook() {
+                Reflector.findClass("kotlin.coroutines.Continuation", loader));
+            hooks.add(Hooks.hookMethod(stream, new HookCallback() {
                 @Override protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                     if (delegating.get()) return;
                     NativeComputerTool.addDefinition(context, param);
@@ -113,7 +116,8 @@ public final class NativeModelHook {
                     Object old = param.args[2];
                     Object replacement = replacement(configConstructor, loader, old, setting, endpoint, model);
                     // Keep native serialization/SSE, but never reuse Xiaomi's account-auth transport.
-                    Object delegate = openaiConstructor.newInstance(setting.getString("apiKey", ""), endpoint, cleanHttp(loader));
+                    Object delegate = openaiConstructor.newInstance(setting.getString("apiKey", ""), endpoint,
+                        cleanHttp(loader, setting));
                     delegating.set(true);
                     try { param.setResult(nativeStream.invoke(delegate, param.args[0], param.args[1], replacement, param.args[3])); }
                     finally { delegating.remove(); }
@@ -124,10 +128,10 @@ public final class NativeModelHook {
         // Claw memory summaries have a separate non-streaming OpenAI path.
         // Preserve its request/response, retry and cancellation code; replace only
         // model configuration and the HTTP getter during synchronous request setup.
-        Class<?> memory = XposedHelpers.findClass("ep.j", loader);
+        Class<?> memory = Reflector.findClass("ep.j", loader);
         Method request = memory.getDeclaredMethod("o", nativeConfig, String.class, String.class, String.class,
-            long.class, XposedHelpers.findClass("dp.a", loader), XposedHelpers.findClass("kotlin.coroutines.Continuation", loader));
-        hooks.add(XposedBridge.hookMethod(request, new XC_MethodHook() {
+            long.class, Reflector.findClass("dp.a", loader), Reflector.findClass("kotlin.coroutines.Continuation", loader));
+        hooks.add(Hooks.hookMethod(request, new HookCallback() {
             @Override protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                 if (p.args[0] == null) return; // Coroutine resume: request is already configured.
                 try {
@@ -151,10 +155,10 @@ public final class NativeModelHook {
                 }
             }
         }));
-        hooks.add(XposedHelpers.findAndHookMethod("er.a0", loader, "getClient", new XC_MethodHook() {
+        hooks.add(Reflector.findAndHookMethod("er.a0", loader, "getClient", new HookCallback() {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
                 if (memoryTransport.get()) {
-                    try { p.setResult(cleanHttp(loader)); }
+                    try { p.setResult(cleanHttp(loader, config(context))); }
                     catch (Throwable failure) { p.setThrowable(new IllegalStateException("外部记忆推理连接初始化失败", failure)); }
                 }
             }
@@ -163,12 +167,12 @@ public final class NativeModelHook {
     private static Object replacement(java.lang.reflect.Constructor<?> configConstructor, ClassLoader loader,
         Object old, Bundle setting, String endpoint, String model) throws Exception {
         return configConstructor.newInstance(model,
-                        ((Number)XposedHelpers.callMethod(old, "getTemperature")).doubleValue(),
-                        XposedHelpers.callMethod(old, "getMaxTokens"),
-                        ((Number)XposedHelpers.callMethod(old, "getTopP")).doubleValue(),
-                        endpoint, null, XposedHelpers.callMethod(old, "getSystemPrompt"),
-                        setting.getString("apiKey", ""), XposedHelpers.callMethod(old, "getEnableThinking"), "openai", null, false,
-                        XposedHelpers.newInstance(XposedHelpers.findClass("sm.f", loader)), null, false);
+                        ((Number)Reflector.callMethod(old, "getTemperature")).doubleValue(),
+                        Reflector.callMethod(old, "getMaxTokens"),
+                        ((Number)Reflector.callMethod(old, "getTopP")).doubleValue(),
+                        endpoint, null, Reflector.callMethod(old, "getSystemPrompt"),
+                        setting.getString("apiKey", ""), false, "openai", null, false,
+                        Reflector.newInstance(Reflector.findClass("sm.f", loader)), null, false);
     }
     private static Object readImage(Context context, String id, java.lang.reflect.Constructor<?> constructor) throws Exception {
         try (var in = context.getContentResolver().openInputStream(Uri.parse(BridgeProvider.URI + "/frame/" + id));
@@ -183,14 +187,21 @@ public final class NativeModelHook {
             return constructor.newInstance(frame.getString("image"), null, "image/jpeg", frame.getInt("width"), frame.getInt("height"), null);
         }
     }
-    private static Object externalHttp;
-    private interface Configure { void apply(Object value) throws Throwable; }
-    private static Object function(ClassLoader loader, Configure block) {
-        Class<?> function = XposedHelpers.findClass("kotlin.jvm.functions.Function1", loader);
+    static boolean canReload() { return NativeResponsesAdapter.isIdle(); }
+    static synchronized void dispose() {
+        for (Object http : externalHttp.values()) Reflector.callMethod(http, "close");
+        externalHttp.clear(); modelConfig = null; fetchedAt = 0;
+        delegating.remove(); memoryTransport.remove();
+        NativeResponsesAdapter.clear();
+    }
+    private static final java.util.Map<String, Object> externalHttp = new java.util.HashMap<>();
+    interface Configure { void apply(Object value) throws Throwable; }
+    static Object function(ClassLoader loader, Configure block) {
+        Class<?> function = Reflector.findClass("kotlin.jvm.functions.Function1", loader);
         return java.lang.reflect.Proxy.newProxyInstance(loader, new Class<?>[]{function}, (proxy, method, args) -> {
             if (method.getName().equals("invoke")) {
                 block.apply(args[0]);
-                return XposedHelpers.getStaticObjectField(XposedHelpers.findClass("kotlin.Unit", loader), "INSTANCE");
+                return Reflector.getStaticObjectField(Reflector.findClass("kotlin.Unit", loader), "INSTANCE");
             }
             if (method.getName().equals("toString")) return "MiAIPlusHttpConfiguration";
             if (method.getName().equals("hashCode")) return System.identityHashCode(proxy);
@@ -198,23 +209,30 @@ public final class NativeModelHook {
             return null;
         });
     }
-    static synchronized Object cleanHttp(ClassLoader loader) {
-        if (externalHttp != null) return externalHttp;
-        Object engine = XposedHelpers.getStaticObjectField(XposedHelpers.findClass("io.ktor.client.engine.okhttp.OkHttp", loader), "INSTANCE");
+    static synchronized Object cleanHttp(ClassLoader loader, Bundle setting) {
+        String api = setting.getString("api", "chat");
+        String reasoning = ReasoningPolicy.normalize(setting.getString("model", ""), api, setting.getString("reasoning", "default"));
+        String key = api + ":" + reasoning;
+        if (!java.util.Set.of("chat", "responses").contains(api)) throw new IllegalArgumentException("未知模型 API 协议");
+        if (externalHttp.containsKey(key)) return externalHttp.get(key);
+        Object engine = Reflector.getStaticObjectField(Reflector.findClass("io.ktor.client.engine.okhttp.OkHttp", loader), "INSTANCE");
         Object configure = function(loader, client -> {
-            XposedHelpers.callMethod(client, "setFollowRedirects", false);
-            Object negotiation = XposedHelpers.getStaticObjectField(XposedHelpers.findClass("io.ktor.client.plugins.contentnegotiation.ContentNegotiation", loader), "Plugin");
-            XposedHelpers.callMethod(client, "install", negotiation, function(loader, plugin ->
-                XposedHelpers.callStaticMethod(XposedHelpers.findClass("io.ktor.serialization.kotlinx.json.JsonSupportKt", loader),
+            Reflector.callMethod(client, "setFollowRedirects", false);
+            Reflector.callMethod(client, "engine",
+                function(loader, engineConfig -> NativeResponsesAdapter.install(loader, engineConfig, api, reasoning)));
+            Object negotiation = Reflector.getStaticObjectField(Reflector.findClass("io.ktor.client.plugins.contentnegotiation.ContentNegotiation", loader), "Plugin");
+            Reflector.callMethod(client, "install", negotiation, function(loader, plugin ->
+                Reflector.callStaticMethod(Reflector.findClass("io.ktor.serialization.kotlinx.json.JsonSupportKt", loader),
                     "json$default", plugin, null, null, 3, null)));
-            Object timeout = XposedHelpers.getStaticObjectField(XposedHelpers.findClass("io.ktor.client.plugins.HttpTimeout", loader), "Plugin");
-            XposedHelpers.callMethod(client, "install", timeout, function(loader, plugin -> {
-                XposedHelpers.callMethod(plugin, "setConnectTimeoutMillis", Long.valueOf(30000));
-                XposedHelpers.callMethod(plugin, "setSocketTimeoutMillis", Long.valueOf(120000));
-                XposedHelpers.callMethod(plugin, "setRequestTimeoutMillis", Long.valueOf(180000));
+            Object timeout = Reflector.getStaticObjectField(Reflector.findClass("io.ktor.client.plugins.HttpTimeout", loader), "Plugin");
+            Reflector.callMethod(client, "install", timeout, function(loader, plugin -> {
+                Reflector.callMethod(plugin, "setConnectTimeoutMillis", Long.valueOf(30000));
+                Reflector.callMethod(plugin, "setSocketTimeoutMillis", Long.valueOf(120000));
+                Reflector.callMethod(plugin, "setRequestTimeoutMillis", Long.valueOf(180000));
             }));
         });
-        externalHttp = XposedHelpers.callStaticMethod(XposedHelpers.findClass("io.ktor.client.HttpClientKt", loader), "HttpClient", engine, configure);
-        return externalHttp;
+        Object http = Reflector.callStaticMethod(Reflector.findClass("io.ktor.client.HttpClientKt", loader), "HttpClient", engine, configure);
+        externalHttp.put(key, http);
+        return http;
     }
 }

@@ -1,5 +1,7 @@
 # 发布
 
+构建环境：JDK 17+、Android SDK platform 37、build-tools 37.0.0；运行时需要支持 libxposed API 102 的 LSPosed。
+
 本项目不绑定服务商。默认 API 地址、密钥和模型名均为空；不要把维护者个人端点放进默认值或示例安装配置。
 
 1. 完成单元测试、Lint、debug 设备测试及实际支持的小爱版本回归。
@@ -8,7 +10,7 @@
 
 ```sh
 # apksigner 在 Android SDK build-tools 目录中；使用交互式密码提示
-apksigner sign --ks /你的私有目录/release.jks --out MiAIPlus-signed.apk dist/MiAIPlus-0.2.3-unsigned.apk
+apksigner sign --ks /你的私有目录/release.jks --out MiAIPlus-signed.apk dist/MiAIPlus-0.3.0-unsigned.apk
 apksigner verify --verbose MiAIPlus-signed.apk
 ```
 

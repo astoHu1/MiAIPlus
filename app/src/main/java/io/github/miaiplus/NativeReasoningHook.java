@@ -1,0 +1,195 @@
+package io.github.miaiplus;
+
+import android.content.Context;
+import android.content.res.Configuration;
+import android.graphics.Color;
+import android.graphics.Rect;
+import android.graphics.drawable.GradientDrawable;
+import android.os.Bundle;
+import android.view.Gravity;
+import android.view.View;
+import android.widget.ArrayAdapter;
+import android.widget.ListView;
+import android.widget.PopupWindow;
+import android.widget.TextView;
+import android.widget.Toast;
+import io.github.miaiplus.hook.HookCallback;
+import io.github.miaiplus.hook.Hooks;
+import io.github.miaiplus.hook.Reflector;
+import java.util.List;
+
+/** Version-pinned chat mode entry; never changes Xiaomi's AUTO/QUICK/EXPERT enum or stored mode. */
+final class NativeReasoningHook {
+    private NativeReasoningHook() {}
+    private static final java.util.Map<TextView, CharSequence> stockLabels = new java.util.WeakHashMap<>();
+    private static java.lang.ref.WeakReference<PopupWindow> active = new java.lang.ref.WeakReference<>(null);
+    static void dispose() throws Exception {
+        MainThread.call(() -> {
+                PopupWindow popup = active.get(); if (popup != null) popup.dismiss();
+                for (TextView chip : new java.util.ArrayList<>(stockLabels.keySet())) restoreLabel(chip);
+                stockLabels.clear(); active.clear(); return null;
+        });
+    }
+    static PopupWindow activePopup() { return active.get(); }
+    static void install(Context context, ClassLoader loader, List<HookCallback.Unhook> hooks) throws Exception {
+        Class<?> mode = Reflector.findClass("io1.a", loader);
+        Class<?> input = Reflector.findClass("com.xiaomi.voiceassistant.mainui.voicebar.StandardEditInputView", loader);
+        hooks.add(Hooks.hookMethod(input.getDeclaredMethod("updateAiModeChip", mode), new HookCallback() {
+            @Override protected void afterHookedMethod(MethodHookParam p) {
+                stockLabels.remove(chip(p.thisObject));
+                refresh(context, chip(p.thisObject));
+            }
+        }));
+        hooks.add(Hooks.hookMethod(input.getDeclaredMethod("onAttachedToWindow"), new HookCallback() {
+            @Override protected void afterHookedMethod(MethodHookParam p) {
+                NativeModelHook.invalidateConfig();
+                refresh(context, chip(p.thisObject));
+            }
+        }));
+        Class<?> popup = Reflector.findClass("uo1.f$a", loader);
+        hooks.add(Hooks.hookMethod(popup.getDeclaredMethod("showPopup", Context.class, View.class, View.class,
+            mode, Reflector.findClass("kotlin.jvm.functions.Function1", loader), boolean.class, boolean.class,
+            Reflector.findClass("kotlin.jvm.functions.Function0", loader)), new HookCallback() {
+            @Override protected void beforeHookedMethod(MethodHookParam p) {
+                NativeModelHook.invalidateConfig();
+                Bundle config;
+                try { config = NativeModelHook.config(context); }
+                catch (Exception unavailable) { return; }
+                if (!config.getBoolean("globalModel")) {
+                    if (p.args[1] instanceof TextView text) restoreLabel(text);
+                    return;
+                }
+                // Do not call the stock selection callback: it persists Xiaomi's mode and routes agents.
+                p.setResult(null);
+                try {
+                    Reflector.callMethod(p.thisObject, "dismissPopup");
+                    show((Context)p.args[0], (View)p.args[1], config);
+                } catch (Exception unavailable) {
+                    Toast.makeText((Context)p.args[0], "推理强度菜单不可用，请重新打开", Toast.LENGTH_SHORT).show();
+                }
+            }
+        }));
+        // Full-screen chat has a separate function-bar popup, independent of the voice-bar chip.
+        Class<?> fullMode = Reflector.findClass("hl1.x", loader);
+        Class<?> fullPopup = Reflector.findClass("com.xiaomi.voiceassistant.mainui.functionbar.d$a", loader);
+        hooks.add(Hooks.hookMethod(fullPopup.getDeclaredMethod("show", View.class, List.class, fullMode,
+            Reflector.findClass("kotlin.jvm.functions.Function1", loader)), new HookCallback() {
+            @Override protected void beforeHookedMethod(MethodHookParam p) {
+                NativeModelHook.invalidateConfig();
+                Bundle config;
+                try { config = NativeModelHook.config(context); }
+                catch (Exception unavailable) { return; }
+                View anchor = (View)p.args[0];
+                TextView label = labelView(anchor);
+                if (!config.getBoolean("globalModel")) {
+                    if (label != null && p.args[1] instanceof List<?> items) {
+                        for (Object item : items) if (Reflector.callMethod(item, "getMode") == p.args[2]) {
+                            label.setText((String)Reflector.callMethod(item, "getName")); break;
+                        }
+                    }
+                    return;
+                }
+                p.setResult(null);
+                try {
+                    Reflector.callMethod(p.thisObject, "dismiss");
+                    show(anchor.getContext(), anchor, config);
+                } catch (Exception unavailable) {
+                    Toast.makeText(anchor.getContext(), "推理强度菜单不可用，请重新打开", Toast.LENGTH_SHORT).show();
+                }
+            }
+        }));
+        hooks.add(Hooks.hookMethod(Reflector.findClass("com.xiaomi.voiceassistant.mainui.functionbar.c", loader)
+            .getDeclaredMethod("Z", fullMode), new HookCallback() {
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    try {
+                        Bundle config = NativeModelHook.config(context);
+                        if (config.getBoolean("globalModel")) p.setResult(ReasoningPolicy.label(config.getString("reasoning", "default")));
+                    } catch (Exception unavailable) { /* Keep the native label. */ }
+                }
+            }));
+    }
+    private static TextView chip(Object input) {
+        return (TextView)Reflector.getObjectField(Reflector.getObjectField(input, "I"), "c");
+    }
+    private static void refresh(Context context, TextView chip) {
+        try {
+            Bundle config = NativeModelHook.config(context);
+            if (config.getBoolean("globalModel")) {
+                stockLabels.putIfAbsent(chip, chip.getText());
+                chip.setText(ReasoningPolicy.label(config.getString("reasoning", "default")));
+            } else restoreLabel(chip);
+        } catch (Exception unavailable) { /* Original native label is still usable. */ }
+    }
+    private static void restoreLabel(TextView chip) {
+        CharSequence original = stockLabels.remove(chip);
+        if (original != null) chip.setText(original);
+    }
+    private static TextView labelView(View view) {
+        if (view instanceof TextView text) return text;
+        if (view instanceof android.view.ViewGroup group) {
+            for (int i = 0; i < group.getChildCount(); i++) {
+                TextView child = labelView(group.getChildAt(i));
+                if (child != null) return child;
+            }
+        }
+        return null;
+    }
+    @android.annotation.SuppressLint("RtlHardcoded") // Positions use absolute screen coordinates, including RTL.
+    static PopupWindow show(Context context, View anchor, Bundle config) {
+        PopupWindow previous = active.get();
+        if (previous != null) previous.dismiss();
+        List<String> choices = ReasoningPolicy.choices(config.getString("model", ""), config.getString("api", "chat"));
+        String selected = config.getString("reasoning", "default");
+        int checked = choices.indexOf(selected);
+        boolean dark = (context.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
+        int textColor = dark ? Color.WHITE : Color.BLACK;
+        ListView list = new ListView(context);
+        String[] labels = choices.stream().map(ReasoningPolicy::label).toArray(String[]::new);
+        list.setAdapter(new ArrayAdapter<String>(context, android.R.layout.simple_list_item_single_choice, labels) {
+            @Override public View getView(int position, View convert, android.view.ViewGroup parent) {
+                TextView row = (TextView)super.getView(position, convert, parent);
+                row.setTextColor(textColor); row.setMinHeight(dp(context, 48));
+                return row;
+            }
+        });
+        list.setChoiceMode(ListView.CHOICE_MODE_SINGLE); list.setItemChecked(Math.max(0, checked), true);
+        list.setDivider(null);
+        Rect viewport = new Rect(); anchor.getWindowVisibleDisplayFrame(viewport);
+        int width = Math.min(dp(context, 260), viewport.width());
+        int height = Math.min(dp(context, 48 * choices.size() + 12), viewport.height());
+        PopupWindow popup = new PopupWindow(list, width, height, true);
+        GradientDrawable background = new GradientDrawable();
+        background.setColor(dark ? 0xff2b2b2b : 0xfff5f5f5); background.setCornerRadius(dp(context, 20));
+        popup.setBackgroundDrawable(background); popup.setElevation(dp(context, 8)); popup.setOutsideTouchable(true);
+        View.OnAttachStateChangeListener attachment = new View.OnAttachStateChangeListener() {
+            @Override public void onViewAttachedToWindow(View view) { }
+            @Override public void onViewDetachedFromWindow(View view) { popup.dismiss(); }
+        };
+        popup.setOnDismissListener(() -> anchor.removeOnAttachStateChangeListener(attachment));
+        list.setPadding(0, dp(context, 6), 0, dp(context, 6));
+        list.setOnItemClickListener((parent, row, position, id) -> {
+            try {
+                Bundle extras = new Bundle();
+                for (String key : List.of("endpoint", "model", "api")) extras.putString(key, config.getString(key, ""));
+                extras.putString("reasoning", choices.get(position));
+                Bundle result = context.getContentResolver().call(BridgeProvider.URI, "set_reasoning", null, extras);
+                if (result == null) throw new IllegalStateException("未保存");
+                NativeModelHook.invalidateConfig();
+                TextView text = labelView(anchor);
+                if (text != null) text.setText(ReasoningPolicy.label(result.getString("reasoning", "default")));
+                popup.dismiss();
+            } catch (Exception failure) {
+                Toast.makeText(context, "模型配置已更改或保存失败，请重新打开菜单", Toast.LENGTH_SHORT).show();
+                popup.dismiss();
+            }
+        });
+        int[] location = new int[2]; anchor.getLocationOnScreen(location);
+        int x = Math.max(viewport.left, Math.min(location[0], viewport.right - width));
+        int y = Math.max(viewport.top, location[1] - height - dp(context, 8));
+        popup.showAtLocation(anchor, Gravity.TOP | Gravity.LEFT, x, y);
+        anchor.addOnAttachStateChangeListener(attachment);
+        active = new java.lang.ref.WeakReference<>(popup);
+        return popup;
+    }
+    private static int dp(Context context, int value) { return Math.round(context.getResources().getDisplayMetrics().density * value); }
+}
