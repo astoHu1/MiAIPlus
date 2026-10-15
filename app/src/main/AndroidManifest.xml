@@ -1,0 +1,27 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <queries>
+        <package android:name="com.miui.voiceassist" />
+        <intent><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent>
+    </queries>
+    <application android:label="MiAIPlus" android:theme="@android:style/Theme.Material.Light.NoActionBar"
+        android:allowBackup="false" android:usesCleartextTraffic="true" android:supportsRtl="true">
+        <meta-data android:name="xposedmodule" android:value="true" />
+        <meta-data android:name="xposeddescription" android:value="为小爱补充第三方模型与本机控屏工具，保留原有模型和工具" />
+        <meta-data android:name="xposedminversion" android:value="82" />
+        <meta-data android:name="xposedscope" android:resource="@array/xposed_scope" />
+        <activity android:name=".MainActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <provider android:name=".BridgeProvider" android:authorities="io.github.miaiplus.bridge"
+            android:exported="true" />
+        <service android:name=".ScreenService" android:exported="true"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter><action android:name="android.accessibilityservice.AccessibilityService" /></intent-filter>
+            <meta-data android:name="android.accessibilityservice" android:resource="@xml/accessibility" />
+        </service>
+    </application>
+</manifest>

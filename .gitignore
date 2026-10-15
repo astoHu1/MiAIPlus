@@ -1,0 +1,17 @@
+.tools/
+.gradle/
+**/build/
+local.properties
+*.jks
+*.keystore
+.DS_Store
+downloads/
+work/
+recon/
+dist/
+.claude/
+__pycache__/
+*.pyc
+/adb-probe.txt
+/RECON-STATUS.md
+/UI-AUTOMATION-STATUS.md

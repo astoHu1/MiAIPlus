@@ -1,0 +1,4 @@
+<resources>
+    <string name="accessibility_description">在你发起控屏任务后读取当前屏幕、点击、滑动和输入。可随时按悬浮停止键终止。</string>
+    <string-array name="xposed_scope"><item>com.miui.voiceassist</item></string-array>
+</resources>
