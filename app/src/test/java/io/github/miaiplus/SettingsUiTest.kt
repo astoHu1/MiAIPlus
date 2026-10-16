@@ -16,6 +16,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
@@ -167,15 +168,78 @@ class SettingsUiTest {
             attachInfo(compose.activity, ProviderInfo().apply { authority = "io.github.miaiplus.bridge" })
         }
         ShadowContentResolver.registerProviderInternal("io.github.miaiplus.bridge", provider)
-        compose.onNodeWithText("运行状态").performScrollTo().performClick()
+        compose.onNodeWithTag("tab-Control").performClick()
+        compose.onNodeWithText("虚拟屏").performClick()
+        compose.onNodeWithTag("tab-Control").assertIsSelected()
         assertEquals(0, calls.get())
-        compose.onNodeWithText("检查后台屏可用性").performScrollTo().performClick()
+        compose.onNodeWithText("检查前置条件").performScrollTo().performClick()
         compose.waitUntil { calls.get() == 1 }
         compose.onNodeWithText("前置条件已满足").assertExists()
         compose.activityRule.scenario.recreate()
         compose.onNodeWithText("前置条件已满足").assertExists()
         assertEquals(1, calls.get())
-        capture("background-check-light")
+        capture("virtual-screen-light")
+        RuntimeEnvironment.setQualifiers("+night")
+        compose.activityRule.scenario.recreate()
+        capture("virtual-screen-dark")
+        RuntimeEnvironment.setQualifiers("+notnight")
+        compose.onNodeWithContentDescription("返回").performClick()
+        compose.onNodeWithText("启用控屏工具").assertExists()
+    }
+
+    @Test fun virtualProbeRequiresConfirmationAndKeepsIndividualVerdicts() {
+        val calls = AtomicInteger()
+        val provider = BackgroundStatusProvider(calls).apply {
+            attachInfo(compose.activity, ProviderInfo().apply { authority = "io.github.miaiplus.bridge" })
+        }
+        ShadowContentResolver.registerProviderInternal("io.github.miaiplus.bridge", provider)
+        compose.onNodeWithTag("tab-Control").performClick()
+        compose.onNodeWithText("虚拟屏").performClick()
+        compose.onNodeWithText("开始检测").performClick()
+        assertEquals(0, calls.get())
+        compose.onNodeWithText("取消", useUnmergedTree = true).performClick()
+        assertEquals(0, calls.get())
+        compose.onNodeWithText("开始检测").performClick()
+        compose.onNodeWithText("开始", useUnmergedTree = true).performClick()
+        compose.waitUntil { calls.get() == 1 }
+        compose.onNodeWithText("1 项通过 · 1 项未通过 · 6 项未验证").performScrollTo().assertExists()
+        capture("virtual-result-light")
+        compose.onNodeWithText("主屏焦点").performScrollTo().performClick()
+        compose.onNodeWithText("fixture focus changed", substring = true).assertExists()
+        compose.onNodeWithText("关闭", useUnmergedTree = true).performClick()
+        compose.activityRule.scenario.recreate()
+        assertEquals(1, calls.get())
+    }
+
+    @Test fun virtualProbeRefusesToRunDuringAnActiveTask() {
+        val calls = AtomicInteger()
+        val provider = BackgroundStatusProvider(calls, active = true).apply {
+            attachInfo(compose.activity, ProviderInfo().apply { authority = "io.github.miaiplus.bridge" })
+        }
+        ShadowContentResolver.registerProviderInternal("io.github.miaiplus.bridge", provider)
+        compose.onNodeWithTag("tab-Control").performClick()
+        compose.onNodeWithText("虚拟屏").performClick()
+        compose.onNodeWithText("开始检测").performClick()
+        compose.onNodeWithText("开始", useUnmergedTree = true).performClick()
+        compose.onNodeWithText("请先结束当前控屏任务").assertExists()
+        assertEquals(0, calls.get())
+    }
+
+    @Test fun probeParsingNeverTurnsMissingOrUnknownEvidenceIntoSuccess() {
+        val report = DisplayProbeReport.from(Bundle().apply {
+            putString("items", """[{"item":"createOwnDisplay","status":"supported"},{"item":"capture","status":"new-status"}]""")
+            putString("supported", "8")
+        }, "fixture")
+        assertEquals(1, report.passed)
+        assertEquals(7, report.untested)
+        assertEquals("未验证", report.items.first { it.id == "capture" }.verdict)
+        assertThrows(IllegalStateException::class.java) { DisplayProbeReport.from(Bundle(), "fixture") }
+        assertThrows(IllegalStateException::class.java) { DisplayProbeReport.from(Bundle().apply {
+            putString("items", "not JSON")
+        }, "fixture") }
+        assertThrows(IllegalStateException::class.java) { DisplayProbeReport.from(Bundle().apply {
+            putString("error", "PERMISSION_DENIED")
+        }, "fixture") }
     }
 
     @Test fun largeModelListOnlyComposesVisibleItemsAndKeepsSelectionAsDraft() {
@@ -214,12 +278,20 @@ class SettingsUiTest {
 }
 
 /** IPC fixture: no root process, display creation, or real device interaction. */
-private class BackgroundStatusProvider(private val calls: AtomicInteger) : ContentProvider() {
+private class BackgroundStatusProvider(private val calls: AtomicInteger, private val active: Boolean = false) : ContentProvider() {
     override fun onCreate() = true
     override fun call(method: String, arg: String?, extras: Bundle?): Bundle {
-        check(method == "background_display_status") { "Unexpected IPC: $method" }
+        if (method == "screen_state") return Bundle().apply { putBoolean("active", active) }
+        if (method == "accessibility_health") return Bundle().apply { putBoolean("busy", active) }
+        check(method == "background_display_status" || method == "background_display_probe") { "Unexpected IPC: $method" }
         calls.incrementAndGet()
-        return Bundle().apply { putBoolean("root", true); putBoolean("deviceLocked", false) }
+        return Bundle().apply {
+            putBoolean("root", true); putBoolean("deviceLocked", false)
+            if (method == "background_display_probe") putString("items", """[
+                {"item":"createOwnDisplay","status":"supported"},
+                {"item":"focusIsolation","status":"unsupported","reason":"fixture focus changed"}
+            ]""")
+        }
     }
     override fun query(uri: Uri, projection: Array<out String>?, selection: String?,
                        selectionArgs: Array<out String>?, sortOrder: String?): Cursor? = null

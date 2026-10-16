@@ -27,6 +27,7 @@ data class ProfileDraft(val id: String, val name: String, val endpoint: String,
 class SettingsState(application: Application) : AndroidViewModel(application) {
     private val context = application
     private val prefs = Config.prefs(context)
+    val virtualScreen = VirtualScreenState(application, viewModelScope)
     var config by mutableStateOf(Config(context))
         private set
     var profiles by mutableStateOf<EndpointProfiles?>(null)
@@ -50,10 +51,6 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
     var reloadStatus by mutableStateOf("")
         private set
     var guardStatus by mutableStateOf("")
-        private set
-    var checkingBackground by mutableStateOf(false)
-        private set
-    var backgroundCheck by mutableStateOf<BackgroundCheck?>(null)
         private set
     var query by mutableStateOf("")
     var testMode by mutableIntStateOf(0)
@@ -157,22 +154,6 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
 
     fun reload() { HotReload.request(); refresh() }
 
-    /** Root is queried only after the user taps the check row, never by the refresh timer. */
-    fun checkBackgroundDisplay() {
-        if (checkingBackground) return
-        checkingBackground = true
-        viewModelScope.launch {
-            try {
-                val response = withContext(Dispatchers.IO) {
-                    context.contentResolver.call(BridgeProvider.URI, "background_display_status", null, null)
-                }
-                backgroundCheck = BackgroundCheck.from(response)
-            } catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { backgroundCheck = BackgroundCheck("检查失败", "请稍后重试") }
-            finally { checkingBackground = false }
-        }
-    }
-
     fun fetchModels() {
         val source = draft ?: return
         if (fetching) return
@@ -242,10 +223,11 @@ data class BackgroundCheck(val title: String, val summary: String) {
     companion object {
         fun from(response: Bundle?): BackgroundCheck = when {
             response == null -> BackgroundCheck("检查失败", "未收到模块返回的结果")
+            response.getString("error") == "任务不存在或不可访问" -> BackgroundCheck("后端需更新", "当前版本不支持虚拟屏检查")
             response.getString("error") != null -> BackgroundCheck("暂不可用", response.getString("error")!!)
             !response.getBoolean("root") -> BackgroundCheck("未取得 root 授权", "请在 root 管理器中允许 MiAIPlus")
             response.getBoolean("deviceLocked") -> BackgroundCheck("手机已锁定", "解锁后重新检查")
-            else -> BackgroundCheck("前置条件已满足", "已取得 root 授权，手机已解锁。设备兼容性以实际任务结果为准。")
+            else -> BackgroundCheck("前置条件已满足", "已取得 root，手机已解锁。")
         }
     }
 }

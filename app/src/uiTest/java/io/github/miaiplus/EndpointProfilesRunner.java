@@ -35,6 +35,77 @@ final class EndpointProfilesRunner {
 
     static void run(Instrumentation test) { new EndpointProfilesRunner(test).run(); }
 
+    static void runVirtual(Instrumentation test) { new EndpointProfilesRunner(test).runVirtual(); }
+
+    private void runVirtual() {
+        var context = test.getTargetContext();
+        var prefs = Config.prefs(context);
+        boolean originalMode = prefs.getBoolean("backgroundDisplay", false);
+        boolean hadMode = prefs.contains("backgroundDisplay");
+        Bundle result = new Bundle();
+        int code = Activity.RESULT_CANCELED;
+        try {
+            Bundle screen = context.getContentResolver().call(BridgeProvider.URI, "screen_state", null, null);
+            Bundle health = context.getContentResolver().call(BridgeProvider.URI, "accessibility_health", null, null);
+            check(screen != null && !screen.getBoolean("active") && health != null
+                && !health.getBoolean("busy") && !health.getBoolean("preparing"), "Stop active work before UI tests");
+            activity = (MainActivity) test.startActivitySync(new Intent(context, MainActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
+            onMain(() -> state = new ViewModelProvider(activity).get(SettingsState.class));
+            click("控屏");
+            click("虚拟屏");
+            check(state.getVirtualScreen().getAvailability() == null && state.getVirtualScreen().getReport() == null,
+                "Virtual checks ran automatically");
+            click("使用虚拟屏");
+            waitFor(() -> new Config(context).backgroundDisplay != originalMode, "Virtual mode did not save");
+            click("使用虚拟屏");
+            waitFor(() -> new Config(context).backgroundDisplay == originalMode, "Virtual mode did not restore");
+            click("检查前置条件");
+            waitFor(() -> state.getVirtualScreen().getAvailability() != null && !state.getVirtualScreen().getChecking(),
+                "Prerequisite check did not finish");
+            check("前置条件已满足".equals(state.getVirtualScreen().getAvailability().getTitle()),
+                "Device root/unlock prerequisites not satisfied");
+            click("测试应用");
+            click("虚拟屏测试");
+            check(state.getVirtualScreen().getSelectedApp() != null, "Probe application was not selected");
+            click("开始检测");
+            click("取消");
+            check(state.getVirtualScreen().getReport() == null && !state.getVirtualScreen().getProbing(),
+                "Cancelled confirmation started a probe");
+            click("开始检测");
+            click("开始");
+            long deadline = SystemClock.elapsedRealtime() + 90000;
+            while (state.getVirtualScreen().getProbing() && SystemClock.elapsedRealtime() < deadline) settle();
+            check(!state.getVirtualScreen().getProbing(), "Virtual probe timed out");
+            var report = state.getVirtualScreen().getReport();
+            check(report != null, "Virtual probe returned no report: " + state.getVirtualScreen().getError());
+            check(report.getItems().size() >= 8, "Virtual probe report is incomplete");
+            StringBuilder verdicts = new StringBuilder();
+            for (var item : report.getItems()) verdicts.append(item.getId()).append('=').append(item.getStatus()).append(' ');
+            capture("virtual-screen-device");
+            click("创建屏幕");
+            click("关闭");
+            recreate();
+            check(state.getVirtualScreen().getReport() == report && !state.getVirtualScreen().getProbing(),
+                "Virtual result did not survive recreation");
+            click("返回");
+            click("首页");
+            check(state.getJob() == null, "UI test started a model job");
+            result.putString("stream", "PASS: virtual-screen UI, mode persistence, prerequisites, app selection, "
+                + "confirmation/cancel, actual capability probe, details, recreation and return. No model requests.\n"
+                + "Probe verdicts: " + verdicts + "\n");
+            code = Activity.RESULT_OK;
+        } catch (Throwable failure) {
+            result.putString("stream", "FAIL: " + android.util.Log.getStackTraceString(failure));
+        } finally {
+            if (activity != null) { onMain(activity::finish); test.waitForIdleSync(); }
+            var editor = prefs.edit();
+            if (hadMode) editor.putBoolean("backgroundDisplay", originalMode); else editor.remove("backgroundDisplay");
+            if (!editor.commit()) { code = Activity.RESULT_CANCELED; result.putString("stream", "FAIL: mode restore failed\n"); }
+        }
+        test.finish(code, result);
+    }
+
     private void run() {
         var context = test.getTargetContext();
         var prefs = Config.prefs(context);
@@ -107,10 +178,15 @@ final class EndpointProfilesRunner {
             capture("control");
             click("首页");
             click("运行状态");
-            check(state.getBackgroundCheck() == null, "Background check ran automatically");
-            click("检查后台屏可用性");
-            waitFor(() -> state.getBackgroundCheck() != null && !state.getCheckingBackground(), "Background check did not finish");
+            click("虚拟屏");
+            check(state.getVirtualScreen().getAvailability() == null, "Background check ran automatically");
+            click("检查前置条件");
+            waitFor(() -> state.getVirtualScreen().getAvailability() != null && !state.getVirtualScreen().getChecking(), "Background check did not finish");
             // Older backends can report unavailable; the UI must still finish the check and remain usable.
+            capture("virtual-screen");
+            click("返回");
+            click("首页");
+            click("运行状态");
             capture("status");
             click("直接测试");
             waitFor(() -> find(node -> "想在手机上做什么？".contentEquals(node.getHintText() == null ? "" : node.getHintText())

@@ -81,10 +81,10 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class SettingsPage(val title: String, val depth: Int = 0) {
-    Home("MiAIPlus"), Model("模型 API"), Control("控屏"), Status("运行状态", 1), Test("直接测试", 2);
+    Home("MiAIPlus"), Model("模型 API"), Control("控屏"), Virtual("虚拟屏", 1), Status("运行状态", 1), Test("直接测试", 2);
 
-    val tab: SettingsPage get() = if (depth > 0) Home else this
-    val parent: SettingsPage get() = if (this == Test) Status else Home
+    val tab: SettingsPage get() = when (this) { Virtual -> Control; Status, Test -> Home; else -> this }
+    val parent: SettingsPage get() = when (this) { Test -> Status; Virtual -> Control; else -> Home }
 }
 
 @Composable
@@ -170,8 +170,9 @@ private fun SettingsApp(state: SettingsState, openSettings: (Boolean) -> Unit, o
                         when (destination) {
                             SettingsPage.Home -> HomePage(state) { navigate(SettingsPage.Status) }
                             SettingsPage.Model -> ModelPage(state)
-                            SettingsPage.Control -> ControlPage(state, openSettings)
-                            SettingsPage.Status -> StatusPage(state, openSettings) { navigate(SettingsPage.Test) }
+                            SettingsPage.Control -> ControlPage(state, openSettings) { navigate(SettingsPage.Virtual) }
+                            SettingsPage.Virtual -> VirtualScreenPage(state)
+                            SettingsPage.Status -> StatusPage(state, openSettings, { navigate(SettingsPage.Virtual) }) { navigate(SettingsPage.Test) }
                             SettingsPage.Test -> TestPage(state, onScreenTask)
                         }
                     }
@@ -249,6 +250,7 @@ private fun HomePage(state: SettingsState, openStatus: () -> Unit) {
     }
     Section("当前配置") {
         BasicComponent(title = "控屏工具", summary = if (state.config.enabled) "已开启" else "已关闭")
+        BasicComponent(title = "执行屏幕", summary = if (state.config.backgroundDisplay) "虚拟屏" else "主屏")
         BasicComponent(title = "规划模型", summary = if (state.config.planner == "external")
             state.profiles?.active()?.model?.ifBlank { "未选择" } ?: "未配置" else "小爱当前模型")
     }
@@ -358,7 +360,7 @@ private fun ModelPage(state: SettingsState) {
 }
 
 @Composable
-private fun ControlPage(state: SettingsState, openSettings: (Boolean) -> Unit) {
+private fun ControlPage(state: SettingsState, openSettings: (Boolean) -> Unit, openVirtual: () -> Unit) {
     var editSteps by remember { mutableStateOf(false) }
     var steps by remember { mutableStateOf("") }
     Group {
@@ -375,10 +377,9 @@ private fun ControlPage(state: SettingsState, openSettings: (Boolean) -> Unit) {
             onSelectedIndexChange = { state.setOption("protocol", if (it == 1) "autoglm" else "phone_use") })
         ArrowPreference(title = "最大步数", summary = "${state.config.maxSteps} 步",
             onClick = { steps = state.config.maxSteps.toString(); editSteps = true })
-        SwitchPreference(title = "后台屏幕执行",
-            checked = state.config.backgroundDisplay, onCheckedChange = { state.setOption("backgroundDisplay", it) })
+        ArrowPreference(title = "虚拟屏", summary = if (state.config.backgroundDisplay) "已开启" else "已关闭",
+            onClick = openVirtual)
     }
-    Hint("后台屏需 root 和解锁；不可用时停止任务。")
     Section("权限") {
         ArrowPreference(title = "无障碍服务", summary = if (state.accessible) "已连接" else "未连接 · 前往开启",
             onClick = { openSettings(false) })
@@ -400,7 +401,7 @@ private fun ControlPage(state: SettingsState, openSettings: (Boolean) -> Unit) {
 }
 
 @Composable
-private fun StatusPage(state: SettingsState, openSettings: (Boolean) -> Unit, openTest: () -> Unit) {
+private fun StatusPage(state: SettingsState, openSettings: (Boolean) -> Unit, openVirtual: () -> Unit, openTest: () -> Unit) {
     Section("模块") {
         BasicComponent(title = "小爱连接", summary = state.hookReport)
         BasicComponent(title = "框架与热重载", summary = state.reloadStatus)
@@ -412,11 +413,68 @@ private fun StatusPage(state: SettingsState, openSettings: (Boolean) -> Unit, op
         BasicComponent(title = "任务前检查", summary = state.guardStatus)
     }
     Section("诊断") {
-        ArrowPreference(title = if (state.checkingBackground) "正在检查后台屏…" else "检查后台屏可用性",
-            summary = "检查 root 与锁屏状态，不创建屏幕", enabled = !state.checkingBackground,
-            onClick = { state.checkBackgroundDisplay() })
-        state.backgroundCheck?.let { BasicComponent(title = it.title, summary = it.summary) }
+        ArrowPreference(title = "虚拟屏", summary = "检查与能力检测", onClick = openVirtual)
         ArrowPreference(title = "直接测试", onClick = openTest)
+    }
+}
+
+@Composable
+private fun VirtualScreenPage(state: SettingsState) {
+    val screen = state.virtualScreen
+    var confirmProbe by remember { mutableStateOf(false) }
+    var detail by remember { mutableStateOf<DisplayProbeItem?>(null) }
+    Group {
+        SwitchPreference(title = "使用虚拟屏", checked = state.config.backgroundDisplay,
+            enabled = !screen.busy, onCheckedChange = { state.setOption("backgroundDisplay", it) })
+    }
+    Hint("在独立屏幕执行，需要 root 和解锁。不可用时停止，不转到主屏。")
+    Section("检查") {
+        ArrowPreference(title = if (screen.checking) "正在检查…" else "检查前置条件",
+            summary = "检查 root 与锁屏，不创建屏幕", enabled = !screen.busy,
+            onClick = { screen.check() })
+        screen.availability?.let { BasicComponent(title = it.title, summary = it.summary) }
+    }
+    Section("能力检测") {
+        ArrowPreference(title = if (screen.loadingApps) "正在读取应用…" else "测试应用",
+            summary = screen.selectedApp?.name ?: "不启动应用", enabled = !screen.busy && !screen.loadingApps,
+            onClick = { screen.loadApps() })
+        ArrowPreference(title = if (screen.probing) "正在检测…" else "开始检测",
+            enabled = !screen.busy, onClick = { confirmProbe = true })
+    }
+    Hint("检测会创建并关闭虚拟屏；主屏请保持不动。")
+    screen.error?.let { Group { BasicComponent(title = "未能完成", summary = it) } }
+    screen.report?.let { report ->
+        Section("检测结果") {
+            BasicComponent(title = report.summary, summary = "测试应用：${report.appName}")
+            report.items.forEach { item ->
+                ArrowPreference(title = item.title, summary = item.verdict, onClick = { detail = item })
+            }
+        }
+        Hint("只代表本次检测。未验证的项目仍需实测。")
+    }
+    ConfirmDialog(show = confirmProbe, title = "检测虚拟屏？",
+        summary = if (screen.selectedApp == null) "会短暂创建虚拟屏并发送测试输入，不启动应用。期间请勿操作主屏。"
+            else "会在虚拟屏打开「${screen.selectedApp!!.name}」，发送点击和按键，结束后关闭。请选择无个人数据的测试应用，期间请勿操作主屏。",
+        confirm = "开始", onDismiss = { confirmProbe = false },
+        onConfirm = { confirmProbe = false; screen.probe() })
+    OverlayDialog(show = screen.apps != null, title = "测试应用", onDismissRequest = { screen.dismissApps() }) {
+        LazyColumn(Modifier.heightIn(max = 400.dp)) {
+            item { ArrowPreference(title = "不启动应用", onClick = { screen.selectApp(null) }) }
+            items(screen.apps.orEmpty(), key = { it.component }) { app ->
+                ArrowPreference(title = app.name, summary = app.component.substringBefore('/'),
+                    onClick = { screen.selectApp(app) })
+            }
+        }
+        TextButton("取消", { screen.dismissApps() }, Modifier.fillMaxWidth().padding(top = 12.dp))
+    }
+    OverlayDialog(show = detail != null, title = detail?.title ?: "检测详情", onDismissRequest = { detail = null }) {
+        Column {
+            SelectionContainer {
+                Text(detail?.detail.orEmpty(), style = MiuixTheme.textStyles.footnote1,
+                    modifier = Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()))
+            }
+            TextButton("关闭", { detail = null }, Modifier.fillMaxWidth().padding(top = 12.dp))
+        }
     }
 }
 
