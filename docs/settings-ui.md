@@ -1,6 +1,6 @@
 # 模块配置界面
 
-此界面在独立的 `ui/miuix-settings` 分支开发。基于提交 `4be55fc`，不包含 main 工作区尚未提交的后台屏实现修改。
+此界面在独立的 `ui/miuix-settings` 分支开发。已同步远程 main `095156c`，不包含 main 工作区尚未提交的后台屏实现修改。
 
 ## 页面与保存方式
 
@@ -28,8 +28,10 @@ AGP 9 内置 Kotlin 使用 2.4.20，与 Compose 编译插件保持一致，以�
 
 使用仓库规定的 Gradle 命令。`SettingsUiTest` 在 Robolectric Android 35 上验证默认设置、页面导航、步数边界、未保存配置、未连接状态及后台屏检查的按需调用与结果映射。后台检查使用 IPC fixture，不启动真实 root。渲染截图输出到 `app/build/outputs/ui-screenshots/`，不包含设备或个人服务数据。
 
-本次 UI 分支的构建与 88 项测试通过。Lint 的 3 个阻塞均来自基线中未修改的 `helper/DisplayHelper.java`：144、238 行 `WrongConstant`，229 行 `BlockedPrivateApi`。没有为这些问题添加屏蔽规则，也没有修改后台屏代码。
+本次 UI 分支的构建与 89 项测试通过。Lint 的 3 个阻塞均来自基线中未修改的 `helper/DisplayHelper.java`：144、238 行 `WrongConstant`，229 行 `BlockedPrivateApi`。没有为这些问题添加屏蔽规则，也没有修改后台屏代码。
 
 与后台屏新代码合并的隔离副本通过 Debug、Release、AndroidTest 构建、88 项测试及两套 Lint（0 errors）。设备测试 runner 的旧 Frame 构造已改用现有 `Frame.physical` 工厂，避免截图元数据扩展后编译失败。
 
-这些检查不代表真实 XiaoAI、root、LSPosed 或模型服务验证。未向实体设备安装 APK，也未重启小爱。
+配置界面已完成实机性能对比；日常试用使用优化的 Preview 构建。详见 [性能记录](settings-performance.md)。本次未重启小爱或请求真实模型。
+
+状态仅在进入前台时刷新，运行状态页另每 2 秒更新；模型选择列表按可见项组合。日常实机使用 `:app:assemblePreview`，Debug 用于调试与原设备测试脚本。

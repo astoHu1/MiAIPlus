@@ -8,6 +8,7 @@ import android.database.Cursor
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
+import androidx.lifecycle.ViewModelProvider
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -90,6 +91,20 @@ class SettingsUiTest {
         compose.onNodeWithText("前置条件已满足").assertExists()
         assertEquals(1, calls.get())
         capture("background-check-light")
+    }
+
+    @Test fun largeModelListOnlyComposesVisibleItemsAndKeepsSelectionAsDraft() {
+        compose.onNodeWithText("模型服务").performClick()
+        val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
+        compose.runOnIdle { state.modelList = List(1000) { "model-$it" } }
+        compose.onNodeWithText("model-0").assertExists()
+        compose.onNodeWithText("model-999").assertDoesNotExist()
+        compose.onNodeWithText("model-0").performClick()
+        compose.runOnIdle {
+            assertEquals("model-0", state.draft?.model)
+            assertEquals("", Config(compose.activity).model)
+            assertEquals(null, state.modelList)
+        }
     }
 
     @Test fun backgroundCheckDistinguishesFailuresFromReadyPrerequisites() {

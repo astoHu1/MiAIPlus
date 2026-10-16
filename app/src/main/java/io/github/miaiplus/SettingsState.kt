@@ -175,7 +175,7 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
         fetching = true; error = null
         viewModelScope.launch {
             try {
-                val models = withContext(Dispatchers.IO) { ModelClient.listModels(source.endpoint, source.apiKey).toList() }
+                val models = withContext(Dispatchers.IO) { ModelClient.listModels(source.endpoint, source.apiKey).distinct() }
                 if (draft?.id == source.id && draft?.endpoint == source.endpoint && draft?.apiKey == source.apiKey) {
                     if (models.isEmpty()) error = "服务未返回模型，可手动填写" else modelList = models
                 }

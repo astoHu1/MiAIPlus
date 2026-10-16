@@ -5,7 +5,7 @@
 本项目不绑定服务商。默认 API 地址、密钥和模型名均为空；不要把维护者个人端点放进默认值或示例安装配置。
 
 1. 完成单元测试、Lint、debug 设备测试及实际支持的小爱版本回归。
-2. 构建 `:app:assembleRelease`，用 `scripts/package_release.py` 生成干净源码包和未签名 APK。
+2. 构建 `:app:assembleRelease :app:assemblePreview`，用 `scripts/package_release.py` 生成干净源码包和未签名 APK。
 3. 使用自己的长期私有 keystore 签名。不要提交 keystore、密码、真实端点配置或测试设备数据。
 
 ```sh
@@ -13,6 +13,8 @@
 apksigner sign --ks /你的私有目录/release.jks --out MiAIPlus-signed.apk dist/MiAIPlus-0.3.3-unsigned.apk
 apksigner verify --verbose MiAIPlus-signed.apk
 ```
+
+Preview 使用优化的非调试构建与本机开发签名，不含 debug 测试页面及广播接收器。不要将 Debug APK 作为日常配置界面性能版本。
 
 开发签名的 preview APK 仅供试用，不是正式发布签名。正式签名无法直接覆盖开发签名版，先导出所需设置并卸载测试版；不自动迁移或发布任何个人密钥。
 

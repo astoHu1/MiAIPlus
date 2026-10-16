@@ -11,7 +11,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.animation.AnimatedContent
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -75,9 +76,13 @@ private fun SettingsApp(state: SettingsState, openSettings: (Boolean) -> Unit, o
     var leaveTo by remember { mutableStateOf<SettingsPage?>(null) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val context = androidx.compose.ui.platform.LocalContext.current
-    LaunchedEffect(lifecycle) {
+    LaunchedEffect(lifecycle, page) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            while (true) { state.refresh(); delay(1000) }
+            state.refresh()
+            // Live diagnostics are useful only while their page is visible.
+            if (page == SettingsPage.Status) {
+                while (true) { delay(2000); state.refresh() }
+            }
         }
     }
     LaunchedEffect(state.notice) {
@@ -116,7 +121,9 @@ private fun SettingsApp(state: SettingsState, openSettings: (Boolean) -> Unit, o
             }
         },
     ) { padding ->
-        AnimatedContent(targetState = page, label = "settings-page") { current ->
+        // Keep one page tree and avoid another lookahead/size transition around a
+        // form whose collapsing app bar already changes its layout constraints.
+        key(page) {
             val scroll = rememberScrollState()
             Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)
                 .nestedScroll(scrollBehavior.nestedScrollConnection), contentAlignment = Alignment.TopCenter) {
@@ -128,7 +135,7 @@ private fun SettingsApp(state: SettingsState, openSettings: (Boolean) -> Unit, o
                         Group { BasicComponent(title = "未能完成", summary = message) }
                         Spacer(Modifier.height(12.dp))
                     }
-                    when (current) {
+                    when (page) {
                         SettingsPage.Home -> HomePage(state, ::navigate)
                         SettingsPage.Model -> ModelPage(state)
                         SettingsPage.Control -> ControlPage(state, openSettings)
@@ -257,8 +264,8 @@ private fun ModelPage(state: SettingsState) {
         error = state.error,
         onConfirm = { if (state.deleteProfile()) showDelete = false })
     OverlayDialog(show = state.modelList != null, title = "选择模型", onDismissRequest = { state.modelList = null }) {
-        Column(Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState())) {
-            state.modelList.orEmpty().forEach { model ->
+        LazyColumn(Modifier.heightIn(max = 400.dp)) {
+            items(state.modelList.orEmpty(), key = { it }) { model ->
                 ArrowPreference(title = model, onClick = { state.updateProfile(model = model); state.modelList = null })
             }
         }
