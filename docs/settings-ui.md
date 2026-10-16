@@ -1,6 +1,6 @@
 # 模块配置界面
 
-在独立工作区的 `ui/miuix-settings` 分支开发。本次导航调整只修改前端及其测试、文档，没有操作 main 工作区或手机。
+在独立工作区的 `ui/miuix-settings` 分支开发。本次只修改前端及其测试、文档，没有操作 main 工作区；手机验证在 PR 推送后进行。
 
 ## 页面
 
@@ -26,8 +26,8 @@
 「控屏 → 虚拟屏」管理原有 `backgroundDisplay` 配置，首页同步显示执行屏幕。关闭时沿用主屏；开启后由已有后端执行虚拟屏任务，不可用时停止。
 
 - 前置检查调用 `background_display_status`，只查询 root 与锁屏条件。
-- 能力检测调用 `background_display_probe`。可选择已安装的测试应用，也可不启动应用。确认后短暂创建虚拟屏、发送测试输入并回收。
-- 结果按创建、截图、启动、无障碍树、触控、按键/输入、主屏焦点、回收分别显示通过、未通过或未验证。点击查看后端详情；缺失与未知结果按未验证处理，不采信汇总数字为成功。
+- 能力检测调用 `background_display_probe`。可按名称或包名搜索测试应用，也可不启动应用。确认后短暂创建虚拟屏、发送测试输入并回收。
+- 结果按创建、截图、启动、无障碍树、触控、按键通路、主屏焦点、回收分别显示通过、未通过或未验证。点击查看后端详情；缺失与未知结果按未验证处理，不采信汇总数字为成功。
 - 两个检查都先确认没有控屏任务或准备工作，且不随页面进入、状态刷新、重建或返回重复执行。应用列表懒加载，IPC 与结果解析在工作线程运行。
 
 前端只使用现有 IPC，没有添加虚拟屏后端、创建常驻屏幕、自动探测或假预览入口。当前后端不提供预览/接管接口，因此页面不显示这些操作。旧后端返回不支持时显示需更新。
@@ -42,7 +42,7 @@
 
 `SettingsUiTest` 在 Robolectric Android 35 上检查底栏顺序、草稿保存/放弃/取消、二级页进退过渡与父页面、历史注入状态、步数边界、模型列表懒加载以及后台屏按需查询。截图位于 `app/build/outputs/ui-screenshots/`，只使用默认值和测试数据。
 
-本轮 95 项 JVM / Robolectric 测试通过，Debug、AndroidTest 与优化 Preview APK 构建通过。Preview 本地构建显式跳过存在基线错误的 `lintVitalPreview`；完整 Lint 单独执行并保留失败结果。仅进行本地构建与测试，不安装手机、不重启小爱、不发起模型请求。此前设备性能结果见 [性能记录](settings-performance.md)，不代表本次重排后的实机测量。
+本轮 96 项 JVM / Robolectric 测试通过，包含应用搜索与选择；Debug、AndroidTest 与优化 Preview APK 构建通过。Preview 本地构建显式跳过存在基线错误的 `lintVitalPreview`；完整 Lint 单独执行并保留失败结果。实机 UI 专项通过，未重启小爱或发起模型请求。本次与历史性能数据分别记录于 [性能记录](settings-performance.md)。
 
 完整 Lint 仍被基线 `helper/DisplayHelper.java` 的三处错误阻塞：144、238 行 `WrongConstant`，229 行 `BlockedPrivateApi`。本次不修改后台文件或添加屏蔽规则。
 
@@ -59,4 +59,27 @@
 | --- | --- |
 | ![虚拟屏](images/settings-virtual.png) | ![深色虚拟屏](images/settings-virtual-dark.png) |
 
-本轮实机验证结果将在测试完成后补充。
+运行虚拟屏专项（须有已授权、无活动控屏任务的设备及独立测试应用）：
+
+```sh
+./gradlew -PuiTestBuildType=preview :app:assemblePreviewAndroidTest
+adb shell am instrument --user 0 -w -e virtual true \
+  io.github.miaiplus.test/io.github.miaiplus.SettingsUiRunner
+```
+
+`-e virtualIdle true` 提供 45 秒页面空闲采样窗口，不启动 root 前置检查或能力检测。测试应用标签为「虚拟屏测试」，搜索使用包名 `virtualfixture`，避免误点同名输入框。
+
+## 实机验证（2026-10-16）
+
+设备为 Xiaomi 25019PNF3C / Android API 37 / HyperOS 4，有线连接、横屏。先推送 PR，再安装优化 Preview 前端测试包。为保留手机尚未同步到远程的后端，测试包使用已安装 APK 的原有后端类及 record 支持类，214 个类的完整 smali 逐一比对一致；不将后端快照提交到分支。初次本地重打包漏带 record 支持类，导致 helper 退出；补齐依赖后，通过页面完成两轮实际能力检测。
+
+实机 Runner 验证开关保存与恢复、root/解锁检查、应用搜索与选择、确认/取消、实际能力检测、详情、重建保留及返回控屏/首页。
+
+| 检测项 | 本机结果 |
+| --- | --- |
+| 创建独立屏幕、截图、启动测试应用 | 通过 |
+| 定向触控、按键通路 | 通过 |
+| 主屏焦点隔离、关闭与回收 | 通过 |
+| 无障碍树 | 未验证：后端探针不测此项 |
+
+使用无权限、无网络、无个人数据的独立测试应用。按键项只证明定向 BACK 与画面变化，不能据此宣称中文输入可用；没有执行真实模型控屏任务。原配置对比仅 `hook_at` 注入报告时间变化，无障碍保持测试前的未连接状态；结束后无模块虚拟屏或 helper 残留，并移除本轮测试应用。

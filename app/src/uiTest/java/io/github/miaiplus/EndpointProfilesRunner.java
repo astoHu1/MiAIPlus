@@ -35,9 +35,11 @@ final class EndpointProfilesRunner {
 
     static void run(Instrumentation test) { new EndpointProfilesRunner(test).run(); }
 
-    static void runVirtual(Instrumentation test) { new EndpointProfilesRunner(test).runVirtual(); }
+    static void runVirtual(Instrumentation test) { new EndpointProfilesRunner(test).runVirtual(false); }
 
-    private void runVirtual() {
+    static void runVirtualIdle(Instrumentation test) { new EndpointProfilesRunner(test).runVirtual(true); }
+
+    private void runVirtual(boolean idleSample) {
         var context = test.getTargetContext();
         var prefs = Config.prefs(context);
         boolean originalMode = prefs.getBoolean("backgroundDisplay", false);
@@ -56,6 +58,18 @@ final class EndpointProfilesRunner {
             click("虚拟屏");
             check(state.getVirtualScreen().getAvailability() == null && state.getVirtualScreen().getReport() == null,
                 "Virtual checks ran automatically");
+            if (idleSample) {
+                Bundle ready = new Bundle();
+                ready.putString("stream", "READY: virtual screen idle sample\n");
+                test.sendStatus(0, ready);
+                SystemClock.sleep(45000);
+                check(state.getVirtualScreen().getAvailability() == null && state.getVirtualScreen().getReport() == null
+                    && !state.getVirtualScreen().getBusy(), "Idle page started a virtual check");
+                result.putString("stream", "PASS: virtual page remained idle without starting checks\n");
+                code = Activity.RESULT_OK;
+                test.finish(code, result);
+                return;
+            }
             click("使用虚拟屏");
             waitFor(() -> new Config(context).backgroundDisplay != originalMode, "Virtual mode did not save");
             click("使用虚拟屏");
@@ -66,7 +80,7 @@ final class EndpointProfilesRunner {
             check("前置条件已满足".equals(state.getVirtualScreen().getAvailability().getTitle()),
                 "Device root/unlock prerequisites not satisfied");
             click("测试应用");
-            edit("", "虚拟屏测试");
+            edit("", "virtualfixture");
             click("虚拟屏测试");
             check(state.getVirtualScreen().getSelectedApp() != null, "Probe application was not selected");
             click("开始检测");
@@ -83,9 +97,9 @@ final class EndpointProfilesRunner {
             check(report.getItems().size() >= 8, "Virtual probe report is incomplete");
             StringBuilder verdicts = new StringBuilder();
             for (var item : report.getItems()) verdicts.append(item.getId()).append('=').append(item.getStatus()).append(' ');
-            capture("virtual-screen-device");
             click("创建屏幕");
             click("关闭");
+            capture("virtual-screen-device");
             recreate();
             check(state.getVirtualScreen().getReport() == report && !state.getVirtualScreen().getProbing(),
                 "Virtual result did not survive recreation");
