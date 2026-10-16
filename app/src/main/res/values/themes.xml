@@ -1,0 +1,13 @@
+<resources>
+    <color name="settings_background">#F7F7F7</color>
+    <bool name="settings_light_system_bars">true</bool>
+    <style name="Theme.MiAIPlus" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowBackground">@color/settings_background</item>
+        <item name="android:windowLightStatusBar">@bool/settings_light_system_bars</item>
+        <item name="android:windowLightNavigationBar">@bool/settings_light_system_bars</item>
+        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:windowSoftInputMode">adjustResize</item>
+        <item name="android:colorAccent">#3482FF</item>
+    </style>
+</resources>

@@ -1,0 +1,4 @@
+<resources>
+    <color name="settings_background">#000000</color>
+    <bool name="settings_light_system_bars">false</bool>
+</resources>

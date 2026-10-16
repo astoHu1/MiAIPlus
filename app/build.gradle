@@ -1,4 +1,7 @@
-plugins { id 'com.android.application' }
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.plugin.compose'
+}
 
 android {
     namespace 'io.github.miaiplus'
@@ -18,12 +21,21 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
     buildTypes { release { minifyEnabled false } }
+    buildFeatures { compose true; buildConfig true }
     lint { abortOnError true }
+    testOptions { unitTests.includeAndroidResources = true }
 }
 dependencies {
+    implementation 'androidx.activity:activity-compose:1.13.0'
+    implementation 'androidx.lifecycle:lifecycle-viewmodel-ktx:2.11.0'
+    implementation 'androidx.lifecycle:lifecycle-runtime-compose:2.11.0'
+    implementation 'top.yukonga.miuix.kmp:miuix-ui:0.9.4'
+    implementation 'top.yukonga.miuix.kmp:miuix-preference:0.9.4'
     compileOnly 'io.github.libxposed:api:102.0.0'
     implementation 'io.github.libxposed:service:102.0.0'
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'io.github.libxposed:api:102.0.0'
     testImplementation 'org.json:json:20240303'
+    testImplementation 'org.robolectric:robolectric:4.17'
+    testImplementation 'org.jetbrains.compose.ui:ui-test-junit4:1.12.0'
 }

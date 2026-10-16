@@ -4,7 +4,7 @@
         <package android:name="com.miui.voiceassist" />
         <intent><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent>
     </queries>
-    <application android:name=".ModuleApplication" android:label="MiAIPlus" android:theme="@android:style/Theme.Material.Light.NoActionBar"
+    <application android:name=".ModuleApplication" android:label="MiAIPlus" android:theme="@style/Theme.MiAIPlus"
         android:description="@string/module_description" android:allowBackup="false" android:usesCleartextTraffic="true" android:supportsRtl="true">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
