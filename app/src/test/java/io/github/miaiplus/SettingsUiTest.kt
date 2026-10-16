@@ -14,6 +14,7 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import org.junit.Rule
 import org.junit.Test
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -30,18 +31,33 @@ import java.util.concurrent.atomic.AtomicInteger
 class SettingsUiTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
+    @After fun clearFixturePreferences() {
+        // AndroidViewModel's factory can retain its Application between Robolectric cases.
+        // Clean the same preferences owner used by the UI, including after a failed test.
+        val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
+        io.github.miaiplus.Config.prefs(state.getApplication<Application>()).edit().clear().commit()
+    }
+
     @Test fun nativeDefaultsAndSettingsNavigation() {
-        compose.onNodeWithText("启用控屏工具").assertExists()
-        compose.onNodeWithText("小爱当前模型").assertExists()
+        compose.onNodeWithText("暂无注入报告").assertExists()
+        compose.onNodeWithTag("tab-Home").assertIsSelected()
+        compose.onNodeWithTag("tab-Model").assertIsNotSelected()
+        compose.onNodeWithTag("tab-Control").assertIsNotSelected()
+        compose.onNodeWithText("启用控屏工具").assertDoesNotExist()
+        compose.onNodeWithText("API 协议").assertDoesNotExist()
+        val tabs = listOf("Home", "Model", "Control").map { compose.onNodeWithTag("tab-$it").getBoundsInRoot().left }
+        assert(tabs.zipWithNext().all { (left, right) -> left < right })
         capture("settings-light")
         RuntimeEnvironment.setQualifiers("+night")
         compose.activityRule.scenario.recreate()
         capture("settings-dark")
         RuntimeEnvironment.setQualifiers("+notnight")
         compose.activityRule.scenario.recreate()
-        compose.onNodeWithText("控屏设置").performScrollTo().performClick()
+        compose.onNodeWithTag("tab-Control").performClick()
+        compose.onNodeWithText("启用控屏工具").assertExists()
+        compose.onNodeWithText("小爱当前模型").assertExists()
         compose.onNodeWithText("动作协议").assertExists()
-        compose.onNodeWithText("每次任务最多执行 30 步").assertExists()
+        compose.onNodeWithText("30 步").assertExists()
         capture("control-light")
         compose.onNodeWithText("最大步数").performClick()
         compose.onNodeWithText("步数").performTextReplacement("0")
@@ -50,17 +66,22 @@ class SettingsUiTest {
     }
 
     @Test fun profileDraftRequiresExplicitSaveAndCanBeDiscarded() {
-        compose.onNodeWithText("模型服务").performClick()
+        compose.onNodeWithTag("tab-Model").performClick()
         capture("model-light")
         compose.onNodeWithText("配置名称").performTextReplacement("测试服务")
         compose.activityRule.scenario.recreate()
         compose.onNode(hasSetTextAction() and hasText("测试服务")).assertExists()
         capture("model-editing-light")
-        compose.onNodeWithContentDescription("返回").performClick()
+        compose.onNodeWithTag("tab-Home").performClick()
         compose.onNodeWithText("保存当前配置？").assertExists()
+        compose.onNodeWithTag("tab-Model").assertIsSelected()
+        compose.onNodeWithText("取消", useUnmergedTree = true).performClick()
+        compose.onNodeWithTag("tab-Model").assertIsSelected()
+        compose.onNodeWithTag("tab-Home").performClick()
         capture("unsaved-profile-light")
         compose.onNodeWithText("放弃修改").performClick()
-        compose.onNodeWithText("模型服务").performClick()
+        compose.onNodeWithTag("tab-Home").assertIsSelected()
+        compose.onNodeWithTag("tab-Model").performClick()
         compose.onNode(hasSetTextAction() and hasText("默认配置")).assertExists()
         compose.onNodeWithText("保存配置").assertDoesNotExist()
     }
@@ -74,6 +95,70 @@ class SettingsUiTest {
         capture("test-light")
         compose.onNodeWithContentDescription("返回").performClick()
         compose.onNodeWithText("小爱连接").assertExists()
+    }
+
+    @Test fun secondaryPagesAnimateBothWaysAndReturnToTheirParent() {
+        compose.mainClock.autoAdvance = false
+        compose.onNodeWithText("运行状态").performClick()
+        compose.mainClock.advanceTimeBy(80)
+        compose.onNodeWithTag("page-Home").assertExists()
+        compose.onNodeWithTag("page-Status").assertExists()
+        compose.mainClock.advanceTimeBy(400)
+        compose.onNodeWithTag("page-Home").assertDoesNotExist()
+        compose.onNodeWithTag("tab-Home").assertIsSelected()
+        compose.mainClock.autoAdvance = true
+        compose.onNodeWithText("直接测试").performScrollTo()
+        compose.mainClock.autoAdvance = false
+        compose.onNodeWithText("直接测试").performClick()
+        compose.mainClock.advanceTimeBy(400)
+        compose.onNodeWithTag("page-Test").assertExists()
+        compose.onNodeWithContentDescription("返回").performClick()
+        compose.mainClock.advanceTimeBy(80)
+        compose.onNodeWithTag("page-Test").assertExists()
+        compose.onNodeWithTag("page-Status").assertExists()
+        compose.mainClock.advanceTimeBy(400)
+        compose.onNodeWithTag("page-Test").assertDoesNotExist()
+        compose.onNodeWithContentDescription("返回").performClick()
+        compose.mainClock.advanceTimeBy(400)
+        compose.onNodeWithTag("page-Home").assertExists()
+        compose.onNodeWithTag("page-Status").assertDoesNotExist()
+        compose.mainClock.autoAdvance = true
+    }
+
+    @Test fun savingBeforeSwitchingTabsUsesTheRequestedDestination() {
+        compose.onNodeWithTag("tab-Model").performClick()
+        compose.onNodeWithText("配置名称").performTextReplacement("我的 API")
+        val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
+        compose.runOnIdle {
+            assertEquals("我的 API", state.draft?.name)
+        }
+        compose.onNodeWithTag("tab-Control").performClick()
+        compose.onNodeWithText("保存并离开").performClick()
+        compose.onNodeWithTag("tab-Control").assertIsSelected()
+        compose.runOnIdle {
+            assertEquals("我的 API", EndpointProfiles(io.github.miaiplus.Config.prefs(state.getApplication<Application>())).active().name)
+        }
+        compose.onNodeWithTag("tab-Model").performClick()
+        compose.onNode(hasSetTextAction() and hasText("我的 API")).assertExists()
+        compose.onNodeWithText("保存配置").assertDoesNotExist()
+    }
+
+    @Test fun dashboardLabelsSavedReportsWithoutClaimingALiveConnection() {
+        val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
+        compose.runOnIdle {
+            io.github.miaiplus.Config.prefs(state.getApplication<Application>()).edit()
+                .putString("hook_report", "ready: fixture")
+                .putLong("hook_at", 1_700_000_000_000L).commit()
+            state.refresh()
+        }
+        compose.onNodeWithText("上次注入成功").assertExists()
+        capture("home-ready-light")
+        compose.runOnIdle {
+            io.github.miaiplus.Config.prefs(state.getApplication<Application>()).edit()
+                .putString("hook_report", "unsupported: fixture").commit()
+            state.refresh()
+        }
+        compose.onNodeWithText("上次注入异常").assertExists()
     }
 
     @Test fun backgroundCheckIsExplicitAndSurvivesStatusRefresh() {
@@ -94,7 +179,7 @@ class SettingsUiTest {
     }
 
     @Test fun largeModelListOnlyComposesVisibleItemsAndKeepsSelectionAsDraft() {
-        compose.onNodeWithText("模型服务").performClick()
+        compose.onNodeWithTag("tab-Model").performClick()
         val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
         compose.runOnIdle { state.modelList = List(1000) { "model-$it" } }
         compose.onNodeWithText("model-0").assertExists()

@@ -4,6 +4,7 @@ import android.app.Application
 import android.os.Bundle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
@@ -43,6 +44,8 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
     var accessible by mutableStateOf(false)
         private set
     var hookReport by mutableStateOf("")
+        private set
+    var hookRecordedAt by mutableLongStateOf(0L)
         private set
     var reloadStatus by mutableStateOf("")
         private set
@@ -146,6 +149,7 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
     fun refresh() {
         accessible = ScreenService.isHealthy()
         hookReport = prefs.getString("hook_report", null) ?: "暂无报告，请在 LSPosed 中启用模块后重启小爱"
+        hookRecordedAt = prefs.getLong("hook_at", 0L)
         reloadStatus = HotReload.status()
         guardStatus = AccessibilityGuard.status(context)
         if (!AccessibilityGuard.isChanging()) guardEnabled = AccessibilityGuard.enabled(context)

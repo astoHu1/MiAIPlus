@@ -55,7 +55,7 @@ final class EndpointProfilesRunner {
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
             onMain(() -> state = new ViewModelProvider(activity).get(SettingsState.class));
             check("phone_use".equals(state.getConfig().protocol), "Legacy protocol migration failed");
-            click("模型服务");
+            click("模型 API");
             edit("默认配置", "服务 A");
             waitFor(state::getDirty, "Profile edit did not reach draft");
             check(!"服务 A".equals(new EndpointProfiles(prefs).active().name), "Draft saved without confirmation");
@@ -68,9 +68,9 @@ final class EndpointProfilesRunner {
             capture("model");
 
             edit("服务 A", "未保存");
-            click("返回");
+            click("首页");
             click("放弃修改");
-            click("模型服务");
+            click("模型 API");
             waitFor(() -> "服务 A".equals(state.getDraft().getName()) && !state.getDirty(), "Discard failed");
             click("另存为新配置");
             edit("", "服务 B");
@@ -91,9 +91,9 @@ final class EndpointProfilesRunner {
             click("删除");
             waitFor(() -> new EndpointProfiles(prefs).profiles.size() == 1, "Delete failed");
             check("服务 A".equals(new EndpointProfiles(prefs).active().name), "Delete did not switch profile");
-            click("返回");
+            click("首页");
             capture("home");
-            click("控屏设置");
+            click("控屏");
             check(!new Config(context).backgroundDisplay, "Background display default changed");
             click("最大步数");
             edit("30", "0"); click("保存");
@@ -105,7 +105,7 @@ final class EndpointProfilesRunner {
             click("最大步数"); edit("1", "80"); click("保存");
             waitFor(() -> new Config(context).maxSteps == 80, "Maximum step not saved");
             capture("control");
-            click("返回");
+            click("首页");
             click("运行状态");
             check(state.getBackgroundCheck() == null, "Background check ran automatically");
             click("检查后台屏可用性");
