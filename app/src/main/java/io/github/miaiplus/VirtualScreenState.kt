@@ -47,9 +47,12 @@ class VirtualScreenState(private val context: Application, private val scope: Co
                     val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
                     context.packageManager.queryIntentActivities(intent, 0).mapNotNull { info ->
                         val activity = info.activityInfo ?: return@mapNotNull null
-                        if (!activity.exported || activity.packageName == context.packageName) return@mapNotNull null
-                        ProbeApp(info.loadLabel(context.packageManager).toString(),
-                            ComponentName(activity.packageName, activity.name).flattenToString())
+                        val packageName = activity.packageName?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                        val className = activity.name?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                        if (!activity.exported || packageName == context.packageName) return@mapNotNull null
+                        val label = runCatching { info.loadLabel(context.packageManager)?.toString() }
+                            .getOrNull()?.takeIf { it.isNotBlank() } ?: packageName
+                        ProbeApp(label, ComponentName(packageName, className).flattenToString())
                     }.distinctBy { it.component }.sortedBy { it.name }
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
@@ -112,7 +115,7 @@ data class DisplayProbeItem(val id: String, val status: String, val detail: Stri
         "launch" -> "启动应用"
         "tree" -> "无障碍树"
         "pointer" -> "触控"
-        "text/key" -> "按键与输入"
+        "text/key" -> "按键通路"
         "focusIsolation" -> "主屏焦点"
         "teardownIsolation" -> "关闭与回收"
         else -> id

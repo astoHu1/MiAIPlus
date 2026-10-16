@@ -3,6 +3,11 @@ package io.github.miaiplus
 import android.app.Application
 import android.content.ContentProvider
 import android.content.ContentValues
+import android.content.Intent
+import android.content.pm.ResolveInfo
+import android.content.pm.ActivityInfo
+import android.content.pm.ApplicationInfo
+import org.robolectric.Shadows.shadowOf
 import android.content.pm.ProviderInfo
 import android.database.Cursor
 import android.graphics.Bitmap
@@ -209,6 +214,35 @@ class SettingsUiTest {
         compose.onNodeWithText("关闭", useUnmergedTree = true).performClick()
         compose.activityRule.scenario.recreate()
         assertEquals(1, calls.get())
+    }
+
+    @Test fun virtualAppPickerSearchesNamesAndPackagesAndReturnsTheSelection() {
+        val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
+        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        shadowOf(state.getApplication<Application>().packageManager).addResolveInfoForIntent(intent,
+            ResolveInfo().apply {
+                nonLocalizedLabel = "虚拟屏测试"
+                activityInfo = ActivityInfo().apply {
+                    packageName = "org.example.virtualfixture"; name = "org.example.virtualfixture.Main"
+                    exported = true
+                    applicationInfo = ApplicationInfo().apply { packageName = "org.example.virtualfixture" }
+                }
+            })
+        compose.onNodeWithTag("tab-Control").performClick()
+        compose.onNodeWithText("虚拟屏").performClick()
+        compose.onNodeWithText("测试应用").performClick()
+        compose.waitUntil(timeoutMillis = 5000) {
+            compose.onAllNodesWithText("搜索应用").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.runOnIdle { assertEquals(null, state.virtualScreen.error) }
+        compose.onNodeWithText("搜索应用").performTextReplacement("no-match")
+        compose.onNodeWithText("虚拟屏测试").assertDoesNotExist()
+        compose.onNodeWithText("没有匹配的应用").assertExists()
+        compose.onNodeWithText("搜索应用").performTextReplacement("virtualfixture")
+        compose.onNodeWithText("虚拟屏测试").performClick()
+        compose.runOnIdle {
+            assertEquals("org.example.virtualfixture/org.example.virtualfixture.Main", state.virtualScreen.selectedApp?.component)
+        }
     }
 
     @Test fun virtualProbeRefusesToRunDuringAnActiveTask() {

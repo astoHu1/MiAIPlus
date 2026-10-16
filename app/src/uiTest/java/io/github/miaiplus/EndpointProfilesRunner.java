@@ -66,6 +66,7 @@ final class EndpointProfilesRunner {
             check("前置条件已满足".equals(state.getVirtualScreen().getAvailability().getTitle()),
                 "Device root/unlock prerequisites not satisfied");
             click("测试应用");
+            edit("", "虚拟屏测试");
             click("虚拟屏测试");
             check(state.getVirtualScreen().getSelectedApp() != null, "Probe application was not selected");
             click("开始检测");

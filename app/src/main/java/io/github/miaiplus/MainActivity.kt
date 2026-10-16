@@ -422,6 +422,7 @@ private fun StatusPage(state: SettingsState, openSettings: (Boolean) -> Unit, op
 private fun VirtualScreenPage(state: SettingsState) {
     val screen = state.virtualScreen
     var confirmProbe by remember { mutableStateOf(false) }
+    var appQuery by remember { mutableStateOf("") }
     var detail by remember { mutableStateOf<DisplayProbeItem?>(null) }
     Group {
         SwitchPreference(title = "使用虚拟屏", checked = state.config.backgroundDisplay,
@@ -437,7 +438,7 @@ private fun VirtualScreenPage(state: SettingsState) {
     Section("能力检测") {
         ArrowPreference(title = if (screen.loadingApps) "正在读取应用…" else "测试应用",
             summary = screen.selectedApp?.name ?: "不启动应用", enabled = !screen.busy && !screen.loadingApps,
-            onClick = { screen.loadApps() })
+            onClick = { appQuery = ""; screen.loadApps() })
         ArrowPreference(title = if (screen.probing) "正在检测…" else "开始检测",
             enabled = !screen.busy, onClick = { confirmProbe = true })
     }
@@ -450,7 +451,7 @@ private fun VirtualScreenPage(state: SettingsState) {
                 ArrowPreference(title = item.title, summary = item.verdict, onClick = { detail = item })
             }
         }
-        Hint("只代表本次检测。未验证的项目仍需实测。")
+        Hint("只代表本次检测，中文输入需另测。")
     }
     ConfirmDialog(show = confirmProbe, title = "检测虚拟屏？",
         summary = if (screen.selectedApp == null) "会短暂创建虚拟屏并发送测试输入，不启动应用。期间请勿操作主屏。"
@@ -458,14 +459,23 @@ private fun VirtualScreenPage(state: SettingsState) {
         confirm = "开始", onDismiss = { confirmProbe = false },
         onConfirm = { confirmProbe = false; screen.probe() })
     OverlayDialog(show = screen.apps != null, title = "测试应用", onDismissRequest = { screen.dismissApps() }) {
-        LazyColumn(Modifier.heightIn(max = 400.dp)) {
-            item { ArrowPreference(title = "不启动应用", onClick = { screen.selectApp(null) }) }
-            items(screen.apps.orEmpty(), key = { it.component }) { app ->
-                ArrowPreference(title = app.name, summary = app.component.substringBefore('/'),
-                    onClick = { screen.selectApp(app) })
+        Column {
+            Input("搜索应用", appQuery, { appQuery = it })
+            Spacer(Modifier.height(12.dp))
+            val matches = remember(screen.apps, appQuery) {
+                screen.apps.orEmpty().filter { app -> app.name.contains(appQuery.trim(), ignoreCase = true)
+                    || app.component.substringBefore('/').contains(appQuery.trim(), ignoreCase = true) }
             }
+            LazyColumn(Modifier.heightIn(max = 320.dp).weight(1f, fill = false)) {
+                item { ArrowPreference(title = "不启动应用", onClick = { screen.selectApp(null) }) }
+                items(matches, key = { it.component }) { app ->
+                    ArrowPreference(title = app.name, summary = app.component.substringBefore('/'),
+                        onClick = { screen.selectApp(app) })
+                }
+                if (matches.isEmpty()) item { Hint("没有匹配的应用") }
+            }
+            TextButton("取消", { screen.dismissApps() }, Modifier.fillMaxWidth().padding(top = 12.dp))
         }
-        TextButton("取消", { screen.dismissApps() }, Modifier.fillMaxWidth().padding(top = 12.dp))
     }
     OverlayDialog(show = detail != null, title = detail?.title ?: "检测详情", onDismissRequest = { detail = null }) {
         Column {
