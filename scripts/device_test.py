@@ -9,44 +9,58 @@ def adb(*args):
 
 
 process = subprocess.Popen(['adb', 'shell', 'am', 'instrument', '--user', '0', '-w', '-e', 'hook', str('--hook' in sys.argv).lower(),
+    '-e', 'profiles', str('--profiles' in sys.argv).lower(),
     '-e', 'api', 'responses' if '--responses' in sys.argv else 'chat',
     '-e', 'reasoning', str('--reasoning' in sys.argv).lower(),
     '-e', 'focus', str('--focus' in sys.argv).lower(),
+    '-e', 'launch', str('--launch' in sys.argv).lower(),
     'io.github.miaiplus.test/io.github.miaiplus.DeviceTestRunner'], stdout=subprocess.PIPE,
     stderr=subprocess.STDOUT, text=True, bufsize=1)
 passed = False
 failed = False
-for line in process.stdout:
-    print(line, end='', flush=True)
-    if 'MIAIPLUS_CONNECT_SERVICE' in line:
-        current = adb('shell', 'settings', 'get', 'secure', 'enabled_accessibility_services')
-        services = [s for s in current.split(':') if s and s != 'null' and not s.startswith('io.github.miaiplus/')]
-        adb('shell', 'settings', 'put', 'secure', 'enabled_accessibility_services', ':'.join(services))
-        services.append('io.github.miaiplus/.ScreenService')
-        adb('shell', 'settings', 'put', 'secure', 'enabled_accessibility_services', ':'.join(services))
-    if 'MIAIPLUS_RESTART_XIAOAI' in line:
-        current = adb('shell', 'settings', 'get', 'secure', 'enabled_accessibility_services')
-        services = [s for s in current.split(':') if s and s != 'null' and not s.startswith('io.github.miaiplus/')]
-        adb('shell', 'settings', 'put', 'secure', 'enabled_accessibility_services', ':'.join(services))
-        services.append('io.github.miaiplus/.ScreenService')
-        adb('shell', 'settings', 'put', 'secure', 'enabled_accessibility_services', ':'.join(services))
-        if '--no-restart' not in sys.argv:
-            adb('shell', 'am', 'force-stop', 'com.miui.voiceassist')
-        adb('shell', 'am', 'start', '-W', '-n', 'io.github.miaiplus/.FixtureActivity')
-        adb('shell', 'am', 'start', '-W', '-n', 'com.miui.voiceassist/com.xiaomi.voiceassistant.LaunchHomeRouterActivity')
-        if '--popup' in sys.argv:
+try:
+    for line in process.stdout:
+        print(line, end='', flush=True)
+        if 'MIAIPLUS_CONNECT_SERVICE' in line:
+            current = adb('shell', 'settings', 'get', 'secure', 'enabled_accessibility_services')
+            services = [s for s in current.split(':') if s and s != 'null' and not s.startswith('io.github.miaiplus/')]
+            adb('shell', 'settings', 'put', 'secure', 'enabled_accessibility_services', ':'.join(services))
+            services.append('io.github.miaiplus/.ScreenService')
+            adb('shell', 'settings', 'put', 'secure', 'enabled_accessibility_services', ':'.join(services))
+        if 'MIAIPLUS_RESTART_XIAOAI' in line:
+            current = adb('shell', 'settings', 'get', 'secure', 'enabled_accessibility_services')
+            services = [s for s in current.split(':') if s and s != 'null' and not s.startswith('io.github.miaiplus/')]
+            adb('shell', 'settings', 'put', 'secure', 'enabled_accessibility_services', ':'.join(services))
+            services.append('io.github.miaiplus/.ScreenService')
+            adb('shell', 'settings', 'put', 'secure', 'enabled_accessibility_services', ':'.join(services))
+            if '--no-restart' not in sys.argv:
+                adb('shell', 'am', 'force-stop', 'com.miui.voiceassist')
             adb('shell', 'am', 'start', '-W', '-n', 'io.github.miaiplus/.FixtureActivity')
-            adb('shell', 'am', 'startservice', '-n', 'com.miui.voiceassist/com.xiaomi.voiceassistant.VoiceService',
-                '-a', 'com.miui.voiceassist.ACTION_VOICE_START_VOICEASSIST')
-        # Wait for the scoped main process and debug receiver to initialize.
-        import time
-        time.sleep(3)
-        adb('shell', 'am', 'broadcast', '-a', 'io.github.miaiplus.DEBUG_PROBE', '-p', 'com.miui.voiceassist', '--es', 'frame', line.strip().split()[-1])
-    if 'MIAIPLUS_LAUNCH_FIXTURE' in line:
-        adb('shell', 'am', 'start', '-W', '-n', 'io.github.miaiplus/.FixtureActivity')
-    if 'PASS:' in line or 'PROBE PASS' in line:
-        passed = True
-    if 'FAIL:' in line or 'INSTRUMENTATION_FAILED' in line:
-        failed = True
-process.wait()
+            adb('shell', 'am', 'start', '-W', '-n', 'com.miui.voiceassist/com.xiaomi.voiceassistant.LaunchHomeRouterActivity')
+            if '--popup' in sys.argv:
+                adb('shell', 'am', 'start', '-W', '-n', 'io.github.miaiplus/.FixtureActivity')
+                adb('shell', 'am', 'startservice', '-n', 'com.miui.voiceassist/com.xiaomi.voiceassistant.VoiceService',
+                    '-a', 'com.miui.voiceassist.ACTION_VOICE_START_VOICEASSIST')
+            # Wait for the scoped main process and debug receiver to initialize.
+            import time
+            time.sleep(3)
+            if '--launch' in sys.argv:
+                # This ROM disables Security's launcher alias; use its exported MAIN/DEFAULT entry.
+                adb('shell', 'am', 'start', '-W', '-a', 'android.intent.action.MAIN',
+                    '-c', 'android.intent.category.DEFAULT', '-p', 'com.miui.securitycenter')
+            adb('shell', 'am', 'broadcast', '-a', 'io.github.miaiplus.DEBUG_PROBE', '-p', 'com.miui.voiceassist', '--es', 'frame', line.strip().split()[-1])
+        if 'MIAIPLUS_LAUNCH_FIXTURE' in line:
+            adb('shell', 'am', 'start', '-W', '-n', 'io.github.miaiplus/.FixtureActivity')
+        if 'PASS:' in line or 'PROBE PASS' in line:
+            passed = True
+        if 'FAIL:' in line or 'INSTRUMENTATION_FAILED' in line:
+            failed = True
+    process.wait()
+finally:
+    # The launch fixture may still be foreground when the compact completion island appears.
+    # Close its task even on test failure so the next user task cannot reveal it.
+    subprocess.run(['adb', 'shell', 'am', 'broadcast', '-a', 'io.github.miaiplus.CLOSE_LAUNCH_FIXTURE',
+                    '-p', 'io.github.miaiplus.test'], check=False, capture_output=True, timeout=10)
+    if process.poll() is None:
+        process.terminate()
 sys.exit(0 if passed and not failed and process.returncode == 0 else 1)

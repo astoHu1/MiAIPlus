@@ -3,7 +3,7 @@
 为超级小爱增加本机控屏工具及可选的 OpenAI 兼容主模型替换。**全新安装不预填任何服务地址、API Key 或模型名。**
 
 当前精确适配超级小爱 **8.2.65.4714 / versionCode 508002065**，Android 13+，支持 libxposed API 102 的 LSPosed。
-其他小爱版本跳过 Hook。`0.3.0` 是预发布测试版，包含 HyperOS 焦点通知岛、原页面恢复和 API 102 热重载。
+其他小爱版本跳过 Hook。`0.3.3` 是预发布测试版，包含稳定应用启动与小米启动确认自动处理、焦点岛实时意图、展开岛停止控制、任务级页面恢复、可选 root 控屏前无障碍检查和 API 102 热重载。
 
 ## 三种使用方式
 
@@ -11,9 +11,9 @@
 |---|---|---|---|
 | 默认 | 官方原模型 | 同一个官方模型逐步调用本机控屏工具 | 不需要 |
 | 全局外部模型 | 用户配置的模型 | 同一个外部主模型逐步调用本机控屏工具 | 需要 |
-| 独立外部控屏循环 | 官方模型或用户选择的全局模型 | 模块单独调用外部视觉模型运行 computer / AutoGLM 循环 | 需要 |
+| 独立外部控屏循环 | 官方模型或用户选择的全局模型 | 模块单独调用外部视觉模型运行 phone use / AutoGLM 循环 | 需要 |
 
-默认模式优先使用原生结构化函数 `miaiplus_computer`：首次传 `goal`，后续传 `session` 和 `action`。默认坐标为截图 JPEG 像素；可用 `coordinate_space` 明确指定截图像素、屏幕像素或归一化坐标。兼容入口 `voiceassist__controlApp` 首次接收完整任务，工具返回截图、无障碍树、会话号与 `CONTINUE`；小爱当前模型继续调用同一工具，每次一个原子动作，直至观察确认完成。**不再要求第二个视觉 API。**
+默认模式优先使用原生结构化函数 `miaiplus_phone_use`：首次传 `goal`，后续传 `session` 和 `action`。默认坐标为截图 JPEG 像素；可用 `coordinate_space` 明确指定截图像素、屏幕像素或归一化坐标。兼容入口 `voiceassist__controlApp` 首次接收完整任务，工具返回截图、无障碍树、会话号与 `CONTINUE`；小爱当前模型继续调用同一工具，每次一个原子动作，直至观察确认完成。**不再要求第二个视觉 API。**
 截图经一次性私有管道送回小爱，转换为原生 `Message.images`，不把整张图塞进 Binder Bundle。模型或官方传输链不支持图片时，仍有无障碍树，但对纯图片页面的能力会受限。
 
 “全局外部模型”接入小爱的 OSBot 统一模型入口和直接 Taiyi / OpenAI / Responses / Anthropic 客户端，以及记忆摘要、记忆 gate、能力判断和语义路由请求，保留原消息历史、提示词、流式响应、工具定义与工具执行链。自定义 API 开启时，聊天页普通文字发送也转入原生 MiClaw/OSBot 链路，避免 AUTO/QUICK 模式绕回旧云端；不改写小爱原模式。主对话、子 Agent 和经这些入口的辅助推理使用所选模型。它不把语音识别、语音合成、搜索引擎或米家服务改造成第三方服务，也不宣称覆盖 APK 内所有独立云服务。
@@ -26,8 +26,16 @@
 4. 重启小爱，模块状态应包含 `ready`、`native-planner`、`global-model`。这是 Hook 安装状态，不等于当前开启了全局外部模型。
 5. 在小爱中提出明确的应用内任务。普通聊天、搜索、手机设置和已有专用工具继续使用原链路。
 
+控屏时焦点通知右侧随步骤显示模型的简短操作意图；等待下一步时保留最近意图。模型未提供意图时显示动作说明，更新不反复弹卡片。展开灵动岛，点击“停止操作”。敏感操作仍单独弹出确认。多步工具调用与等待模型规划期间保持目标页面，整个控屏会话完成、取消、超时或接管后才按入口恢复小爱或显示完成岛。
+
+控屏打开应用会自动处理与当前目标匹配的小米“本次允许”启动确认，确认目标确实进入前台后才继续；应用未打开时明确暂停，不虚报成功、不循环拉起。不同应用同名时使用包名。此功能无需 root，其他权限仍需接管。详见 [应用启动](docs/app-launch.md)。
+
+可选开启设置页“root 控屏前检查无障碍”，并在 KernelSU / Magisk / APatch 授予 **MiAIPlus 本身** root 权限。每个新控屏任务开始前检查真实 Binder 连接，失效时才通过 root 重绑 MiAIPlus，处理小米系统“界面显示已开、实际已断”的情况并保留其他服务。没有常驻巡检、开机任务或中途修复；同一任务的后续工具调用不再检查。默认关闭。ADB 能执行 root 不代表应用已有授权。详见 [任务前检查](docs/accessibility-guard.md)。
+
 可选外部服务：填写实际 API Base URL（含 `/v1`）、Key 与模型名；可从服务获取模型列表。
-模型 API 协议可选“自动 / Responses / Chat Completions”，与 computer / autoglm 动作协议独立。自动模式下 `gpt-6` 开头的模型使用 `/responses`，其他名称保持 `/chat/completions`；自定义别名或仅提供 Responses 的网关请显式选择 Responses。`gpt-6.1-sol` 工具调用要求 Responses，纯文本可用 Chat Completions，见 [官方模型说明](https://developers.openai.com/api/docs/models/gpt-6.1-sol)。地址仍填写 Base URL（例如服务提供的 `/v1`），无需手动附加 `/responses`。
+设置页“API 配置 · 快捷切换”可保存多套命名配置，每套包含 Base URL、Key、模型和 API 协议。原单套配置保留为“默认配置”；编辑后用“保存当前 API 配置”更新，用“另存为新 API 配置”新增。下拉选择立即切换，未保存修改可选择保存或放弃；支持重命名和删除，至少保留一套。启用开关、全局外部模型、控屏规划和最大步数仍为全局设置。“保存配置”同时保存当前 API 配置和全局设置。
+Endpoint 切换用于后续新请求，正在发送的请求保持原参数；独立外部循环在任务开始时读取配置，需下一次任务才使用新配置。原生聊天提交、模型调用、记忆和路由请求开始时刷新配置，避免短暂沿用旧端点。获取模型列表期间切换配置会丢弃旧服务的列表结果。
+模型 API 协议可选“自动 / Responses / Chat Completions”，与 phone use / autoglm 动作协议独立。自动模式下 `gpt-6` 开头的模型使用 `/responses`，其他名称保持 `/chat/completions`；自定义别名或仅提供 Responses 的网关请显式选择 Responses。`gpt-6.1-sol` 工具调用要求 Responses，纯文本可用 Chat Completions，见 [官方模型说明](https://developers.openai.com/api/docs/models/gpt-6.1-sol)。地址仍填写 Base URL（例如服务提供的 `/v1`），无需手动附加 `/responses`。
 Responses 同时用于全局主模型、记忆摘要、gate/能力判断/路由，以及独立文字和控屏循环；转换图片、工具定义、call_id 与结果，并回传可用的加密推理上下文。Responses 请求使用 `store:false`，不发送固定 temperature/top_p；独立请求输出预算为 16384 tokens，GPT-6 原生请求的小额文本预算至少调整为 8192 tokens，以容纳推理。该预算包含推理 token，仍可能耗尽；响应 incomplete/failed、拒绝或流中断时不执行未完成工具调用。
 要替换小爱主模型，开启“小爱全局使用外部模型”，保存并重启小爱。要使用独立的控屏模型循环，另选“独立外部视觉模型循环”。两者是独立选项。
 自定义 API 启用后，小爱聊天页原来的“自动 / 快速 / 专家”入口切换为所选模型的推理档位（普通输入栏和全屏功能栏均适配）。关闭全局外部模型后仍使用小爱原菜单；自定义档位按服务地址、模型名和 API 协议单独保存，不改写小爱原模式。选择立即用于下一次新请求；已在执行的请求保持开始时的参数。“模型默认”不发送显式思考参数。
@@ -48,7 +56,8 @@ OpenAI 在 Responses 中使用 `reasoning.effort`，Chat 中使用 `reasoning_ef
 
 档位依据 [OpenAI GPT‑6.1 Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol)、[OpenAI reasoning guide](https://developers.openai.com/api/docs/guides/reasoning)、[DeepSeek 思考模式](https://api-docs.deepseek.com/guides/thinking_mode) 和 [Qwen 深度思考](https://help.aliyun.com/zh/model-studio/deep-thinking)；具体识别名单见 `ReasoningPolicy.java`。模型升级或网关别名可能需要更新名单。
 
-`computer` 协议要求模型支持图片与 function calling；`autoglm` 使用 Open-AutoGLM `do(...)` / `finish(...)` 协议。切换主模型时仍应选支持小爱工具调用的模型。
+`phone use` 协议要求模型支持图片与 function calling；`autoglm` 使用 Open-AutoGLM `do(...)` / `finish(...)` 协议。切换主模型时仍应选支持小爱工具调用的模型。
+原 `computer` 动作协议现显示为 **phone use**，已有协议设置兼容读取；独立循环工具名为 `phone_use`，原生工具为 `miaiplus_phone_use`。更新工具名后请热重载模块或重启小爱。
 
 设置页直接测试适用于独立外部循环和第三方纯对话。默认控屏模式需在小爱里提交任务，因为规划模型就在小爱内部。明确的“用第三方模型回答……”可走独立文字请求，需填写外部配置，不读取屏幕。
 
@@ -87,8 +96,12 @@ adb reverse tcp:18765 tcp:18765
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
 python3 scripts/device_test.py
+# 仅验证多 API 配置迁移、保存和快捷切换；无需模拟服务，结束恢复原配置
+python3 scripts/device_test.py --profiles
 # 需要在 LSPosed 启用模块；只在已授权测试设备运行进程内诊断
 python3 scripts/device_test.py --hook
+# 实际应用启动、自动启动确认与前台验证（使用独立测试 APK）
+python3 scripts/device_test.py --hook --launch
 # Responses 协议的独立循环和原生 Hook 回归
 python3 scripts/device_test.py --responses
 python3 scripts/device_test.py --hook --responses

@@ -33,7 +33,7 @@ public class ActionTest {
             catch (IllegalArgumentException | org.json.JSONException expected) { }
         }
     }
-    @Test public void computerContractRequiresKnownAction() throws Exception {
+    @Test public void phoneUseContractRequiresKnownAction() throws Exception {
         assertEquals("swipe", new Action(new JSONObject("{\"action\":\"swipe\",\"start\":[0,1000],\"end\":[1000,0]}")).name);
         try { new Action(new JSONObject("{\"action\":\"launch\"}")); fail(); } catch (IllegalArgumentException expected) { }
     }

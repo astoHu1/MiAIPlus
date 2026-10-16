@@ -7,6 +7,7 @@ import io.github.libxposed.service.XposedServiceHelper;
 public final class ModuleApplication extends Application {
     @Override public void onCreate() {
         super.onCreate();
+        AccessibilityGuard.restore(this);
         XposedServiceHelper.registerListener(new XposedServiceHelper.OnServiceListener() {
             @Override public void onServiceBind(XposedService service) { HotReload.bind(service); }
             @Override public void onServiceDied(XposedService service) { HotReload.unbind(service); }

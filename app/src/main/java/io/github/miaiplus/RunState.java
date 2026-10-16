@@ -13,6 +13,7 @@ public final class RunState {
     public volatile String status = "running", result = "", progress = "准备执行";
     public volatile HttpURLConnection connection;
     public boolean screen;
+    public volatile boolean preparingScreen;
     final java.util.concurrent.CountDownLatch screenReady = new java.util.concurrent.CountDownLatch(1);
     public RunState(String id, int owner) { this.id = id; this.owner = owner; }
     public void check() {

@@ -21,6 +21,9 @@ public final class BridgeProvider extends ContentProvider {
     private static final java.util.concurrent.ScheduledExecutorService WATCHDOG = Executors.newSingleThreadScheduledExecutor();
     private static volatile RunState active;
     private static volatile String screenResult = "";
+    // A task spans all native CONTINUE calls, including the idle model-planning gaps.
+    private static String screenTaskId;
+    private static boolean screenTaskActive;
     @Override public boolean onCreate() { return true; }
     private void enforceCaller() {
         int uid = Binder.getCallingUid();
@@ -30,6 +33,21 @@ public final class BridgeProvider extends ContentProvider {
             throw new SecurityException("MiAIPlus bridge is private to XiaoAi");
     }
     @Override public Bundle call(String method, String arg, Bundle extras) {
+        if (method.equals("accessibility_health") || method.equals("accessibility_recover")) {
+            int uid = Binder.getCallingUid();
+            if (uid != 0 && uid != Process.myUid()) throw new SecurityException("Accessibility guard is module/root only");
+            Bundle health = new Bundle();
+            // Older resident guards see false and exit after an update. Never let them cancel work.
+            health.putBoolean("guard_enabled", false);
+            health.putBoolean("preflight_enabled", AccessibilityGuard.enabled(getContext()));
+            health.putBoolean("unlocked", getContext().getSystemService(android.os.UserManager.class).isUserUnlocked());
+            health.putBoolean("connected", ScreenService.isHealthy());
+            RunState current = active;
+            health.putBoolean("preparing", current != null && current.preparingScreen && !current.cancelled.get());
+            health.putString("preflight_id", current != null && current.preparingScreen ? current.id : "");
+            health.putBoolean("busy", NativeSession.hasPendingOperation() || (current != null && !current.preparingScreen));
+            return health;
+        }
         enforceCaller();
         Bundle b = new Bundle();
         Config config = new Config(getContext());
@@ -40,16 +58,24 @@ public final class BridgeProvider extends ContentProvider {
         }
         if (method.equals("stop_screen")) { cancelActive(); return b; }
         if (method.equals("screen_state")) {
-            RunState current = active;
-            b.putBoolean("active", NativeSession.hasPendingOperation()
-                || (current != null && current.screen && current.status.equals("running")));
-            b.putString("result", screenResult);
+            synchronized (JOBS) {
+                refreshScreenTask();
+                boolean matches = arg == null || arg.equals(screenTaskId);
+                b.putBoolean("active", matches && screenTaskActive);
+                b.putBoolean("completed", matches && screenTaskId != null && !screenTaskActive);
+                b.putString("screen_task", screenTaskId);
+                b.putString("result", matches ? screenResult : "控屏任务已更换");
+                String progress = NativeSession.progress();
+                RunState current = active;
+                if (progress.isEmpty() && current != null && current.screen) progress = current.progress;
+                b.putString("progress", matches ? TaskProgress.compact(progress) : "");
+            }
             return b;
         }
         if (method.equals("flags")) {
             b.putBoolean("enabled", config.enabled);
             b.putBoolean("nativePlanner", config.planner.equals("native"));
-            b.putBoolean("accessibility", ScreenService.instance != null);
+            b.putBoolean("accessibility", ScreenService.isHealthy());
             return b;
         }
         if (method.equals("set_reasoning")) {
@@ -93,6 +119,11 @@ public final class BridgeProvider extends ContentProvider {
                     .min(java.util.Comparator.comparingLong(r -> r.deadline)).ifPresent(r -> JOBS.remove(r.id));
                 RunState run = new RunState(UUID.randomUUID().toString(), Binder.getCallingUid());
                 run.screen = mode.equals("screen");
+                run.preparingScreen = run.screen && query != null && !query.startsWith("MIAIPLUS:");
+                if (run.screen) run.progress = run.preparingScreen ? "正在检查无障碍连接" : "正在判断下一步";
+                if (run.screen && !NativeSession.hasActiveSession()) {
+                    screenTaskId = run.id; screenTaskActive = true; screenResult = "";
+                }
                 if (!run.screen || extras == null || !extras.getBoolean("screen_ui")) run.screenReady.countDown();
                 active = run; JOBS.put(run.id, run);
                 var timeout = WATCHDOG.schedule(run::cancel, 240, java.util.concurrent.TimeUnit.SECONDS);
@@ -101,6 +132,11 @@ public final class BridgeProvider extends ContentProvider {
                         if (!run.screenReady.await(6, java.util.concurrent.TimeUnit.SECONDS))
                             throw new IllegalStateException("小爱交互界面未就绪，已停止");
                         run.check();
+                        if (run.preparingScreen) {
+                            AccessibilityGuard.prepare(getContext(), run);
+                            run.preparingScreen = false;
+                            run.check();
+                        }
                         String text = AgentEngine.run(config, mode, query, run);
                         run.result = text.length() > 24000 ? text.substring(0, 24000) + "\n[结果过长已截断]" : text;
                         run.check(); run.status = "done";
@@ -109,11 +145,17 @@ public final class BridgeProvider extends ContentProvider {
                         // Keep exception details out of IPC to avoid echoing API bodies or typed content.
                         run.result = run.cancelled.get() ? "任务已停止或超时" : publicError(e); run.status = "error";
                     } finally {
-                        if (run.screen) screenResult = run.result;
-                        timeout.cancel(false); synchronized (JOBS) { active = null; }
+                        timeout.cancel(false);
+                        synchronized (JOBS) {
+                            if (run.screen) screenResult = run.result;
+                            active = null;
+                            refreshScreenTask();
+                        }
                     }
                 });
-                b.putString("id", run.id); return b;
+                b.putString("id", run.id);
+                if (run.screen) b.putString("screen_task", screenTaskId);
+                return b;
             }
         }
         RunState run = JOBS.get(arg);
@@ -136,6 +178,19 @@ public final class BridgeProvider extends ContentProvider {
         return "任务失败（" + cause.getClass().getSimpleName() + "），未切回原控屏以免重复操作";
     }
     public static void cancelActive() { RunState run = active; if (run != null) run.cancel(); NativeSession.cancel(); }
+    static void onScreenDisconnected() {
+        RunState run = active;
+        if (run != null && !run.preparingScreen) run.cancel();
+        NativeSession.cancel();
+    }
+    private static void refreshScreenTask() {
+        // Called under JOBS. A done tool reply is not a terminal task signal;
+        // wait for both execution to unwind and the native session to close.
+        if (screenTaskActive && (active == null || !active.screen) && !NativeSession.hasPendingOperation()) {
+            screenTaskActive = false;
+            if (screenResult.startsWith("CONTINUE")) screenResult = "任务已停止或超时";
+        }
+    }
     @Override public android.os.ParcelFileDescriptor openFile(Uri uri, String mode) throws java.io.FileNotFoundException {
         enforceCaller();
         if (!mode.equals("r") || uri.getPathSegments().size() != 2 || !uri.getPathSegments().get(0).equals("frame"))

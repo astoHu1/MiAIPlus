@@ -20,7 +20,7 @@ final class NativeChatRoutingHook {
         // Stop the UI submit explicitly when configuration cannot be read.
         hooks.add(Hooks.hookMethod(callback.getDeclaredMethod("A", String.class, String.class), new HookCallback() {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
-                try { NativeModelHook.config(context); }
+                try { NativeModelHook.requestConfig(context); }
                 catch (Exception unavailable) {
                     p.setResult(null);
                     Toast.makeText(context, "模型配置不可用，请检查 MiAIPlus 后重试", Toast.LENGTH_LONG).show();

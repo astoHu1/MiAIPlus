@@ -10,7 +10,7 @@
 
 ```sh
 # apksigner 在 Android SDK build-tools 目录中；使用交互式密码提示
-apksigner sign --ks /你的私有目录/release.jks --out MiAIPlus-signed.apk dist/MiAIPlus-0.3.0-unsigned.apk
+apksigner sign --ks /你的私有目录/release.jks --out MiAIPlus-signed.apk dist/MiAIPlus-0.3.3-unsigned.apk
 apksigner verify --verbose MiAIPlus-signed.apk
 ```
 

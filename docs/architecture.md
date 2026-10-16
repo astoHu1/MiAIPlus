@@ -18,13 +18,13 @@ flowchart TD
   E --> F[截图 / 树 / 会话状态]
   F --> I[一次性私有管道 → Message.images]
   I --> D
-  P --> A[可选独立外部 computer / AutoGLM 循环]
+  P --> A[可选独立外部 phone use / AutoGLM 循环]
   A <--> E
 ```
 
 ## 默认官方模型控屏
 
-`NativeSession` 在模块 UID 维护四分钟以内的会话、最近观察、最大步数和停止状态。首次请求返回 `CONTINUE`、会话号和观察；官方模型优先使用注册到原生 ToolRegistry 的 `miaiplus_computer` 函数提交 `session` 和 `action`；兼容入口接收 `MIAIPLUS:{session,action}`。结构化函数默认按实际 JPEG 像素接收坐标，也支持显式物理屏幕像素与0..1000；统一换算后再交给执行器。旧入口默认归一化坐标。结构化函数只在启用本机原生规划时加入模型工具列表，执行时再次校验配置。每步只执行一个数据动作，之后重新观察。对包含模块 CONTINUE 和截图 token 的 ToolResult.Success，清除直接答案标记与内部 CLI 直接答案 metadata，确保原 Agent 把中间观察回送模型；其他工具结果保持原行为。结束/接管显式关闭会话。
+`NativeSession` 在模块 UID 维护四分钟以内的会话、最近观察、最大步数和停止状态。首次请求返回 `CONTINUE`、会话号和观察；官方模型优先使用注册到原生 ToolRegistry 的 `miaiplus_phone_use` 函数提交 `session` 和 `action`；兼容入口接收 `MIAIPLUS:{session,action}`。结构化函数默认按实际 JPEG 像素接收坐标，也支持显式物理屏幕像素与0..1000；统一换算后再交给执行器。旧入口默认归一化坐标。结构化函数只在启用本机原生规划时加入模型工具列表，执行时再次校验配置。每步只执行一个数据动作，之后重新观察。对包含模块 CONTINUE 和截图 token 的 ToolResult.Success，清除直接答案标记与内部 CLI 直接答案 metadata，确保原 Agent 把中间观察回送模型；其他工具结果保持原行为。结束/接管显式关闭会话。
 
 无外部端点配置也可工作，`AgentEngine` 在该模式下不调用 `ModelClient`。截图由 `FrameStore` 存入短期内存，以随机、一次性、调用 UID 绑定的 token 经 Provider 管道读取。`NativeModelHook` 优先在 ToolResult.Success 中附加 `ImageContent`，使原生 CLI 与消息历史复制保留图片；TOOL Message 构造 Hook 提供兼容读取。图片元数据采用实际 JPEG 尺寸，执行坐标仍以原屏归一化。截图不以 Base64 进入工具返回字符串或 Binder Bundle。
 
@@ -42,10 +42,14 @@ flowchart TD
 
 ## 可选全局主模型替换
 
+`EndpointProfiles` 在模块私有 SharedPreferences 内保存命名配置和当前配置 ID；旧单套配置首次打开作为“默认配置”，第一次保存时写入集合。每套只包含地址、Key、模型及 API 协议，新增配置使用 UUID 区分同地址的不同账号/模型。保存、切换和删除通过同一个 Editor 提交集合、当前 ID 与现有平铺运行时字段，保持 Provider 和独立循环的读取兼容。`Config` 用 `getAll()` 取得同一次快照，避免并发切换时将不同配置的地址和密钥混合。重名与非法外部配置在提交前拒绝，损坏集合不自动覆盖；推理强度继续按 endpoint/model/api 独立存储。
+
+设置页切换未保存内容时提供保存、放弃和取消；另存新配置保留原记录，最后一套禁止删除。页面重建保留编辑内容，旧服务异步模型列表不会覆盖新配置。原生提交/模型/记忆/路由请求开始时刷新配置，不复用 UI 两秒缓存；记忆请求将本次配置快照传到同步 HTTP 构造阶段，避免并发切换后模型与协议不一致。独立循环在任务开始时固定 Config。
+
 在当前精确支持版本上，`qm.c` 为 DynLlmClient，负责根据 `sm.a` 选择 Taiyi / OpenAI / Anthropic；`um.h` 是直接 Taiyi 客户端；同时接入 `qm.i`（OpenAI Chat Completions）、`qm.j`（OpenAI Responses）、`qm.b`（Anthropic）直接传输入口，覆盖绕开分发器构造客户端的调用。
 开关关闭时不改推理配置；打开时为这些调用构造临时 OpenAI 配置，保留原消息列表、工具列表、systemPrompt、协程 Continuation 和原生 SSE 事件解析。使用原生 `qm.i` 作为消息/工具序列化和 Agent 事件前端，保留小爱原工具调用结果处理；它不再决定外部服务的线上协议。为外部请求单独创建干净的 Ktor/OkHttp 客户端，仅安装 JSON 序列化与超时插件，关闭重定向，不使用原应用的 ServiceToken、设备签名、账号认证与网络日志拦截器。
 
-API Key 仅在显式启用全局替换时经 UID 校验 IPC 交给小爱进程内存，不改小爱配置文件。该范围覆盖通过上述 OSBot 入口的聊天、Agent 与辅助推理；语音识别/合成、独立系统服务、独立云端推理入口不在这个 Hook 的声明范围内。切换后需重启小爱，清除已构造的客户端/描述和会话状态。
+API Key 仅在显式启用全局替换时经 UID 校验 IPC 交给小爱进程内存，不改小爱配置文件。该范围覆盖通过上述 OSBot 入口的聊天、Agent 与辅助推理；语音识别/合成、独立系统服务、独立云端推理入口不在这个 Hook 的声明范围内。启用状态变化和工具定义更新后需重启小爱或按热重载要求重载；切换已保存的 Endpoint 无需重启。
 
 内部干净 OpenAI 委托使用同步线程重入保护，避免其被再次重定向；保护在原生 Flow 创建后即释放，不抑制其他调用。记忆摘要另走 `ep.j.o` 的非流式请求：同样替换临时模型配置，在同步构造请求期间通过线程局部标记替换 `er.a0.getClient()`，保留原重试、隐私编码、响应解析与协程取消机制；`finally` 对应的 Hook 后置阶段恢复标记。
 
@@ -69,7 +73,7 @@ API Key 仅在显式启用全局替换时经 UID 校验 IPC 交给小爱进程�
 
 选择 [Open-AutoGLM](https://github.com/zai-org/Open-AutoGLM)，参考 commit `86f55382982fb054e8fc98ca80609dff8a2cdc3c`，Apache-2.0。采用截图观察→模型规划→原子动作→重新观察的循环和 0..1000 坐标、`do(...)` / `finish(...)` 动作协议，以 Android Java 和 AccessibilityService 实现本机执行器。
 
-未打包上游 Python/ADB 运行时、模型权重或任何小爱 APK/反编译源码。普通视觉模型可用模块自定义的标准 function tool `computer`，无需模仿 AutoGLM 文本格式。默认模式把同样的原子动作交给小爱当前主模型规划。
+未打包上游 Python/ADB 运行时、模型权重或任何小爱 APK/反编译源码。普通视觉模型可用模块自定义的标准 function tool `phone use`，无需模仿 AutoGLM 文本格式。默认模式把同样的原子动作交给小爱当前主模型规划。
 
 ## 改动边界
 
@@ -84,3 +88,13 @@ Hook 仅安装在精确校验的小爱版本：工具入口、描述构造、Pro
 现代入口为 `XiaoAiHook extends XposedModule`，元数据位于 `META-INF/xposed`。`Hooks` 对所有拦截及外部代理执行计数，重载先冻结新工作，空闲时释放 UI/广播/客户端/工具代理，新一代主动重新安装 Hook。设置进程通过 service 102 请求重载，配置 IPC 仍经过 BridgeProvider UID 检查。
 
 `InteractionUi` 在小爱 UID 发布 HyperOS 原生焦点模板；`screen_ready` 握手成功之前执行器不触摸屏幕。保存交互入口只发生于整个控屏会话开始；多步 CONTINUE 不重置入口。全屏移动原任务到后台，快捷键系统浮窗隐藏并关闭触摸/焦点；独立观察线程确认执行已经退出才恢复全屏或发布展开的完成岛。停止请求等待实际执行退出，避免恢复页面与末尾动作竞争。详见 [迁移与专项验证](api102-migration.md)。
+
+展开岛通过 `param_v2.actions` / `miui.focus.actions` 提供停止控制，移除常驻无障碍悬浮停止键；确认窗仍由 `ScreenService` 按动作显示。Provider 用独立 `screen_task` 生命周期连接各次工具请求，宿主页面的中间更新在任务结束前保持后台。
+
+`TaskProgress` 将 action.intent 转为有界短文本；没有该字段时按动作生成说明，独立于触发确认的 message。`InteractionUi` 每 700 毫秒读取任务进度，仅在变化时更新岛右侧，使用 JSONObject 构造参数并关闭更新时的重复浮动提醒。执行指纹排除 intent，防止仅修改文案绕过重复动作检测。
+
+可选 `AccessibilityGuard` 只在新控屏任务的准备阶段查询 Binder 连接；失效时执行有界 root helper，只重绑模块组件。后续工具调用、任务中途和空闲时没有自动修复。root 专用健康 IPC 只返回连接、开关、准备阶段、任务票据与忙碌状态，不暴露配置、树或截图；旧 daemon 的取消请求已失效。详见 [任务前检查与边界](accessibility-guard.md)。
+
+## 应用启动
+
+`AppLaunchTarget` 从可见的 MAIN/LAUNCHER 列表解析包名或唯一名称；`ScreenService` 提交标准显式 launcher Intent。`LaunchPrompt` 只匹配小米安全中心当前发起方/目标的启动确认，执行器最多点击一次“本次允许”；`LaunchVerifier` 等待稳定前台，超时和未匹配权限返回 PAUSE，点击确认本身不是成功依据。原生首次观察提供应用列表，控屏规划引导模型统一用 launch。详细边界与设备验证见 [应用启动](app-launch.md)。

@@ -9,8 +9,8 @@ import java.util.List;
 import java.util.Map;
 
 /** Typed native function entry avoids a second layer of CLI query quoting. */
-public final class NativeComputerTool {
-    public static final String NAME = "miaiplus_computer";
+public final class NativePhoneUseTool {
+    public static final String NAME = "miaiplus_phone_use";
     private static final String DESCRIPTION = "本机手机控屏。start时传goal取得session和观察；然后每次传session及一个action对象，按新观察继续调用直到finish。无需额外API，由你逐步规划。默认使用截图JPEG像素坐标(image_pixels)，不是0..1000；也可显式选screen_pixels或normalized，必须匹配观察尺寸。不要复述CONTINUE或用自然语言替代action。系统专用工具优先。";
     private static final String SCHEMA = """
         {"type":"object","properties":{
@@ -22,7 +22,8 @@ public final class NativeComputerTool {
             "element":{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2},
             "start":{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2},
             "end":{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2},
-            "text":{"type":"string"},"app":{"type":"string","description":"应用包名"},
+            "intent":{"type":"string","description":"每步用简短中文说明当前操作意图，例如点击搜索框、查找订单，显示在灵动岛；不含隐私内容、坐标或推理过程。不要用message填写普通意图。"},
+            "text":{"type":"string"},"app":{"type":"string","description":"launch使用首次观察可启动应用列表中的包名，不猜测包名或Intent"},
             "message":{"type":"string"},"requires_confirmation":{"type":"boolean"},"duration_ms":{"type":"integer"}
           },"required":["action"]}
         }}
@@ -60,7 +61,8 @@ public final class NativeComputerTool {
         Class<?> toolType = Reflector.findClass("com.aios.osbot.tools.Tool", loader);
         Object tool = java.lang.reflect.Proxy.newProxyInstance(loader, new Class<?>[]{toolType}, (proxy, method, args) -> {
             return switch (method.getName()) {
-                case "getName", "getDisplayName" -> NAME;
+                case "getName" -> NAME;
+                case "getDisplayName" -> "phone use";
                 case "getDescription", "getSummary", "getSearchHint" -> DESCRIPTION;
                 case "getParameters" -> schema;
                 case "getCategory" -> "phone";

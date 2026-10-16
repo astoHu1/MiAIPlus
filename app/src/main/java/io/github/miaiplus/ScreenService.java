@@ -29,13 +29,53 @@ public final class ScreenService extends AccessibilityService {
     public static volatile ScreenService instance;
     private final Handler main = new Handler(Looper.getMainLooper());
     private View overlay;
-    public record Frame(String image, String tree, int width, int height, String foreground) {}
+    volatile int launchConfirmationCount;
 
-    @Override public void onServiceConnected() { instance = this; }
+    /**
+     * One observation.
+     *
+     * <p>{@code width}/{@code height} are the display's logical size and {@code imageWidth}/{@code imageHeight} the
+     * encoded JPEG size; they differ because a capture is downscaled, and mixing the two misplaces every tap. A
+     * background observation carries its display id and generation, so a stale frame can never be replayed against
+     * a different screen and a background action can never fall through to the physical one.
+     */
+    public record Frame(String image, String tree, int width, int height, String foreground,
+                        int imageWidth, int imageHeight, int displayId, String generation) {
+        public static Frame physical(String image, String tree, int width, int height, String foreground) {
+            return new Frame(image, tree, width, height, foreground, width, height,
+                android.view.Display.DEFAULT_DISPLAY, "");
+        }
+        public static Frame background(String image, String tree, int displayWidth, int displayHeight,
+            int imageWidth, int imageHeight, String foreground, int displayId, String generation) {
+            return new Frame(image, tree, displayWidth, displayHeight, foreground, imageWidth, imageHeight,
+                displayId, generation);
+        }
+        public boolean isBackground() { return displayId != android.view.Display.DEFAULT_DISPLAY; }
+    }
+
+    @Override public void onServiceConnected() {
+        instance = this;
+    }
+    public static boolean isHealthy() {
+        ScreenService service = instance;
+        try { return service != null && service.getServiceInfo() != null; }
+        catch (RuntimeException disconnected) { return false; }
+    }
     @Override public void onAccessibilityEvent(AccessibilityEvent event) { /* Read only on an explicit task. */ }
-    @Override public void onInterrupt() { BridgeProvider.cancelActive(); }
+    @Override public void onInterrupt() {
+        // Android interrupts accessibility feedback here; it does not revoke the connection.
+        if (instance == this && !isHealthy()) BridgeProvider.onScreenDisconnected();
+    }
     @Override public void onDestroy() {
-        BridgeProvider.cancelActive(); hideControls(); instance = null; super.onDestroy();
+        disconnected(); super.onDestroy();
+    }
+    @Override public boolean onUnbind(Intent intent) { disconnected(); return super.onUnbind(intent); }
+    private void disconnected() {
+        if (instance == this) {
+            instance = null;
+            BridgeProvider.onScreenDisconnected();
+        }
+        hideControls();
     }
     private <T> T onMain(Callable<T> callable) throws Exception {
         if (Looper.myLooper() == Looper.getMainLooper()) return callable.call();
@@ -62,6 +102,112 @@ public final class ScreenService extends AccessibilityService {
         if (root != null && !root.refresh()) throw new IllegalStateException("窗口信息已失效，请重新发起任务");
         return root;
     }
+    /**
+     * Resolves a requested app name to a launchable component for the background backend. Returns null when the
+     * request does not match an installed launcher entry, so the caller refuses instead of launching a guess.
+     */
+    static AppLaunchTarget resolveLaunchTarget(String requested) {
+        ScreenService service = instance;
+        if (service == null) return null;
+        try {
+            return service.onMain(() -> AppLaunchTarget.resolve(requested, service.launchTargets()));
+        } catch (Exception unresolved) {
+            return null;
+        }
+    }
+
+    /**
+     * Reads the accessibility tree of one display, without ever falling back to the physical screen.
+     *
+     * <p>Windows are keyed by display id in {@code getWindowsOnAllDisplays()}; the focused window's root is
+     * preferred, matching the physical path. When the ROM exposes no window for that display the result is empty,
+     * which callers report as a vision-only observation rather than substituting the user's own screen.
+     */
+    static String treeOnDisplay(int displayId, String expectedPackage) {
+        ScreenService service = instance;
+        if (service == null) return "";
+        try {
+            return service.onMain(() -> {
+                java.util.List<android.view.accessibility.AccessibilityWindowInfo> windows = null;
+                try {
+                    var byDisplay = service.getWindowsOnAllDisplays();
+                    if (byDisplay != null) windows = byDisplay.get(displayId);
+                } catch (RuntimeException unsupported) { /* Older ROMs may not implement this; treat as no tree. */ }
+                if (windows == null || windows.isEmpty()) return "";
+                AccessibilityNodeInfo fallback = null;
+                for (var window : windows) {
+                    if (window.getType() == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD
+                        || window.getType() == android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) continue;
+                    AccessibilityNodeInfo root = window.getRoot();
+                    if (root == null || !root.refresh()) continue;
+                    if (!expectedPackage.isEmpty() && expectedPackage.equals(String.valueOf(root.getPackageName()))) {
+                        StringBuilder builder = new StringBuilder();
+                        service.dump(root, builder, new int[]{0});
+                        return builder.toString();
+                    }
+                    if (fallback == null && window.isFocused()) fallback = root;
+                }
+                if (fallback == null) return "";
+                StringBuilder builder = new StringBuilder();
+                service.dump(fallback, builder, new int[]{0});
+                return builder.toString();
+            });
+        } catch (Exception unavailable) {
+            return "";
+        }
+    }
+
+    /**
+     * Types into the editable node on the target display and reports whether a node accepted the text.
+     *
+     * <p>Chinese cannot travel through {@code input text}, and borrowing the physical screen's input focus would
+     * type into whatever the user is doing. So the text goes to the target display's own editable node, and a
+     * password field is refused. {@code false} means no editable node was found, which the caller reports as an
+     * unsupported action rather than silently typing somewhere else.
+     */
+    static boolean setTextOnDisplay(int displayId, String expectedPackage, String text) {
+        ScreenService service = instance;
+        if (service == null) return false;
+        try {
+            return service.onMain(() -> {
+                java.util.List<android.view.accessibility.AccessibilityWindowInfo> windows = null;
+                try {
+                    var byDisplay = service.getWindowsOnAllDisplays();
+                    if (byDisplay != null) windows = byDisplay.get(displayId);
+                } catch (RuntimeException unsupported) {
+                    return false;
+                }
+                if (windows == null) return false;
+                for (var window : windows) {
+                    if (window.getType() == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD
+                        || window.getType() == android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) continue;
+                    AccessibilityNodeInfo root = window.getRoot();
+                    if (root == null || !root.refresh()) continue;
+                    if (!expectedPackage.isEmpty() && !expectedPackage.equals(String.valueOf(root.getPackageName()))) continue;
+                    AccessibilityNodeInfo target = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
+                    if (target == null || !target.isEditable()) target = findEditable(root);
+                    if (target == null || !target.isEditable() || target.isPassword()) continue;
+                    Bundle arguments = new Bundle();
+                    arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text);
+                    return target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments);
+                }
+                return false;
+            });
+        } catch (Exception unavailable) {
+            return false;
+        }
+    }
+
+    private static AccessibilityNodeInfo findEditable(AccessibilityNodeInfo node) {
+        if (node == null) return null;
+        if (node.isEditable() && node.isVisibleToUser()) return node;
+        for (int index = 0; index < node.getChildCount(); index++) {
+            AccessibilityNodeInfo found = findEditable(node.getChild(index));
+            if (found != null) return found;
+        }
+        return null;
+    }
+
     public Frame capture(RunState run) throws Exception {
         unlocked(run);
         String[] tree = onMain(() -> {
@@ -85,7 +231,8 @@ public final class ScreenService extends AccessibilityService {
                     ByteArrayOutputStream out = new ByteArrayOutputStream();
                     small.compress(Bitmap.CompressFormat.JPEG, 80, out);
                     if (small != bitmap) small.recycle(); bitmap.recycle();
-                    f.complete(new Frame(Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP), tree[0], width, height, tree[1]));
+                    f.complete(Frame.physical(Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP), tree[0],
+                        width, height, tree[1]));
                 } catch (Throwable e) { f.completeExceptionally(e); }
             }
             @Override public void onFailure(int code) { f.completeExceptionally(new IllegalStateException("无法截图（安全窗口/服务权限），错误码 " + code)); }
@@ -113,14 +260,115 @@ public final class ScreenService extends AccessibilityService {
             if (child != null) dump(child, out, count);
         }
     }
+    private java.util.List<AppLaunchTarget> launchTargets() {
+        java.util.List<AppLaunchTarget> entries = new java.util.ArrayList<>();
+        var pm = getPackageManager();
+        for (var info : pm.queryIntentActivities(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)) {
+            var activity = info.activityInfo;
+            if (activity == null || !activity.exported || !activity.enabled || !activity.applicationInfo.enabled) continue;
+            entries.add(new AppLaunchTarget(activity.packageName, activity.name, info.loadLabel(pm).toString()));
+        }
+        return entries;
+    }
     public String apps() throws Exception {
         return onMain(() -> {
             StringBuilder out = new StringBuilder();
-            for (var info : getPackageManager().queryIntentActivities(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)) {
-                out.append(info.loadLabel(getPackageManager())).append(" = ").append(info.activityInfo.packageName).append('\n');
+            var seen = new java.util.HashSet<String>();
+            for (AppLaunchTarget entry : launchTargets()) {
+                if (seen.add(entry.packageName())) out.append(entry.label()).append(" = ").append(entry.packageName()).append('\n');
+                if (out.length() >= 12000) { out.append("[应用列表过长已截断]\n"); break; }
             }
             return out.toString();
         });
+    }
+    private boolean allowLaunchPrompt(AppLaunchTarget target, RunState run) throws Exception {
+        return onMain(() -> {
+            unlocked(run);
+            AccessibilityNodeInfo root = currentRoot();
+            if (root == null) return false;
+            java.util.List<String> texts = new java.util.ArrayList<>();
+            java.util.List<AccessibilityNodeInfo> buttons = new java.util.ArrayList<>();
+            collectLaunchPrompt(root, texts, buttons, new int[]{0});
+            var pm = getPackageManager();
+            String targetLabel = pm.getApplicationLabel(pm.getApplicationInfo(target.packageName(), 0)).toString();
+            String callerLabel = pm.getApplicationLabel(getApplicationInfo()).toString();
+            if (!LaunchPrompt.matches(String.valueOf(root.getPackageName()),
+                launchPromptText(root, "permission_group_title"), launchPromptText(root, "event_title"), texts,
+                java.util.List.of(callerLabel, getPackageName()),
+                java.util.List.of(target.label(), targetLabel, target.packageName())) || buttons.size() != 1) return false;
+            AccessibilityNodeInfo button = buttons.get(0);
+            if (!button.refresh() || !button.isVisibleToUser() || !button.isEnabled()) return false;
+            unlocked(run);
+            if (!button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return false;
+            launchConfirmationCount++;
+            run.progress = "正在允许本次打开：" + TaskProgress.compact(target.label());
+            return true;
+        });
+    }
+    private String launchPromptText(AccessibilityNodeInfo root, String id) {
+        String found = "";
+        for (AccessibilityNodeInfo node : root.findAccessibilityNodeInfosByViewId("com.miui.securitycenter:id/" + id)) {
+            if (!node.isVisibleToUser() || node.getText() == null) continue;
+            if (!found.isEmpty()) return "";
+            found = node.getText().toString().strip();
+        }
+        return found;
+    }
+    private void collectLaunchPrompt(AccessibilityNodeInfo node, java.util.List<String> texts,
+        java.util.List<AccessibilityNodeInfo> buttons, int[] count) {
+        if (count[0]++ >= 100) return;
+        if (node.isVisibleToUser()) {
+            if (node.getText() != null) {
+                String text = node.getText().toString().strip();
+                texts.add(text);
+                if (text.equals("本次允许") && node.isEnabled() && node.isClickable()) buttons.add(node);
+            }
+        }
+        for (int i = 0; i < node.getChildCount() && count[0] < 100; i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            if (child != null) collectLaunchPrompt(child, texts, buttons, count);
+        }
+    }
+    private void launch(String requested, RunState run) throws Exception {
+        AppLaunchTarget target = onMain(() -> { unlocked(run); return AppLaunchTarget.resolve(requested, launchTargets()); });
+        run.progress = "正在打开：" + TaskProgress.compact(target.label());
+        LaunchVerifier.launch(target.packageName(), new LaunchVerifier.Driver() {
+            @Override public String foreground() throws Exception {
+                return onMain(() -> {
+                    unlocked(run);
+                    AccessibilityNodeInfo root;
+                    try { root = currentRoot(); }
+                    catch (IllegalStateException transientWindow) { return ""; }
+                    if (root == null || root.getPackageName() == null) return "";
+                    String pkg = root.getPackageName().toString();
+                    // Security also owns ordinary launcher pages; only permission UI is a blocker.
+                    return LaunchVerifier.classifyForeground(pkg, pkg.equals("com.miui.securitycenter")
+                        ? launchPromptText(root, "permission_group_title") : "");
+                });
+            }
+            @Override public void start() throws Exception {
+                onMain(() -> {
+                    unlocked(run);
+                    Intent intent = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+                        .setComponent(new android.content.ComponentName(target.packageName(), target.activityName()))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+                    // The launcher request belongs to the accessibility service, never an IPC caller.
+                    long identity = android.os.Binder.clearCallingIdentity();
+                    try { startActivity(intent); }
+                    catch (SecurityException denied) {
+                        throw new IllegalStateException("PAUSE：系统拒绝打开应用，请手动处理系统授权，或检查 MiAIPlus 的后台弹出界面权限后重新发起任务。");
+                    } catch (android.content.ActivityNotFoundException missing) {
+                        throw new IllegalStateException("应用启动入口已失效，请检查应用是否仍安装并启用");
+                    } finally { android.os.Binder.restoreCallingIdentity(identity); }
+                    return null;
+                });
+            }
+            @Override public boolean allowLaunchPrompt() throws Exception { return ScreenService.this.allowLaunchPrompt(target, run); }
+            @Override public void check() { unlocked(run); }
+            @Override public long now() { return android.os.SystemClock.elapsedRealtime(); }
+            @Override public void pause(long millis) throws Exception { run.pause(millis); }
+        });
+        run.progress = "已打开：" + TaskProgress.compact(target.label());
     }
     public void execute(Action action, Frame frame, RunState run) throws Exception {
         unlocked(run);
@@ -153,22 +401,7 @@ public final class ScreenService extends AccessibilityService {
                 boolean ok = onMain(() -> { unlocked(run); return performGlobalAction(action.name.equals("back") ? GLOBAL_ACTION_BACK : GLOBAL_ACTION_HOME); });
                 if (!ok) throw new IllegalStateException("系统拒绝返回/主页动作");
             }
-            case "launch" -> onMain(() -> {
-                unlocked(run);
-                String app = action.data.getString("app"), pkg = app;
-                if (getPackageManager().getLaunchIntentForPackage(pkg) == null) {
-                    pkg = null;
-                    for (var info : getPackageManager().queryIntentActivities(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)) {
-                        if (info.loadLabel(getPackageManager()).toString().equals(app)) {
-                            if (pkg != null) throw new IllegalStateException("应用名称不唯一，请指定包名");
-                            pkg = info.activityInfo.packageName;
-                        }
-                    }
-                }
-                Intent intent = pkg == null ? null : getPackageManager().getLaunchIntentForPackage(pkg);
-                if (intent == null) throw new IllegalStateException("应用未安装或无启动入口");
-                startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); return null;
-            });
+            case "launch" -> launch(action.data.getString("app"), run);
             case "wait" -> run.pause(Math.max(100, Math.min(3000, action.data.optInt("duration_ms", 1000))));
             default -> throw new IllegalArgumentException("非执行动作: " + action.name);
         }
@@ -201,14 +434,6 @@ public final class ScreenService extends AccessibilityService {
     }
     private static float pixel(double n, int size) { return (float)Math.min(size - 1, n * size / 1000); }
 
-    public void showControls(RunState run) throws Exception {
-        onMain(() -> {
-            removeOverlay();
-            Button stop = new Button(this); stop.setText("■ 停止 MiAIPlus");
-            stop.setOnClickListener(v -> { BridgeProvider.cancelActive(); hideControls(); });
-            addOverlay(stop); return null;
-        });
-    }
     public boolean confirm(String message, RunState run) throws Exception {
         CompletableFuture<Boolean> decision = new CompletableFuture<>();
         onMain(() -> {
@@ -222,7 +447,7 @@ public final class ScreenService extends AccessibilityService {
         try {
             while (!decision.isDone()) run.pause(100);
             return decision.get();
-        } finally { if (!run.cancelled.get()) showControls(run); }
+        } finally { onMain(() -> { removeOverlay(); return null; }); }
     }
     private void addOverlay(View v) {
         WindowManager.LayoutParams p = new WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,

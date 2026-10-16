@@ -25,6 +25,7 @@ import org.json.JSONObject;
 /** Runs in XiaoAi's UID so HyperOS applies XiaoAi's existing focus-notification permission. */
 final class InteractionUi implements Application.ActivityLifecycleCallbacks {
     private static final int NOTIFICATION = 0x4d494149;
+    // Keep the existing notification channel ID so upgrades preserve the user's channel settings.
     private static final String CHANNEL = "miaiplus_computer";
     private static final String STOP = "com.miui.voiceassist.MIAIPLUS_STOP";
     private final Application app;
@@ -34,6 +35,9 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
     private WeakReference<Activity> resumed = new WeakReference<>(null);
     private ActivityManager.AppTask originTask;
     private PendingIntent returnIntent;
+    private String controlToken;
+    private String screenTask;
+    private String shownProgress = "";
     private boolean compact;
     private Object overlayManager;
     private View overlayRoot;
@@ -45,7 +49,9 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
     private java.util.concurrent.ScheduledExecutorService watcher;
     private final BroadcastReceiver stop = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
-            if (STOP.equals(intent.getAction())) app.getContentResolver().call(BridgeProvider.URI, "stop_screen", null, null);
+            if (running && STOP.equals(intent.getAction()) && controlToken != null
+                && controlToken.equals(intent.getStringExtra("token")))
+                app.getContentResolver().call(BridgeProvider.URI, "stop_screen", null, null);
         }
     };
     InteractionUi(Application app, ClassLoader loader) {
@@ -68,6 +74,7 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
         // Keep native streaming UI updates from reattaching that window over the app being operated.
         Reflector.findAndHookMethod("com.xiaomi.voiceassistant.UiManager", loader, "start", Intent.class, new HookCallback() {
             @Override protected void beforeHookedMethod(MethodHookParam p) throws Exception {
+                if (running) { p.setResult(null); return; }
                 if (!running && overlayHidden) MainThread.call(() -> { releaseOverlay(); return null; });
             }
         });
@@ -92,9 +99,20 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
         }
     }
     /** Capture once for the whole native multi-call session, never for individual continuation steps. */
-    void begin() throws Exception {
+    void begin(String taskId) throws Exception {
         MainThread.call(() -> {
+                if (running && !java.util.Objects.equals(screenTask, taskId)) {
+                    // A new task can arrive before the previous task's last poll.
+                    // Keep the saved entry hidden, but retire its observer and queued callbacks.
+                    screenTask = taskId;
+                    stopWatching();
+                    controlToken = java.util.UUID.randomUUID().toString();
+                    shownProgress = "正在理解任务";
+                    try { publish("正在操作手机", shownProgress, true); }
+                    catch (Exception failure) { finish("控屏已停止", false); throw failure; }
+                }
                 if (!running) {
+                    screenTask = taskId;
                     if (overlayHidden) releaseOverlay();
                     Activity activity = resumed.get();
                     Object ui = Reflector.callStaticMethod(Reflector.findClass("com.xiaomi.voiceassistant.UiManager", loader), "getInstance", app);
@@ -117,7 +135,9 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
                     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
                     returnIntent = PendingIntent.getActivity(app, NOTIFICATION, intent,
                         PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-                    publish("正在操作手机", "MiAIPlus 正在执行控屏任务", true);
+                    controlToken = java.util.UUID.randomUUID().toString();
+                    shownProgress = "正在理解任务";
+                    publish("正在操作手机", shownProgress, true);
                     try {
                         running = true;
                         if (overlay) {
@@ -146,13 +166,29 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
     void started() {
         main.post(() -> {
             if (!running || watcher != null) return;
+            String watchedTask = screenTask;
             watcher = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> new Thread(r, "miaiplus-focus-watch"));
             watcher.scheduleWithFixedDelay(() -> {
                 try {
-                    Bundle state = app.getContentResolver().call(BridgeProvider.URI, "screen_state", null, null);
-                    if (state != null && state.getBoolean("active")) return;
-                    main.post(() -> finish(state == null ? "控屏连接已中断" : state.getString("result", "操作已结束"), state != null));
-                } catch (RuntimeException failure) { main.post(() -> finish("控屏连接已中断", false)); }
+                    Bundle state = app.getContentResolver().call(BridgeProvider.URI, "screen_state", watchedTask, null);
+                    if (state != null && state.getBoolean("active")) {
+                        String progress = TaskProgress.compact(state.getString("progress", ""));
+                        main.post(() -> {
+                            if (!running || !java.util.Objects.equals(screenTask, watchedTask)
+                                || progress.isEmpty() || progress.equals(shownProgress)) return;
+                            try { publish("正在操作手机", progress, true); shownProgress = progress; }
+                            catch (Exception failure) { android.util.Log.w("MiAIPlus", "Unable to update task intent"); }
+                        });
+                        return;
+                    }
+                    main.post(() -> {
+                        if (java.util.Objects.equals(screenTask, watchedTask))
+                            finish(state == null ? "控屏连接已中断" : state.getString("result", "操作已结束"),
+                                state != null && state.getBoolean("completed"));
+                    });
+                } catch (RuntimeException failure) { main.post(() -> {
+                    if (java.util.Objects.equals(screenTask, watchedTask)) finish("控屏连接已中断", false);
+                }); }
             }, 700, 700, java.util.concurrent.TimeUnit.MILLISECONDS);
         });
     }
@@ -168,32 +204,55 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
             throw new IllegalStateException("请开启超级小爱的 MiAIPlus 手机操作通知渠道");
         // Reuse the exact supported XiaoAi version's native HyperOS island templates and icons.
         Object nativeBuilder = Reflector.newInstance(Reflector.findClass("xh1.a", loader), app);
-        String focus = (String)Reflector.callMethod(nativeBuilder, "getFocusNotificationTemplateJson", title, text);
-        String large = (String)Reflector.callMethod(nativeBuilder, "getLargeIslandJson", title, ongoing ? "正在操作" : "已结束");
+        // Build model-supplied display text with JSONObject, never interpolate it into native JSON strings.
+        JSONObject focus = new JSONObject((String)Reflector.callMethod(nativeBuilder, "getFocusNotificationTemplateJson", title, ""));
+        focus.put("content", text);
+        JSONObject large = new JSONObject((String)Reflector.callMethod(nativeBuilder, "getLargeIslandJson", title, ""));
+        large.getJSONObject("imageTextInfoRight").getJSONObject("textInfo").put("title", text);
         String small = (String)Reflector.callMethod(nativeBuilder, "getSmallIslandJson");
-        JSONObject params = new JSONObject((String)Reflector.callMethod(nativeBuilder, "buildJsonParams", title, focus, large, small));
+        JSONObject params = new JSONObject((String)Reflector.callMethod(nativeBuilder, "buildJsonParams", title, focus.toString(), large.toString(), small));
         JSONObject v2 = params.getJSONObject("param_v2");
-        v2.put("islandFirstFloat", true).put("enableFloat", true);
+        boolean updating = ongoing && running;
+        v2.put("islandFirstFloat", !updating).put("enableFloat", !updating);
+        Intent stopIntent = new Intent(STOP).setPackage(app.getPackageName()).putExtra("token", controlToken);
+        PendingIntent stopPending = PendingIntent.getBroadcast(app, NOTIFICATION, stopIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        Notification.Action stopAction = new Notification.Action.Builder((android.graphics.drawable.Icon)null,
+            "停止操作", stopPending).build();
+        Bundle pictures = (Bundle)Reflector.callMethod(nativeBuilder, "getIconResource", app);
+        if (ongoing) {
+            // HyperOS expanded focus cards read param_v2.actions, not Notification.actions.
+            Object controls = Reflector.newInstance(Reflector.findClass("gp1.c", loader));
+            pictures.putAll((Bundle)Reflector.callMethod(controls, "getIconResource", app));
+            v2.put("actions", new org.json.JSONArray().put(new JSONObject()
+                .put("action", "miaiplus_stop").put("actionTitle", "停止操作").put("actionIcon", "miui.focus.pic_action_close")
+                .put("actionIconDark", "miui.focus.pic_action_close_dark")));
+        }
         Bundle extras = new Bundle();
         extras.putString("miui.focus.param", params.toString());
-        extras.putBundle("miui.focus.pics", (Bundle)Reflector.callMethod(nativeBuilder, "getIconResource", app));
+        extras.putBundle("miui.focus.pics", pictures);
+        if (ongoing) {
+            Bundle actions = new Bundle(); actions.putParcelable("miaiplus_stop", stopAction);
+            extras.putBundle("miui.focus.actions", actions);
+        }
         Notification.Builder builder = new Notification.Builder(app, CHANNEL).setSmallIcon(app.getApplicationInfo().icon)
             .setContentTitle(title).setContentText(text).setContentIntent(returnIntent).setOngoing(ongoing)
-            .setCategory(Notification.CATEGORY_PROGRESS).setOnlyAlertOnce(false).setAutoCancel(!ongoing).addExtras(extras);
-        if (ongoing) builder.addAction(new Notification.Action.Builder((android.graphics.drawable.Icon)null, "停止操作", PendingIntent.getBroadcast(app, NOTIFICATION,
-            new Intent(STOP).setPackage(app.getPackageName()), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE)).build());
+            .setCategory(Notification.CATEGORY_PROGRESS).setOnlyAlertOnce(updating).setAutoCancel(!ongoing).addExtras(extras);
+        if (ongoing) builder.addAction(stopAction);
         else builder.setTimeoutAfter(30_000);
         manager.notify(NOTIFICATION, builder.build());
     }
-    private void finish(String result, boolean restore) {
-        if (!running) return;
+    private void stopWatching() {
         if (watcher != null) {
             watcher.shutdownNow();
-            try { watcher.awaitTermination(2, java.util.concurrent.TimeUnit.SECONDS); }
-            catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
             watcher = null;
         }
+    }
+    private void finish(String result, boolean restore) {
+        if (!running) return;
+        stopWatching();
         app.getSystemService(NotificationManager.class).cancel(NOTIFICATION);
+        running = false;
         if (restore && !app.getSystemService(KeyguardManager.class).isKeyguardLocked()) {
             try {
                 if (compact || result.startsWith("PAUSE")) publish(result.startsWith("PAUSE") ? "需要你接管手机" : "手机操作已结束", "点击返回小爱查看结果", false);
@@ -201,7 +260,7 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
                 else if (returnIntent != null) returnIntent.send();
             } catch (Exception failure) { android.util.Log.w("MiAIPlus", "Unable to restore interaction", failure); }
         }
-        originTask = null; returnIntent = null; running = false;
+        originTask = null; returnIntent = null; controlToken = null; screenTask = null; running = false;
         if (overlayHidden) main.postDelayed(expireOverlay, 30_000);
     }
     private static void hideWindowParams(WindowManager.LayoutParams params) {
@@ -233,6 +292,9 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
     }
     @Override public void onActivityResumed(Activity activity) {
         resumed = new WeakReference<>(activity);
+        // Native tool-result rendering may resume the chat after each CONTINUE.
+        // Keep the original task in the background until its terminal acknowledgement.
+        if (running) activity.moveTaskToBack(true);
         if (!running && overlayHidden) releaseOverlay();
     }
     @Override public void onActivityPaused(Activity activity) { if (resumed.get() == activity) resumed.clear(); }

@@ -23,7 +23,7 @@
 | 文件/能力 | 现状 | 下一 Session 的处理 |
 |---|---|---|
 | `XiaoAiHook.java` | 精确适配小爱 8.2.65.4714 / 508002065；controlApp、描述、PromptBuilder Hook；失败回滚 | 保留版本检查和已有工具路由 |
-| `NativeComputerTool.java` | 原生 `miaiplus_computer` 工具，goal 首次请求、session+action 后续；支持坐标空间 | 工具绑定执行模式与会话，模型不能任意选择系统 display |
+| `NativePhoneUseTool.java` | 原生 `miaiplus_phone_use` 工具，goal 首次请求、session+action 后续；支持坐标空间 | 工具绑定执行模式与会话，模型不能任意选择系统 display |
 | `NativeModelHook.java` | ToolResult/ImageContent 接入；五个 streamCompletion 入口的外部替换；独立记忆摘要请求 ep.j.o/er.a0.getClient 的配置和干净传输替换 | 保留已有消息/SSE/记忆链路；虚拟屏不要求第二个模型或外部 Key |
 | `NativeIntentHook.java` / `IntentProtocol.java` | 适配精确路径 `/osbot/api/intent/v2/chat/completions` 的请求与路由响应，复用干净 HTTP；由 globalModel 开关控制 | 保留意图路由层，不与显示执行后端混合 |
 | `BridgeProvider.java` | UID 检查、start/poll/cancel、单 worker/active、watchdog、私有截图管道；已有 NativeSession 与其他入口的互斥检查 | 扩展为统一后端资源所有权和会话状态，保留已有互斥与 UID 边界 |
@@ -39,7 +39,7 @@
 - `NativeIntentHook.java:20-45`：按 URI **path** 精确匹配 intent v2 路径，代码没有同时限定来源 hostname；开启 globalModel 后适配 body、清空 query/headers、设置用户端点/认证并改用 cleanHttp。初始化错误明确失败，不静默回原路由。
 - `IntentProtocol.java:15-29,35-49`：v2 请求转换成分类提示，要求 FALLBACK/direct_path=false；普通文本分类响应被转换成原生 FALLBACK 决策。但 message **已有 status 时原样交给原解析器**，不能宣称所有响应一律禁止 direct dispatch。原生解析前的适配异常被忽略，由原解析器处理。
 - `NativeModelHook.java:38-81` 已同时处理 TOOL Message 与 ToolResult.Success 图片，并清除 CONTINUE 的直接答案标记及 `cli_internal_direct_answer`，让观察返回原 Agent 循环；虚拟屏只需替换观察来源，保留此运输和续跑行为。
-- `NativeComputerTool.java:14-18,62` 默认 image_pixels；`XiaoAiHook.java:25` 的策略示例使用 screen_pixels/树坐标。两者都支持，但提示与观察应统一说明图片、树、显示逻辑尺寸，不能笼统称“工具一律物理坐标”。
+- `NativePhoneUseTool.java:14-18,62` 默认 image_pixels；`XiaoAiHook.java:25` 的策略示例使用 screen_pixels/树坐标。两者都支持，但提示与观察应统一说明图片、树、显示逻辑尺寸，不能笼统称“工具一律物理坐标”。
 - `FrameStore.java:17-22` 已从编码后的 JPEG 读取真实尺寸；但 `NativeSession.java:45-47,76-78` 的坐标换算和观察文字仍按最长边1280计算图片尺寸。下一步应统一使用 Observation 中实际 JPEG 尺寸，保留已有能力，不重复造一个尺寸解析器。
 - `NativeSession.java:61-65` 已执行前重新截图比较 foreground/tree，页面变化直接停止；一般动作尚没有显示归属、windowId、generation 校验或自动重规划。`ScreenService.java:125-132,177-187` 另有包名/手势尺寸保护。
 - `AgentEngine.java:76,90-99,109-123` 外部循环仍使用归一化坐标，仅确认分支额外重截图比较页面。不能把 NativeSession 的全部保护或三坐标空间支持当作两条路径都已经具备。
@@ -228,7 +228,7 @@ create/capture/pointer 的成功不足以启用“后台可用”。树不能读
 | `NativeSession.java` | State 保存 DisplaySession；初次创建、每步验证、结束/异常/timeout/cancel 统一释放；现有 timer 只 cancel/hideControls 不够 |
 | `AgentEngine.java` | 不再直接持有 ScreenService，使用同一 ScreenBackend；与 native 会话共享单 run 协调器 |
 | `RunState.java` / `NativeSession.cancel()` | 保留已有取消标志、HTTP disconnect 和非阻塞取消；补资源清理钩子及结构化错误，不在主线程等待 helper |
-| `NativeComputerTool.java` / `XiaoAiHook.java` | 工具提示说明后台会话、不可操作主屏；模式服务端固定；保留精确版本与 Hook rollback；原生工具当前 isStoppable=false/onCancel 不取消 run，后台需接通取消链 |
+| `NativePhoneUseTool.java` / `XiaoAiHook.java` | 工具提示说明后台会话、不可操作主屏；模式服务端固定；保留精确版本与 Hook rollback；原生工具当前 isStoppable=false/onCancel 不取消 run，后台需接通取消链 |
 | `NativeModelHook.java` / `NativeIntentHook.java` / `IntentProtocol.java` | 保留已有流式、意图路由、记忆摘要及图片链路；新增后台能力不能退回较旧 Hook 覆盖范围 |
 | `BridgeProvider.java` | capability/session 状态查询、UID 鉴权、取消传播；防止外部请求任意 display/control |
 | `FrameStore.java` / `Coordinates.java` | 保留已有真实 JPEG 尺寸解析、一次性 token 和原生三坐标空间转换；补 display generation/seq，并统一原生与外部循环 |

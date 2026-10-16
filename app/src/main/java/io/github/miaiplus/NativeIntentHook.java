@@ -21,7 +21,7 @@ public final class NativeIntentHook {
                 String value = String.valueOf(Reflector.callMethod(url, "buildString"));
                 if (!"/osbot/api/intent/v2/chat/completions".equals(URI.create(value).getPath())) return;
                 try {
-                    var config = NativeModelHook.config(context);
+                    var config = NativeModelHook.requestConfig(context);
                     if (!config.getBoolean("globalModel")) return;
                     String endpoint = Endpoint.validate(config.getString("endpoint", ""));
                     String model = config.getString("model", "").trim();

@@ -156,7 +156,7 @@ class Handler(BaseHTTPRequestHandler):
                 time.sleep(8)
                 message = {"role": "assistant", "content": "should-be-cancelled"}
             else:
-                match = re.fullmatch(r"MIAIPLUS_SCREEN_TEST (computer|autoglm) ([0-9.]+) ([0-9.]+)", task)
+                match = re.fullmatch(r"MIAIPLUS_SCREEN_TEST (phone_use|autoglm) ([0-9.]+) ([0-9.]+)", task)
                 assert match, "unexpected task"
                 protocol, x, y = match.groups()
                 step = sum(m["role"] == "assistant" for m in messages)
@@ -168,9 +168,9 @@ class Handler(BaseHTTPRequestHandler):
                           {"action": "finish", "message": "fixture verified"}][step]
                 if step == 2:
                     assert "你好 MiAIPlus" in observation[0]["text"], "new screenshot/tree did not confirm input"
-                if protocol == "computer":
-                    assert request["tools"][0]["function"]["name"] == "computer"
-                    message = {"role": "assistant", "content": None, "tool_calls": [{"id": f"call_{step}", "type": "function", "function": {"name": "computer", "arguments": json.dumps(action, ensure_ascii=False)}}]}
+                if protocol == "phone_use":
+                    assert request["tools"][0]["function"]["name"] == "phone_use"
+                    message = {"role": "assistant", "content": None, "tool_calls": [{"id": f"call_{step}", "type": "function", "function": {"name": "phone_use", "arguments": json.dumps(action, ensure_ascii=False)}}]}
                 else:
                     assert "tools" not in request
                     if step == 0:

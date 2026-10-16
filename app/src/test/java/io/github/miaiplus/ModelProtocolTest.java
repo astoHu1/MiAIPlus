@@ -18,9 +18,9 @@ public class ModelProtocolTest {
             {"model":"gpt-6.1-sol","temperature":0,"top_p":1,"max_tokens":8192,"stream":false,
              "messages":[{"role":"system","content":"instructions"},
               {"role":"user","content":[{"type":"text","text":"screen"},{"type":"image_url","image_url":{"url":"data:image/jpeg;base64,fixture","detail":"high"}}]},
-              {"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"computer","arguments":"{}"}}]},
+              {"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"phone_use","arguments":"{}"}}]},
               {"role":"tool","tool_call_id":"call_1","content":"done"}],
-             "tools":[{"type":"function","function":{"name":"computer","parameters":{"type":"object","properties":{"action":{"type":"string"}}}}}],
+             "tools":[{"type":"function","function":{"name":"phone_use","parameters":{"type":"object","properties":{"action":{"type":"string"}}}}}],
              "tool_choice":"required","parallel_tool_calls":true}
             """);
         String original = chat.toString();
@@ -39,14 +39,14 @@ public class ModelProtocolTest {
         assertEquals("function_call_output", input.getJSONObject(3).getString("type"));
         assertEquals("call_1", input.getJSONObject(3).getString("call_id"));
         JSONObject tool = body.getJSONArray("tools").getJSONObject(0);
-        assertEquals("computer", tool.getString("name")); assertFalse(tool.has("function")); assertFalse(tool.getBoolean("strict"));
+        assertEquals("phone_use", tool.getString("name")); assertFalse(tool.has("function")); assertFalse(tool.getBoolean("strict"));
         assertEquals(original, chat.toString());
     }
     @Test public void parsesMixedOutputAndReplaysOpaqueReasoningAndPhase() throws Exception {
         JSONObject response = new JSONObject("""
             {"status":"completed","output":[{"id":"rs_1","type":"reasoning","summary":[],"encrypted_content":"opaque"},
               {"type":"message","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"observe"}]},
-              {"type":"function_call","id":"fc_1","call_id":"call_1","name":"computer","arguments":"{}"}]}
+              {"type":"function_call","id":"fc_1","call_id":"call_1","name":"phone_use","arguments":"{}"}]}
             """);
         JSONObject message = ModelProtocol.message(response);
         assertEquals("observe", message.getString("content"));
@@ -61,7 +61,7 @@ public class ModelProtocolTest {
     }
     @Test public void rejectsIncompleteFailedEmptyAndRefusedOutput() throws Exception {
         for (String json : new String[]{
-            "{\"status\":\"incomplete\",\"output\":[{\"type\":\"function_call\",\"call_id\":\"c\",\"name\":\"computer\",\"arguments\":\"{}\"}]}",
+            "{\"status\":\"incomplete\",\"output\":[{\"type\":\"function_call\",\"call_id\":\"c\",\"name\":\"phone_use\",\"arguments\":\"{}\"}]}",
             "{\"status\":\"failed\",\"output\":[]}", "{\"status\":\"completed\",\"output\":[]}",
             "{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"refusal\",\"refusal\":\"no\"}]}]}"}) {
             try { ModelProtocol.message(new JSONObject(json)); fail("Accepted invalid output"); }
@@ -72,11 +72,11 @@ public class ModelProtocolTest {
         JSONObject chat = new JSONObject("""
             {"model":"alias","messages":[{"role":"user","content":"classify"}],
              "response_format":{"type":"json_schema","json_schema":{"name":"decision","schema":{"type":"object"}}},
-             "tools":[{"type":"function","function":{"name":"computer","parameters":{"type":"object"}}}],
-             "tool_choice":{"type":"function","function":{"name":"computer"}},"reasoning_effort":"high"}
+             "tools":[{"type":"function","function":{"name":"phone_use","parameters":{"type":"object"}}}],
+             "tool_choice":{"type":"function","function":{"name":"phone_use"}},"reasoning_effort":"high"}
             """);
         JSONObject body = ModelProtocol.request(chat);
-        assertEquals("computer", body.getJSONObject("tool_choice").getString("name"));
+        assertEquals("phone_use", body.getJSONObject("tool_choice").getString("name"));
         assertEquals("high", body.getJSONObject("reasoning").getString("effort"));
         assertEquals("decision", body.getJSONObject("text").getJSONObject("format").getString("name"));
     }

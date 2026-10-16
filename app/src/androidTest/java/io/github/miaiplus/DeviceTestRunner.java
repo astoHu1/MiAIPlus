@@ -9,9 +9,20 @@ import java.util.Map;
 
 /** Instrumented end-to-end test against scripts/mock_model.py, no paid model required. */
 public final class DeviceTestRunner extends LiveProbeRunner {
-    private boolean hookMode, liveMode, reloadMode;
+    @Override public void finish(int resultCode, Bundle results) {
+        // UI probes put a fixture behind XiaoAi. Never leave it as the next app to resume.
+        runOnMainSync(() -> {
+            for (var task : getTargetContext().getSystemService(android.app.ActivityManager.class).getAppTasks()) {
+                var base = task.getTaskInfo().baseActivity;
+                if (base != null && base.getPackageName().equals("io.github.miaiplus")
+                    && base.getClassName().equals("io.github.miaiplus.FixtureActivity")) task.finishAndRemoveTask();
+            }
+        });
+        super.finish(resultCode, results);
+    }
+    private boolean hookMode, liveMode, reloadMode, guardMode, guardPreflightMode, profilesMode;
     private String transportApi;
-    @Override public void onCreate(Bundle arguments) { reloadMode = "true".equals(arguments.getString("reload")); transportApi = arguments.getString("api", "chat"); liveMode = "true".equals(arguments.getString("live")); hookMode = "true".equals(arguments.getString("hook")); super.onCreate(arguments); }
+    @Override public void onCreate(Bundle arguments) { profilesMode = "true".equals(arguments.getString("profiles")); guardPreflightMode = "true".equals(arguments.getString("guard_preflight")); guardMode = "true".equals(arguments.getString("guard")); reloadMode = "true".equals(arguments.getString("reload")); transportApi = arguments.getString("api", "chat"); liveMode = "true".equals(arguments.getString("live")); hookMode = "true".equals(arguments.getString("hook")); super.onCreate(arguments); }
     private void check(boolean ok, String message) { if (!ok) throw new AssertionError(message); }
     private void signal(String text) { Bundle status = new Bundle(); status.putString("stream", text + "\n"); sendStatus(1, status); }
     private void configure(String protocol) {
@@ -49,6 +60,9 @@ public final class DeviceTestRunner extends LiveProbeRunner {
         } catch (java.io.FileNotFoundException expected) { }
     }
     @Override public void onStart() {
+        if (profilesMode) { EndpointProfilesRunner.run(this); return; }
+        if (guardPreflightMode) { AccessibilityGuardRunner.runPreflight(this); return; }
+        if (guardMode) { AccessibilityGuardRunner.run(this); return; }
         if (reloadMode) { ReloadProbeRunner.run(this, true); return; }
         if (hookMode || liveMode) { super.onStart(); return; }
         Bundle report = new Bundle();
@@ -59,10 +73,10 @@ public final class DeviceTestRunner extends LiveProbeRunner {
             long deadline = SystemClock.elapsedRealtime() + 15000;
             while (ScreenService.instance == null && SystemClock.elapsedRealtime() < deadline) Thread.sleep(100);
             check(ScreenService.instance != null, "Accessibility service not connected");
-            configure("computer");
+            configure("phone_use");
             Bundle chat = await(startJob("chat", "MIAIPLUS_CHAT_TEST").getString("id"));
             check("done".equals(chat.getString("status")) && "chat-ok".equals(chat.getString("result")), "chat failed: " + chat);
-            for (String protocol : new String[]{"computer", "autoglm", "native"}) {
+            for (String protocol : new String[]{"phone_use", "autoglm", "native"}) {
                 configure(protocol);
                 // Host launches the fixture without creating a second accessibility controller.
                 signal("MIAIPLUS_LAUNCH_FIXTURE");
@@ -91,6 +105,8 @@ public final class DeviceTestRunner extends LiveProbeRunner {
                     var match = java.util.regex.Pattern.compile("会话=([a-f0-9-]{36})").matcher(observation);
                     check(match.find(), "no native session"); String session = match.group(1);
                     checkFrame(observation);
+                    // Interrupting spoken feedback is not an accessibility permission loss.
+                    runOnMainSync(() -> ScreenService.instance.onInterrupt());
                     for (var action : new org.json.JSONObject[]{
                         new org.json.JSONObject().put("action", "tap").put("element", new org.json.JSONArray().put(center[0]*1000.0/frame.width()).put(center[1]*1000.0/frame.height())),
                         new org.json.JSONObject().put("action", "type").put("text", "你好 MiAIPlus")}) {
@@ -108,12 +124,12 @@ public final class DeviceTestRunner extends LiveProbeRunner {
                 runOnMainSync(() -> check("你好 MiAIPlus".contentEquals(FixtureActivity.input.getText()), "Chinese input failed"));
                 runOnMainSync(fixture::finish); Thread.sleep(400);
             }
-            configure("computer");
+            configure("phone_use");
             String id = startJob("chat", "MIAIPLUS_CANCEL_TEST").getString("id");
             Thread.sleep(1000);
             getTargetContext().getContentResolver().call(BridgeProvider.URI, "cancel", id, null);
             check("error".equals(await(id).getString("status")), "cancel did not stop job");
-            report.putString("stream", "PASS: native tool session without endpoint/key/model and one-use screenshot pipe; chat without screenshot; computer and AutoGLM screenshot→tap→Chinese input→verification→finish; cancellation.\n");
+            report.putString("stream", "PASS: native tool session without endpoint/key/model and one-use screenshot pipe; chat without screenshot; phone use and AutoGLM screenshot→tap→Chinese input→verification→finish; cancellation.\n");
             resultCode = Activity.RESULT_OK;
         } catch (Throwable e) {
             report.putString("stream", "FAIL: " + e + "\n" + android.util.Log.getStackTraceString(e));

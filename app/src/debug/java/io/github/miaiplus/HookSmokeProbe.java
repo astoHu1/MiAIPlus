@@ -66,18 +66,19 @@ public final class HookSmokeProbe {
             @Override public void onReceive(Context ignored, Intent intent) {
                 try { io.github.miaiplus.hook.Hooks.enter(); }
                 catch (IllegalStateException retiring) { return; }
-                var pending = goAsync();
+                // Release the broadcast queue before a long probe sends task-control broadcasts.
                 Thread worker = new Thread(() -> {
                     String report;
                     try {
                         String token = intent.getStringExtra("frame");
-                        report = "MIAIPLUS_FOCUS_UI".equals(token) ? focusUi(context, loader)
+                        report = "MIAIPLUS_LAUNCH_UI".equals(token) ? launchUi(context, loader)
+                            : "MIAIPLUS_FOCUS_UI".equals(token) ? focusUi(context, loader)
                             : "MIAIPLUS_TRANSPORT_FAILURE".equals(token) ? transportFailures(loader)
                             : "MIAIPLUS_STOCK_REASONING".equals(token) ? reasoningUi(context, loader, true) : run(context, loader, token);
                     }
                     catch (Throwable e) { report = "PROBE FAIL: " + e; io.github.miaiplus.hook.Hooks.log(e); }
                     try { Bundle b = new Bundle(); b.putString("report", report); context.getContentResolver().call(BridgeProvider.URI, "hook_report", null, b); }
-                    finally { workers.remove(Thread.currentThread()); pending.finish(); io.github.miaiplus.hook.Hooks.leave(); }
+                    finally { workers.remove(Thread.currentThread()); io.github.miaiplus.hook.Hooks.leave(); }
                 }, "miaiplus-debug-probe");
                 workers.add(worker); worker.start();
             }
@@ -105,6 +106,7 @@ public final class HookSmokeProbe {
         if (!compact && origin == null) throw new AssertionError("no resumed XiaoAi activity or shortcut overlay");
         Object service = Reflector.newInstance(Reflector.findClass("com.xiaomi.voiceassistant.UIAgentServiceForOSBot", loader));
         String observation = String.valueOf(invoke(invoke(service, "controlApp", "只观察测试页面，不操作"), "getText"));
+        consumeFrame(context, observation);
         var session = java.util.regex.Pattern.compile("会话=([a-f0-9-]{36})").matcher(observation);
         if (!session.find()) throw new AssertionError("no UI session: " + observation.substring(0, Math.min(180, observation.length())));
         try {
@@ -114,7 +116,29 @@ public final class HookSmokeProbe {
                 var flags = MainThread.call(() -> ((android.view.WindowManager.LayoutParams)root.getLayoutParams()).flags);
                 if ((flags & android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE) == 0) throw new AssertionError("shortcut window still intercepts touches");
             } else if (MainThread.call(HookSmokeProbe::resumedActivity) == origin) throw new AssertionError("XiaoAi origin was not backgrounded");
-            Thread.sleep(10000); // Host can inspect the actual HyperOS island during this observation-only session.
+            // Allow the watcher to poll repeatedly between calls and after two CONTINUE results.
+            for (int i = 0; i < 2; i++) {
+                Thread.sleep(2200);
+                String next = String.valueOf(invoke(invoke(service, "controlApp", "MIAIPLUS:{\"session\":\"" + session.group(1)
+                    + "\",\"action\":{\"action\":\"wait\",\"duration_ms\":100,\"intent\":\"检查测试页面" + i + "\"}}"), "getText"));
+                if (!next.startsWith("CONTINUE")) throw new AssertionError("continuation failed: " + next.substring(0, Math.min(100, next.length())));
+                consumeFrame(context, next);
+                Thread.sleep(1000);
+                assertFocus(context, "正在操作手机");
+                for (var notification : context.getSystemService(android.app.NotificationManager.class).getActiveNotifications()) {
+                    if (notification.getId() != 0x4d494149) continue;
+                    var n = notification.getNotification();
+                    var params = new org.json.JSONObject(n.extras.getString("miui.focus.param")).getJSONObject("param_v2");
+                    String right = params.getJSONObject("param_island").getJSONObject("bigIslandArea")
+                        .getJSONObject("imageTextInfoRight").getJSONObject("textInfo").getString("title");
+                    if (!right.contains("检查测试页面" + i)) throw new AssertionError("island intent did not update: " + right);
+                    if ((n.flags & android.app.Notification.FLAG_ONLY_ALERT_ONCE) == 0 || params.getBoolean("enableFloat"))
+                        throw new AssertionError("intent update floated again");
+                }
+                if (!compact && MainThread.call(HookSmokeProbe::resumedActivity) == origin)
+                    throw new AssertionError("origin restored after a tool step");
+            }
+            Thread.sleep(6000); // Inspect the expanded task controls on the test device.
         } finally {
             invoke(service, "controlApp", "MIAIPLUS:{\"session\":\"" + session.group(1) + "\",\"action\":{\"action\":\"finish\",\"message\":\"界面观察结束\"}}");
         }
@@ -129,7 +153,101 @@ public final class HookSmokeProbe {
             if (MainThread.call(HookSmokeProbe::resumedActivity) == null) throw new AssertionError("native conversation entry did not open");
         }
         else if (MainThread.call(HookSmokeProbe::resumedActivity) != origin) throw new AssertionError("did not restore the same full-screen Activity instance");
-        return "PROBE PASS: focus notification, backgrounded origin, " + (compact ? "shortcut overlay hidden, completion island and native conversation entry opened" : "same fullscreen Activity restored");
+        String stopObservation = focusRollover(context, service);
+        if (!stopObservation.startsWith("CONTINUE")) throw new AssertionError("stop session failed");
+        assertFocus(context, "正在操作手机");
+        for (var notification : context.getSystemService(android.app.NotificationManager.class).getActiveNotifications()) {
+            if (notification.getId() != 0x4d494149) continue;
+            var action = notification.getNotification().extras.getBundle("miui.focus.actions")
+                .getParcelable("miaiplus_stop", android.app.Notification.Action.class);
+            action.actionIntent.send();
+        }
+        Thread.sleep(2200);
+        Bundle stopped = context.getContentResolver().call(BridgeProvider.URI, "screen_state", null, null);
+        if (stopped == null || stopped.getBoolean("active") || !stopped.getBoolean("completed"))
+            throw new AssertionError("expanded island stop did not end task: " + stopped);
+        return "PROBE PASS: focus notification, rapid task rollover, backgrounded origin, " + (compact ? "shortcut overlay hidden, completion island and native conversation entry opened" : "same fullscreen Activity restored");
+    }
+    private static String focusRollover(Context context, Object service) throws Exception {
+        String first = String.valueOf(invoke(invoke(service, "controlApp", "只观察任务切换测试，不操作"), "getText"));
+        consumeFrame(context, first);
+        var session = java.util.regex.Pattern.compile("会话=([a-f0-9-]{36})").matcher(first);
+        if (!session.find()) throw new AssertionError("rollover session failed");
+        Object interaction = Reflector.getStaticObjectField(XiaoAiHook.class, "interaction");
+        String previousTask = MainThread.call(() -> (String)Reflector.getObjectField(interaction, "screenTask"));
+        Object entry = MainThread.call(() -> Reflector.getObjectField(interaction, "returnIntent"));
+        // Hold the UI at its last active observation while the provider finishes the task.
+        // This deterministically reproduces a new begin() arriving before the terminal poll.
+        var previousWatcher = MainThread.call(() -> {
+            var observer = (java.util.concurrent.ScheduledExecutorService)Reflector.getObjectField(interaction, "watcher");
+            if (observer == null) throw new AssertionError("rollover watcher missing");
+            observer.shutdownNow(); return observer;
+        });
+        if (!previousWatcher.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("old watcher did not stop");
+        MainThread.call(() -> null); // Drain any progress callbacks posted before shutdown.
+        invoke(service, "controlApp", "MIAIPLUS:{\"session\":\"" + session.group(1)
+            + "\",\"action\":{\"action\":\"finish\",\"message\":\"第一任务结束\"}}");
+        String next = String.valueOf(invoke(invoke(service, "controlApp", "只观察停止按钮测试，不操作"), "getText"));
+        consumeFrame(context, next);
+        Thread.sleep(1500);
+        Bundle state = context.getContentResolver().call(BridgeProvider.URI, "screen_state", null, null);
+        MainThread.call(() -> {
+            Object watcher = Reflector.getObjectField(interaction, "watcher");
+            String task = (String)Reflector.getObjectField(interaction, "screenTask");
+            if (state == null || !state.getBoolean("active") || previousTask.equals(task)
+                || !state.getString("screen_task").equals(task) || watcher == previousWatcher || watcher == null)
+                throw new AssertionError("new task did not replace its UI observer: state=" + state
+                    + ", previous=" + previousTask + ", current=" + task + ", sameWatcher=" + (watcher == previousWatcher));
+            if (Reflector.getObjectField(interaction, "returnIntent") != entry)
+                throw new AssertionError("rollover lost the original interaction entry");
+            return null;
+        });
+        assertFocus(context, "正在操作手机");
+        return next;
+    }
+    private static void consumeFrame(Context context, String observation) throws Exception {
+        // Direct probe calls bypass native TOOL message construction, which normally reads this pipe.
+        var token = java.util.regex.Pattern.compile("MIAIPLUS_FRAME:([a-f0-9-]{36})").matcher(observation);
+        if (!token.find()) {
+            if (observation.startsWith("CONTINUE")) throw new AssertionError("frame token missing");
+            return;
+        }
+        try (var input = context.getContentResolver().openInputStream(
+            android.net.Uri.withAppendedPath(BridgeProvider.URI, "frame/" + token.group(1)))) {
+            if (input == null) throw new AssertionError("frame pipe missing");
+            input.transferTo(java.io.OutputStream.nullOutputStream());
+        }
+    }
+    private static String launchUi(Context context, ClassLoader loader) throws Exception {
+        if (context.getSystemService(android.app.KeyguardManager.class).isKeyguardLocked())
+            throw new AssertionError("unlock device for launch test");
+        Object service = Reflector.newInstance(Reflector.findClass("com.xiaomi.voiceassistant.UIAgentServiceForOSBot", loader));
+        String observation = String.valueOf(invoke(invoke(service, "controlApp", "只打开 MiAIPlus 测试应用，不操作其他应用"), "getText"));
+        consumeFrame(context, observation);
+        var session = java.util.regex.Pattern.compile("会话=([a-f0-9-]{36})").matcher(observation);
+        if (!session.find()) throw new AssertionError("launch session not started");
+        if (!observation.contains("io.github.miaiplus.test")) throw new AssertionError("test launcher missing from observation");
+        if (!observation.contains("前台=com.miui.securitycenter；"))
+            throw new AssertionError("start the normal Security app page before the launch probe");
+        try {
+            String last = "";
+            for (String app : new String[]{"io.github.miaiplus.test", "MiAIPlus launch fixture"}) {
+                String request = "MIAIPLUS:" + new org.json.JSONObject().put("session", session.group(1))
+                    .put("action", new org.json.JSONObject().put("action", "launch").put("app", app).put("intent", "打开启动测试页面"));
+                String next = String.valueOf(invoke(invoke(service, "controlApp", request), "getText"));
+                if (!next.startsWith("CONTINUE") || !next.contains("前台=io.github.miaiplus.test；"))
+                    throw new AssertionError("launch was not verified: " + next.substring(0, Math.min(220, next.length())));
+                consumeFrame(context, next);
+                var instance = java.util.regex.Pattern.compile("fixture, instance ([0-9]+)").matcher(next);
+                if (!instance.find()) throw new AssertionError("launch fixture content missing");
+                if (!last.isEmpty() && !last.equals(instance.group(1))) throw new AssertionError("already-open app restarted");
+                last = instance.group(1);
+            }
+        } finally {
+            invoke(service, "controlApp", "MIAIPLUS:" + new org.json.JSONObject().put("session", session.group(1))
+                .put("action", new org.json.JSONObject().put("action", "finish").put("message", "启动测试结束")));
+        }
+        return "PROBE PASS: launch from normal Security app page, separate test app focused, package/label resolution, already-open instance preserved";
     }
     private static void assertFocus(Context context, String title) throws Exception {
         for (var notification : context.getSystemService(android.app.NotificationManager.class).getActiveNotifications()) {
@@ -137,7 +255,13 @@ public final class HookSmokeProbe {
             var extras = notification.getNotification().extras;
             if (!title.contentEquals(extras.getCharSequence("android.title"))) continue;
             var params = new org.json.JSONObject(extras.getString("miui.focus.param")).getJSONObject("param_v2");
-            if (params.getBoolean("islandFirstFloat") && params.getBoolean("enableFloat") && extras.getBundle("miui.focus.pics") != null) return;
+            if (title.equals("正在操作手机")) {
+                if (!params.getJSONArray("actions").getJSONObject(0).getString("action").equals("miaiplus_stop"))
+                    throw new AssertionError("expanded island stop action missing");
+                if (extras.getBundle("miui.focus.actions").getParcelable("miaiplus_stop", android.app.Notification.Action.class) == null)
+                    throw new AssertionError("expanded island stop PendingIntent missing");
+            }
+            if (extras.getBundle("miui.focus.pics") != null) return;
         }
         throw new AssertionError("focus notification missing: " + title);
     }

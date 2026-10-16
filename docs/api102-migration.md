@@ -10,7 +10,11 @@ MiAIPlus 0.3.0 使用 [libxposed/api](https://github.com/libxposed/api) 102.0.0 
 
 ## HyperOS 控屏状态
 
-控屏开始前，模块在小爱进程的 UID 中发布带 `miui.focus.param` / `miui.focus.pics` 的原生焦点通知，标题为“正在操作手机”，因此 HyperOS 可以把它显示为通知岛焦点提示。通知有“停止操作”动作；通知权限或该渠道被关闭时，任务会在真正触摸前停止并给出原因。
+控屏开始前，模块在小爱进程的 UID 中发布带 `miui.focus.param` / `miui.focus.pics` 的原生焦点通知，标题为“正在操作手机”。展开卡片的 `param_v2.actions` 引用 `miui.focus.actions` 中的不可变广播 PendingIntent，显示“停止操作”；标准通知保留同一动作。不再显示常驻悬浮停止键，敏感操作确认窗保留。焦点岛右侧以 action.intent 显示当前简短操作意图，每 700 毫秒检查变化；等待下一步保留最近意图，缺省时按动作提供说明。更新设置 onlyAlertOnce 并关闭 enableFloat/islandFirstFloat，不反复弹出。文案经 JSONObject 写入，不拼接模型文本到 JSON；不显示原始推理或输入字段。通知权限或渠道被关闭时，任务会在真正触摸前停止并给出原因。
+
+`screen_task` 标识整个控屏任务，延续到所有 CONTINUE 之后。`screen_state` 仅在执行线程已退出且 native 会话已关闭时确认 `completed`；单次工具返回不构成完成。观察线程绑定该任务 ID，旧观察结果不能恢复新任务的页面。控屏期间抑制宿主 `UiManager.start` 重新显示页面；Activity 因工具结果恢复时移回后台，直到任务终止才解除。
+
+前一任务结束但终态尚未轮询到时，新任务会立即替换观察器、任务 ID 和停止令牌，沿用仍隐藏的原始返回入口。已排队的旧任务回调因 ID 不匹配失效；停止旧观察器不在主线程等待 IPC 退出，避免阻塞新任务的界面握手。
 
 模块在主线程保存开始控屏时正在恢复的 Activity、任务栈和入口 Intent。全屏页面通过任务栈移到后台；快捷键在该版本实际使用系统悬浮窗口，没有前台 FloatActivity，模块按原生窗口类型识别它，隐藏窗口并移除触摸/焦点能力，让被操作应用接收输入。不会调用会停止 Agent 或清空当前任务的原生 pushBackgroundOperate。任务完成后：
 

@@ -7,8 +7,8 @@ import java.util.Map;
 /** Configure the mock briefly, ask host to trigger the in-process debug smoke, then restore. */
 public class HookProbeRunner extends Instrumentation {
     private String api = "chat";
-    private boolean reasoning, focus;
-    @Override public void onCreate(Bundle b) { super.onCreate(b); api = b.getString("api", "chat"); reasoning = "true".equals(b.getString("reasoning")); focus = "true".equals(b.getString("focus")); start(); }
+    private boolean reasoning, focus, launch;
+    @Override public void onCreate(Bundle b) { super.onCreate(b); api = b.getString("api", "chat"); reasoning = "true".equals(b.getString("reasoning")); focus = "true".equals(b.getString("focus")); launch = "true".equals(b.getString("launch")); start(); }
     private String probe(String token) throws Exception {
         Config.prefs(getTargetContext()).edit().remove("hook_report").commit();
         Bundle status = new Bundle(); status.putString("stream", "MIAIPLUS_RESTART_XIAOAI " + token + "\n"); sendStatus(1, status);
@@ -19,8 +19,32 @@ public class HookProbeRunner extends Instrumentation {
             if (result.startsWith("PROBE ")) break;
             Thread.sleep(200);
         }
-        if (!result.startsWith("PROBE PASS")) throw new AssertionError(result.isBlank() ? "probe timeout" : result);
+        if (!result.startsWith("PROBE PASS")) throw new AssertionError((result.isBlank() ? "probe timeout" : result)
+            + (launch ? launchDiagnostics() : ""));
         return result;
+    }
+    private String launchDiagnostics() {
+        StringBuilder out = new StringBuilder();
+        runOnMainSync(() -> {
+            try {
+                ScreenService service = ScreenService.instance;
+                if (service == null) return;
+                var current = ScreenService.class.getDeclaredMethod("currentRoot"); current.setAccessible(true);
+                var root = (android.view.accessibility.AccessibilityNodeInfo)current.invoke(service);
+                if (root == null || !"com.miui.securitycenter".contentEquals(root.getPackageName())) return;
+                out.append("\nLaunch prompt window: ").append(root.getWindowId());
+                promptNodes(root, out, new int[]{0});
+            } catch (ReflectiveOperationException failure) { out.append("\nPrompt diagnostic unavailable"); }
+        });
+        return out.toString();
+    }
+    private static void promptNodes(android.view.accessibility.AccessibilityNodeInfo node, StringBuilder out, int[] count) {
+        if (count[0]++ >= 100) return;
+        if (node.isVisibleToUser() && node.getText() != null)
+            out.append("\n").append(node.getViewIdResourceName()).append(" clickable=").append(node.isClickable()).append(" text=").append(node.getText());
+        for (int i = 0; i < node.getChildCount() && count[0] < 100; i++) {
+            var child = node.getChild(i); if (child != null) promptNodes(child, out, count);
+        }
     }
     private void checkReasoningWrites(String model) {
         Bundle selection = new Bundle(); selection.putString("endpoint", "http://127.0.0.1:18765/v1");
@@ -39,9 +63,11 @@ public class HookProbeRunner extends Instrumentation {
         var prefs = Config.prefs(getTargetContext()); Map<String, ?> saved = prefs.getAll();
         Bundle report = new Bundle(); int code = Activity.RESULT_CANCELED;
         try {
-            if (focus) {
+            if (focus || launch) {
                 prefs.edit().putBoolean("enabled", true).putBoolean("globalModel", false).putString("planner", "native").commit();
-                report.putString("stream", probe("MIAIPLUS_FOCUS_UI") + "\n"); code = Activity.RESULT_OK;
+                int confirmations = ScreenService.instance == null ? 0 : ScreenService.instance.launchConfirmationCount;
+                report.putString("stream", probe(launch ? "MIAIPLUS_LAUNCH_UI" : "MIAIPLUS_FOCUS_UI") + (launch ? "; automatic launch confirmations="
+                    + (ScreenService.instance == null ? 0 : ScreenService.instance.launchConfirmationCount - confirmations) : "") + "\n"); code = Activity.RESULT_OK;
                 return;
             }
             if (reasoning) {
@@ -74,7 +100,7 @@ public class HookProbeRunner extends Instrumentation {
                 else if (e.getValue() instanceof Integer v) edit.putInt(e.getKey(), v);
             }
             edit.commit();
-            if (focus) finish(code, report);
+            if (focus || launch) finish(code, report);
         }
         finish(code, report);
     }

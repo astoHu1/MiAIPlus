@@ -19,8 +19,14 @@ public final class NativeModelHook {
     // This synchronous guard prevents rerouting that delegate back into itself.
     private static final ThreadLocal<Boolean> delegating = ThreadLocal.withInitial(() -> false);
     private static final ThreadLocal<Boolean> memoryTransport = ThreadLocal.withInitial(() -> false);
+    private static final ThreadLocal<Bundle> memorySettings = new ThreadLocal<>();
     private static long fetchedAt;
     static synchronized void invalidateConfig() { fetchedAt = 0; }
+    static synchronized Bundle requestConfig(Context context) {
+        // Endpoint switching must affect the next request, even inside the UI cache's two-second window.
+        invalidateConfig();
+        return config(context);
+    }
     static synchronized Bundle config(Context context) {
         long now = android.os.SystemClock.elapsedRealtime();
         if (modelConfig != null && now - fetchedAt < 2000) return modelConfig;
@@ -30,7 +36,7 @@ public final class NativeModelHook {
         modelConfig = value; fetchedAt = now; return value;
     }
     public static void install(Context context, ClassLoader loader, List<HookCallback.Unhook> hooks) throws Exception {
-        NativeComputerTool.install(context, loader, hooks);
+        NativePhoneUseTool.install(context, loader, hooks);
         NativeIntentHook.install(context, loader, hooks);
         NativeReasoningHook.install(context, loader, hooks);
         NativeChatRoutingHook.install(context, loader, hooks);
@@ -101,9 +107,9 @@ public final class NativeModelHook {
             hooks.add(Hooks.hookMethod(stream, new HookCallback() {
                 @Override protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                     if (delegating.get()) return;
-                    NativeComputerTool.addDefinition(context, param);
+                    NativePhoneUseTool.addDefinition(context, param);
                     Bundle setting;
-                    try { setting = config(context); }
+                    try { setting = requestConfig(context); }
                     catch (Exception unavailable) {
                         if (modelConfig != null && modelConfig.getBoolean("globalModel")) param.setThrowable(new IllegalStateException("外部模型配置服务不可用"));
                         return;
@@ -135,7 +141,7 @@ public final class NativeModelHook {
             @Override protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                 if (p.args[0] == null) return; // Coroutine resume: request is already configured.
                 try {
-                Bundle setting = config(context);
+                Bundle setting = requestConfig(context);
                 if (!setting.getBoolean("globalModel")) return;
                 String endpoint = Endpoint.validate(setting.getString("endpoint", ""));
                 String model = setting.getString("model", "").trim();
@@ -143,6 +149,8 @@ public final class NativeModelHook {
                 p.args[0] = replacement(configConstructor, loader, p.args[0], setting, endpoint, model);
                 p.args[5] = null; // Xiaomi billing/feature query parameters do not apply externally.
                 p.setObjectExtra("memoryTransportPrevious", memoryTransport.get());
+                p.setObjectExtra("memorySettingsPrevious", memorySettings.get());
+                memorySettings.set(setting);
                 memoryTransport.set(true);
                 } catch (Throwable failure) {
                     p.setThrowable(new IllegalStateException("记忆推理模型配置不可用", failure));
@@ -152,13 +160,15 @@ public final class NativeModelHook {
                 Object previous = p.getObjectExtra("memoryTransportPrevious");
                 if (previous instanceof Boolean value) {
                     if (value) memoryTransport.set(true); else memoryTransport.remove();
+                    Object oldSettings = p.getObjectExtra("memorySettingsPrevious");
+                    if (oldSettings instanceof Bundle bundle) memorySettings.set(bundle); else memorySettings.remove();
                 }
             }
         }));
         hooks.add(Reflector.findAndHookMethod("er.a0", loader, "getClient", new HookCallback() {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
                 if (memoryTransport.get()) {
-                    try { p.setResult(cleanHttp(loader, config(context))); }
+                    try { p.setResult(cleanHttp(loader, memorySettings.get())); }
                     catch (Throwable failure) { p.setThrowable(new IllegalStateException("外部记忆推理连接初始化失败", failure)); }
                 }
             }
@@ -191,7 +201,7 @@ public final class NativeModelHook {
     static synchronized void dispose() {
         for (Object http : externalHttp.values()) Reflector.callMethod(http, "close");
         externalHttp.clear(); modelConfig = null; fetchedAt = 0;
-        delegating.remove(); memoryTransport.remove();
+        delegating.remove(); memoryTransport.remove(); memorySettings.remove();
         NativeResponsesAdapter.clear();
     }
     private static final java.util.Map<String, Object> externalHttp = new java.util.HashMap<>();

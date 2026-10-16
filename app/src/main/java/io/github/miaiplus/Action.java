@@ -32,6 +32,11 @@ public final class Action {
             throw new IllegalArgumentException("坐标必须在 0..1000 内");
         return new double[]{x, y};
     }
+    public String fingerprint() throws Exception {
+        JSONObject execution = new JSONObject(data.toString());
+        execution.remove("intent");
+        return execution.toString();
+    }
     public static Action parseAutoGlm(String output) throws Exception {
         String s = output.trim();
         int answer = s.lastIndexOf("<answer>");

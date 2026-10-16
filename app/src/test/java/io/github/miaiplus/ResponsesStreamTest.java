@@ -15,7 +15,7 @@ public class ResponsesStreamTest {
     private static JSONObject result(String status) throws Exception {
         return new JSONObject("""
             {"id":"resp_1","status":"completed","output":[
-             {"type":"function_call","call_id":"call_1","name":"computer","arguments":"{}"}]}
+             {"type":"function_call","call_id":"call_1","name":"phone_use","arguments":"{}"}]}
             """).put("status", status);
     }
     @Test public void streamsTextBeforeCompletionAndEmitsValidatedCalls() throws Exception {
