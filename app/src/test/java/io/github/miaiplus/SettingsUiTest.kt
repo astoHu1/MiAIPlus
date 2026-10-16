@@ -1,18 +1,27 @@
 package io.github.miaiplus
 
 import android.app.Application
+import android.content.ContentProvider
+import android.content.ContentValues
+import android.content.pm.ProviderInfo
+import android.database.Cursor
 import android.graphics.Bitmap
+import android.net.Uri
+import android.os.Bundle
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import org.junit.Rule
 import org.junit.Test
+import org.junit.Assert.assertEquals
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import org.robolectric.shadows.ShadowContentResolver
 import java.io.File
+import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], application = Application::class, qualifiers = "zh-rCN-w393dp-h873dp-xxhdpi")
@@ -66,6 +75,35 @@ class SettingsUiTest {
         compose.onNodeWithText("小爱连接").assertExists()
     }
 
+    @Test fun backgroundCheckIsExplicitAndSurvivesStatusRefresh() {
+        val calls = AtomicInteger()
+        val provider = BackgroundStatusProvider(calls).apply {
+            attachInfo(compose.activity, ProviderInfo().apply { authority = "io.github.miaiplus.bridge" })
+        }
+        ShadowContentResolver.registerProviderInternal("io.github.miaiplus.bridge", provider)
+        compose.onNodeWithText("运行状态").performScrollTo().performClick()
+        assertEquals(0, calls.get())
+        compose.onNodeWithText("检查后台屏可用性").performScrollTo().performClick()
+        compose.waitUntil { calls.get() == 1 }
+        compose.onNodeWithText("前置条件已满足").assertExists()
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithText("前置条件已满足").assertExists()
+        assertEquals(1, calls.get())
+        capture("background-check-light")
+    }
+
+    @Test fun backgroundCheckDistinguishesFailuresFromReadyPrerequisites() {
+        assertEquals("检查失败", BackgroundCheck.from(null).title)
+        assertEquals("未取得 root 授权", BackgroundCheck.from(Bundle()).title)
+        assertEquals("手机已锁定", BackgroundCheck.from(Bundle().apply {
+            putBoolean("root", true); putBoolean("deviceLocked", true)
+        }).title)
+        assertEquals("前置条件已满足", BackgroundCheck.from(Bundle().apply { putBoolean("root", true) }).title)
+        assertEquals("BACKEND_DIED：后台显示无响应", BackgroundCheck.from(Bundle().apply {
+            putString("error", "BACKEND_DIED：后台显示无响应")
+        }).summary)
+    }
+
     private fun capture(name: String) {
         compose.waitForIdle()
         val bitmap = compose.onRoot().captureToImage().asAndroidBitmap()
@@ -73,4 +111,20 @@ class SettingsUiTest {
         File(directory, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         bitmap.recycle()
     }
+}
+
+/** IPC fixture: no root process, display creation, or real device interaction. */
+private class BackgroundStatusProvider(private val calls: AtomicInteger) : ContentProvider() {
+    override fun onCreate() = true
+    override fun call(method: String, arg: String?, extras: Bundle?): Bundle {
+        check(method == "background_display_status") { "Unexpected IPC: $method" }
+        calls.incrementAndGet()
+        return Bundle().apply { putBoolean("root", true); putBoolean("deviceLocked", false) }
+    }
+    override fun query(uri: Uri, projection: Array<out String>?, selection: String?,
+                       selectionArgs: Array<out String>?, sortOrder: String?): Cursor? = null
+    override fun getType(uri: Uri): String? = null
+    override fun insert(uri: Uri, values: ContentValues?): Uri? = null
+    override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?) = 0
+    override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?) = 0
 }

@@ -85,7 +85,7 @@ public class HookProbeRunner extends Instrumentation {
             android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(64, 64, android.graphics.Bitmap.Config.ARGB_8888);
             java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream(); bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, bytes); bitmap.recycle();
             int targetUid = getTargetContext().getPackageManager().getPackageUid("com.miui.voiceassist", 0);
-            String token = FrameStore.put(new ScreenService.Frame(android.util.Base64.encodeToString(bytes.toByteArray(), android.util.Base64.NO_WRAP), "synthetic fixture", 64, 64, "io.github.miaiplus"), targetUid);
+            String token = FrameStore.put(ScreenService.Frame.physical(android.util.Base64.encodeToString(bytes.toByteArray(), android.util.Base64.NO_WRAP), "synthetic fixture", 64, 64, "io.github.miaiplus"), targetUid);
             String result = probe(token);
             if (reasoning) result += "; native reasoning menu and selected wire effort";
             report.putString("stream", result + "\n"); code = Activity.RESULT_OK;

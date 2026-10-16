@@ -314,6 +314,10 @@ private fun StatusPage(state: SettingsState, openSettings: (Boolean) -> Unit, op
         BasicComponent(title = "任务前检查", summary = state.guardStatus)
     }
     Section("诊断") {
+        ArrowPreference(title = if (state.checkingBackground) "正在检查后台屏…" else "检查后台屏可用性",
+            summary = "检查 root 与锁屏状态，不创建屏幕", enabled = !state.checkingBackground,
+            onClick = { state.checkBackgroundDisplay() })
+        state.backgroundCheck?.let { BasicComponent(title = it.title, summary = it.summary) }
         ArrowPreference(title = "直接测试", summary = "测试外部模型对话或控屏", onClick = openTest)
     }
 }

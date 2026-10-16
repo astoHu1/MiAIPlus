@@ -48,6 +48,10 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
         private set
     var guardStatus by mutableStateOf("")
         private set
+    var checkingBackground by mutableStateOf(false)
+        private set
+    var backgroundCheck by mutableStateOf<BackgroundCheck?>(null)
+        private set
     var query by mutableStateOf("")
     var testMode by mutableIntStateOf(0)
     var job by mutableStateOf<String?>(null)
@@ -149,6 +153,22 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
 
     fun reload() { HotReload.request(); refresh() }
 
+    /** Root is queried only after the user taps the check row, never by the refresh timer. */
+    fun checkBackgroundDisplay() {
+        if (checkingBackground) return
+        checkingBackground = true
+        viewModelScope.launch {
+            try {
+                val response = withContext(Dispatchers.IO) {
+                    context.contentResolver.call(BridgeProvider.URI, "background_display_status", null, null)
+                }
+                backgroundCheck = BackgroundCheck.from(response)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { backgroundCheck = BackgroundCheck("检查失败", "请稍后重试") }
+            finally { checkingBackground = false }
+        }
+    }
+
     fun fetchModels() {
         val source = draft ?: return
         if (fetching) return
@@ -212,4 +232,16 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
     }
 
     fun stopTest() { BridgeProvider.cancelActive(); result = "已请求停止" }
+}
+
+data class BackgroundCheck(val title: String, val summary: String) {
+    companion object {
+        fun from(response: Bundle?): BackgroundCheck = when {
+            response == null -> BackgroundCheck("检查失败", "未收到模块返回的结果")
+            response.getString("error") != null -> BackgroundCheck("暂不可用", response.getString("error")!!)
+            !response.getBoolean("root") -> BackgroundCheck("未取得 root 授权", "请在 root 管理器中允许 MiAIPlus")
+            response.getBoolean("deviceLocked") -> BackgroundCheck("手机已锁定", "解锁后重新检查")
+            else -> BackgroundCheck("前置条件已满足", "已取得 root 授权，手机已解锁。设备兼容性以实际任务结果为准。")
+        }
+    }
 }
