@@ -1,5 +1,11 @@
 # MiAIPlus 0.3.3 实现与验证状态
 
+## 配置界面分支（2026-10-16）
+
+`ui/miuix-settings` 将模块设置改为 Miuix 0.9.4 Compose 界面，含配置首页、模型服务、控屏设置、运行状态和直接测试。仅接入原有配置与服务接口；不包含 main 工作区未提交的后台屏修改。交互与集成说明见 [配置界面](docs/settings-ui.md)。
+
+Debug APK 构建通过；86 项 JUnit（含 3 项 Robolectric Compose 交互测试）通过，并生成深浅色及各设置页面截图。本次没有安装实体设备或验证 XiaoAI、root 与模型服务。当前基线的 Lint 被未修改的 `helper/DisplayHelper.java` 阻塞：第 144、238 行 `WrongConstant`，第 229 行 `BlockedPrivateApi`；新增界面没有 Lint 错误。以下正文保留原分支的历史验证记录。
+
 本轮复核修复（2026-10-16）：新任务在旧任务终态轮询前开始时替换观察器并保留返回入口，避免灵动岛和停止按钮消失；区分安全中心普通页面与授权窗口，普通页面可启动其他应用，其他授权仍暂停。68 项 JUnit、debug/release/AndroidTest 构建和两套 Lint 通过；本次设备专项与历史验证分列如下。
 
 日期：2026-10-16（Asia/Shanghai）。预发布测试版；下列“通路通过”不代表真实模型任务成功率保证。
