@@ -22,9 +22,10 @@ public final class DeviceTestRunner extends LiveProbeRunner {
     }
     private boolean hookMode, liveMode, reloadMode, guardMode, guardPreflightMode, profilesMode, backgroundMode, focusMode, launchMode, scrollMode, dualToolsMode, foregroundConsentMode, conversationMode, robustScreenMode;
     private String transportApi;
-    private boolean replyActionsMode, replyActionsCurrentConfig, actionConfirmationMode;
+    private boolean replyActionsMode, replyActionsCurrentConfig, actionConfirmationMode, realPageGuardMode;
     private String replyActionsApi;
     @Override public void onCreate(Bundle arguments) {
+        realPageGuardMode = "true".equals(arguments.getString("real_page_guard"));
         actionConfirmationMode = "true".equals(arguments.getString("action_confirmation"));
         replyActionsMode = "true".equals(arguments.getString("reply_actions"));
         replyActionsCurrentConfig = "true".equals(arguments.getString("reply_actions_current_config"));
@@ -68,6 +69,7 @@ public final class DeviceTestRunner extends LiveProbeRunner {
         } catch (java.io.FileNotFoundException expected) { }
     }
     @Override public void onStart() {
+        if (realPageGuardMode) { RealPageGuardRunner.run(this); return; }
         if (actionConfirmationMode) { ActionConfirmationRunner.run(this); return; }
         if (replyActionsMode) { ReplyActionsRunner.run(this, replyActionsApi, replyActionsCurrentConfig); return; }
         if (robustScreenMode) { RobustScreenRunner.run(this); return; }

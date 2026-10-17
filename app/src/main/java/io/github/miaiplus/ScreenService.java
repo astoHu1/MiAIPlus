@@ -132,14 +132,14 @@ public final class ScreenService extends AccessibilityService {
                     if (root == null || !root.refresh()) continue;
                     if (matchesPackage(expectedPackage, root)) {
                         StringBuilder builder = new StringBuilder();
-                        service.dump(root, builder, new int[]{0});
+                        dump(root, builder, new int[]{0});
                         return builder.toString();
                     }
                     if (fallback == null && window.isFocused()) fallback = root;
                 }
                 if (fallback == null) return "";
                 StringBuilder builder = new StringBuilder();
-                service.dump(fallback, builder, new int[]{0});
+                dump(fallback, builder, new int[]{0});
                 return builder.toString();
             });
         } catch (Exception unavailable) {
@@ -329,28 +329,42 @@ public final class ScreenService extends AccessibilityService {
         Frame frame = f.get(5, TimeUnit.SECONDS);
         run.check(); return frame;
     }
-    private void dump(AccessibilityNodeInfo node, StringBuilder out, int[] count) {
-        if (count[0]++ >= 250 || out.length() > 24000) return;
-        if (node.isVisibleToUser()) {
-            Rect bounds = new Rect(); node.getBoundsInScreen(bounds);
-            out.append(node.getClassName()).append(' ').append(bounds.toShortString());
-            out.append(" window=").append(node.getWindowId());
-            if (node.getViewIdResourceName() != null) out.append(" id=").append(node.getViewIdResourceName());
-            out.append(" enabled=").append(node.isEnabled());
-            if (node.isClickable()) out.append(" clickable");
-            if (node.isEditable()) out.append(" editable");
-            if (node.isFocused()) out.append(" focused");
-            if (node.isPassword()) out.append(" [password redacted]");
-            else {
-                if (node.getText() != null) out.append(" text=").append(treeText(node.getText()));
-                if (node.getContentDescription() != null) out.append(" description=").append(treeText(node.getContentDescription()));
+    static void dump(AccessibilityNodeInfo root, StringBuilder out, int[] count) {
+        if (root == null) return;
+        // A rotating ad can temporarily expand into hundreds of descendants. Depth-first traversal then
+        // loses later sibling regions (notably bottom navigation), making unchanged controls appear removed.
+        // Breadth-first keeps shallow controls from every region within the same bounded observation.
+        java.util.ArrayDeque<AccessibilityNodeInfo> pending = new java.util.ArrayDeque<>();
+        java.util.Set<AccessibilityNodeInfo> seen = new java.util.HashSet<>();
+        pending.add(root);
+        seen.add(root);
+        while (!pending.isEmpty() && count[0] < 250 && out.length() <= 24000) {
+            AccessibilityNodeInfo node = pending.removeFirst();
+            count[0]++;
+            if (node.isVisibleToUser()) appendNode(node, out);
+            for (int index = 0; index < node.getChildCount() && pending.size() + count[0] < 1000; index++) {
+                AccessibilityNodeInfo child = node.getChild(index);
+                // Some real app transitions return an ancestor as a child. Deduplicate source-node identity,
+                // not text/bounds: two genuinely different overlapping nodes must both remain in the guard.
+                if (child != null && seen.add(child)) pending.addLast(child);
             }
-            out.append('\n');
         }
-        for (int i = 0; i < node.getChildCount() && count[0] < 250; i++) {
-            AccessibilityNodeInfo child = node.getChild(i);
-            if (child != null) dump(child, out, count);
+    }
+    private static void appendNode(AccessibilityNodeInfo node, StringBuilder out) {
+        Rect bounds = new Rect(); node.getBoundsInScreen(bounds);
+        out.append(node.getClassName()).append(' ').append(bounds.toShortString());
+        out.append(" window=").append(node.getWindowId());
+        if (node.getViewIdResourceName() != null) out.append(" id=").append(node.getViewIdResourceName());
+        out.append(" enabled=").append(node.isEnabled());
+        if (node.isClickable()) out.append(" clickable");
+        if (node.isEditable()) out.append(" editable");
+        if (node.isFocused()) out.append(" focused");
+        if (node.isPassword()) out.append(" [password redacted]");
+        else {
+            if (node.getText() != null) out.append(" text=").append(treeText(node.getText()));
+            if (node.getContentDescription() != null) out.append(" description=").append(treeText(node.getContentDescription()));
         }
+        out.append('\n');
     }
     private static String treeText(CharSequence text) {
         return text.toString().replace("\\", "\\\\").replace("\r", "\\r").replace("\n", "\\n");

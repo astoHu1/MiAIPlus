@@ -20,6 +20,7 @@ process = subprocess.Popen(['adb', 'shell', 'am', 'instrument', '--user', '0', '
     '-e', 'launch', str('--launch' in sys.argv).lower(),
     '-e', 'scroll', str('--scroll' in sys.argv).lower(),
     '-e', 'robust_screen', str('--robust-screen' in sys.argv).lower(),
+    '-e', 'real_page_guard', str('--real-page-guard' in sys.argv).lower(),
     '-e', 'action_confirmation', str('--action-confirmation' in sys.argv).lower(),
     '-e', 'conversation_return', str('--conversation-return' in sys.argv).lower(),
     '-e', 'dual_tools', str('--dual-tools' in sys.argv).lower(),

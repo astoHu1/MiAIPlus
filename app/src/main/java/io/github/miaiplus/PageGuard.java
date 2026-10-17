@@ -44,17 +44,36 @@ final class PageGuard {
             if (oldTarget == null || !oldTarget.equals(newTarget) || oldTarget.password() || oldTarget.metadata().contains("enabled=false")) return false;
             double x = (oldTarget.left() + (double) oldTarget.right()) / 2;
             double y = (oldTarget.top() + (double) oldTarget.bottom()) / 2;
-            return covering(oldNodes, x, y).equals(covering(newNodes, x, y));
+            return stableCover(covering(oldNodes, x, y), covering(newNodes, x, y), oldTarget,
+                before, current, x, y);
         }
         double[] point = action.point("element");
         double x = Math.min(before.width() - 1, point[0] * before.width() / 1000);
         double y = Math.min(before.height() - 1, point[1] * before.height() / 1000);
         List<Node> oldCover = covering(oldNodes, x, y), newCover = covering(newNodes, x, y);
-        if (!oldCover.equals(newCover)) return false;
         Node oldTarget = target(oldCover), newTarget = target(newCover);
-        if (oldTarget != null) return !oldTarget.metadata().contains("enabled=false") && oldTarget.equals(newTarget);
-        // Canvas / image-only pages have no accessible target to anchor to. Never guess from an empty tree.
-        return before.image() != null && !before.image().isBlank() && before.image().equals(current.image());
+        if (!Objects.equals(oldTarget, newTarget) || (oldTarget != null && oldTarget.metadata().contains("enabled=false"))) return false;
+        if (!stableCover(oldCover, newCover, oldTarget, before, current, x, y)) return false;
+        // A canvas has no semantic target. Anchor the point and a surrounding margin in the actual JPEG,
+        // rather than requiring unrelated ads elsewhere on the screen to stop animating.
+        // A bare clickable container is not a semantic anchor: ads/videos often expose the same anonymous
+        // FrameLayout while replacing every pixel inside it. Require local visual proof for those as well.
+        return (oldTarget != null && oldTarget.labeled()) || VisualRegion.stable(before, current, x, y, x, y);
+    }
+
+    private static boolean stableCover(List<Node> before, List<Node> current, Node target,
+        ScreenService.Frame oldFrame, ScreenService.Frame newFrame, double x, double y) {
+        if (before.equals(current)) return true;
+        if (before.size() != current.size()) return false;
+        for (int index = 0; index < before.size(); index++) {
+            Node old = before.get(index), now = current.get(index);
+            // Content aggregated by a parent can include an unrelated ad. Only relax its content, never
+            // geometry, identity, flags, order, or the target's own semantics; pixels supply the local proof.
+            if (!old.structure().equals(now.structure())) return false;
+            if (old.equals(target) && !old.equals(now)) return false;
+        }
+        return target == null ? VisualRegion.stable(oldFrame, newFrame, x, y, x, y)
+            : VisualRegion.stable(oldFrame, newFrame, target.left(), target.top(), target.right(), target.bottom());
     }
 
     private static boolean sameScreen(ScreenService.Frame before, ScreenService.Frame current) {
@@ -66,6 +85,8 @@ final class PageGuard {
     }
 
     private record Node(String signature, int left, int top, int right, int bottom, String metadata, String content) {
+        String structure() { return signature.substring(0, signature.length() - content.length()); }
+        boolean labeled() { return !content.replace(" text=", "").replace(" description=", "").isBlank(); }
         boolean flag(String flag) {
             return (" " + metadata + " ").contains(" " + flag + " ");
         }
