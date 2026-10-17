@@ -31,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.hideFromAccessibility
@@ -111,10 +112,7 @@ private fun SettingsApp(state: SettingsState, openSettings: (Boolean) -> Unit, o
         else { state.error = null; page = target }
     }
     BackHandler(page != SettingsPage.Home) { navigate(page.parent) }
-    val scrollBehaviors = SettingsPage.entries.associateWith { destination ->
-        key(destination) { MiuixScrollBehavior() }
-    }
-    val scrollBehavior = scrollBehaviors.getValue(page)
+    val scrollBehavior = key(page) { MiuixScrollBehavior() }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -158,7 +156,7 @@ private fun SettingsApp(state: SettingsState, openSettings: (Boolean) -> Unit, o
         PageTransition(page, Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) { destination ->
             savedPages.SaveableStateProvider(destination) {
                 val scroll = rememberScrollState()
-                Box(Modifier.fillMaxSize().nestedScroll(scrollBehaviors.getValue(destination).nestedScrollConnection), contentAlignment = Alignment.TopCenter) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
                     Column(
                         Modifier.widthIn(max = 680.dp).fillMaxWidth().verticalScroll(scroll).imePadding()
                             .padding(top = 8.dp, bottom = 24.dp),
@@ -226,17 +224,17 @@ private fun PageTransition(page: SettingsPage, modifier: Modifier, content: @Com
 private fun HomePage(state: SettingsState, openStatus: () -> Unit) {
     val reported = state.hookRecordedAt > 0L
     val ready = reported && state.hookReport.startsWith("ready:")
-    val status = when { !reported -> "暂无注入报告"; ready -> "上次注入成功"; else -> "上次注入异常" }
+    val status = when { !reported -> "暂无注入报告"; ready -> "工作正常"; else -> "上次注入异常" }
     Card(
         modifier = Modifier.padding(horizontal = 12.dp).fillMaxWidth(),
         colors = CardDefaults.defaultColors(
-            color = if (ready) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.surfaceContainer,
-            contentColor = if (ready) MiuixTheme.colorScheme.onPrimary else MiuixTheme.colorScheme.onSurfaceContainer,
+            color = if (ready) Color(0xFF34C759) else MiuixTheme.colorScheme.surfaceContainer,
+            contentColor = if (ready) Color.White else MiuixTheme.colorScheme.onSurfaceContainer,
         ),
     ) {
         Row(Modifier.padding(24.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(SettingsIcons.Module, null, Modifier.size(48.dp),
-                tint = if (ready) MiuixTheme.colorScheme.onPrimary else MiuixTheme.colorScheme.primary)
+                tint = if (ready) Color.White else MiuixTheme.colorScheme.primary)
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(status, style = MiuixTheme.textStyles.title3)
@@ -266,7 +264,7 @@ private fun DashboardTile(label: String, value: String, modifier: Modifier) {
     Card(modifier) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(label, style = MiuixTheme.textStyles.footnote2, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
-            Text(value, style = MiuixTheme.textStyles.headline2)
+            Text(value, style = MiuixTheme.textStyles.body2)
         }
     }
 }

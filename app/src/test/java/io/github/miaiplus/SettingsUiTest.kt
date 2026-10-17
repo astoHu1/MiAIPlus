@@ -157,7 +157,7 @@ class SettingsUiTest {
                 .putLong("hook_at", 1_700_000_000_000L).commit()
             state.refresh()
         }
-        compose.onNodeWithText("上次注入成功").assertExists()
+        compose.onNodeWithText("工作正常").assertExists()
         capture("home-ready-light")
         compose.runOnIdle {
             io.github.miaiplus.Config.prefs(state.getApplication<Application>()).edit()
