@@ -11,7 +11,13 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.updateTransition
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -20,9 +26,18 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.hideFromAccessibility
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -65,130 +80,199 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class SettingsPage(val title: String) {
-    Home("MiAIPlus"), Model("模型服务"), Control("控屏设置"), Status("运行状态"), Test("直接测试")
+private enum class SettingsPage(val title: String, val depth: Int = 0) {
+    Home("MiAIPlus"), Model("模型 API"), Control("控屏"), Virtual("虚拟屏", 1), Status("运行状态", 1), Test("直接测试", 2);
+
+    val tab: SettingsPage get() = when (this) { Virtual -> Control; Status, Test -> Home; else -> this }
+    val parent: SettingsPage get() = when (this) { Test -> Status; Virtual -> Control; else -> Home }
 }
 
 @Composable
 private fun SettingsApp(state: SettingsState, openSettings: (Boolean) -> Unit, onScreenTask: () -> Unit) {
     var page by rememberSaveable { mutableStateOf(SettingsPage.Home) }
     var leaveTo by remember { mutableStateOf<SettingsPage?>(null) }
+    val savedPages = rememberSaveableStateHolder()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val context = androidx.compose.ui.platform.LocalContext.current
-    LaunchedEffect(lifecycle) {
+    LaunchedEffect(lifecycle, page) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            while (true) { state.refresh(); delay(1000) }
+            state.refresh()
+            if (page == SettingsPage.Status) {
+                while (true) { delay(2000); state.refresh() }
+            }
         }
     }
     LaunchedEffect(state.notice) {
         state.notice?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show(); state.notice = null }
     }
     fun navigate(target: SettingsPage) {
+        if (target == page) return
         if (page == SettingsPage.Model && state.dirty) leaveTo = target
         else { state.error = null; page = target }
     }
-    val parentPage = if (page == SettingsPage.Test) SettingsPage.Status else SettingsPage.Home
-    BackHandler(page != SettingsPage.Home) { navigate(parentPage) }
-    val scrollBehavior = key(page) { MiuixScrollBehavior() }
+    BackHandler(page != SettingsPage.Home) { navigate(page.parent) }
+    val scrollBehaviors = SettingsPage.entries.associateWith { destination ->
+        key(destination) { MiuixScrollBehavior() }
+    }
+    val scrollBehavior = scrollBehaviors.getValue(page)
     Scaffold(
         topBar = {
             TopAppBar(
                 title = page.title,
-                subtitle = if (page == SettingsPage.Home) "小爱的控屏与模型设置" else "",
                 scrollBehavior = scrollBehavior,
                 navigationIcon = {
-                    if (page != SettingsPage.Home) IconButton(onClick = { navigate(parentPage) }, modifier = Modifier.size(48.dp)) {
-                        // Use the library's icon rather than a font glyph.
+                    if (page.depth > 0) IconButton(onClick = { navigate(page.parent) }, modifier = Modifier.size(48.dp)) {
                         Icon(top.yukonga.miuix.kmp.icon.MiuixIcons.Basic.ArrowRight, "返回", Modifier.rotate(180f))
                     }
                 },
             )
         },
         bottomBar = {
-            if (page == SettingsPage.Model && state.dirty) {
-                Row(
-                    Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(horizontal = 24.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    TextButton("还原", { state.discard() }, Modifier.weight(1f))
-                    PrimaryButton("保存配置", { state.saveProfile() }, Modifier.weight(2f))
+            Column(Modifier.imePadding()) {
+                if (page == SettingsPage.Model && state.dirty) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TextButton("还原", { state.discard() }, Modifier.weight(1f))
+                        PrimaryButton("保存配置", { state.saveProfile() }, Modifier.weight(2f))
+                    }
+                }
+                NavigationBar {
+                    listOf(SettingsPage.Home, SettingsPage.Model, SettingsPage.Control).forEach { tab ->
+                        NavigationBarItem(
+                            selected = page.tab == tab, onClick = { navigate(tab) },
+                            icon = when (tab) {
+                                SettingsPage.Home -> SettingsIcons.Home
+                                SettingsPage.Model -> SettingsIcons.Model
+                                else -> SettingsIcons.Control
+                            },
+                            label = if (tab == SettingsPage.Home) "首页" else tab.title,
+                            modifier = Modifier.testTag("tab-${tab.name}"),
+                        )
+                    }
                 }
             }
         },
     ) { padding ->
-        AnimatedContent(targetState = page, label = "settings-page") { current ->
-            val scroll = rememberScrollState()
-            Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)
-                .nestedScroll(scrollBehavior.nestedScrollConnection), contentAlignment = Alignment.TopCenter) {
-                Column(
-                    Modifier.widthIn(max = 680.dp).fillMaxWidth().verticalScroll(scroll).imePadding()
-                        .padding(top = 8.dp, bottom = 32.dp),
-                ) {
-                    state.error?.let { message ->
-                        Group { BasicComponent(title = "未能完成", summary = message) }
-                        Spacer(Modifier.height(12.dp))
-                    }
-                    when (current) {
-                        SettingsPage.Home -> HomePage(state, ::navigate)
-                        SettingsPage.Model -> ModelPage(state)
-                        SettingsPage.Control -> ControlPage(state, openSettings)
-                        SettingsPage.Status -> StatusPage(state, openSettings) { navigate(SettingsPage.Test) }
-                        SettingsPage.Test -> TestPage(state, onScreenTask)
+        PageTransition(page, Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) { destination ->
+            savedPages.SaveableStateProvider(destination) {
+                val scroll = rememberScrollState()
+                Box(Modifier.fillMaxSize().nestedScroll(scrollBehaviors.getValue(destination).nestedScrollConnection), contentAlignment = Alignment.TopCenter) {
+                    Column(
+                        Modifier.widthIn(max = 680.dp).fillMaxWidth().verticalScroll(scroll).imePadding()
+                            .padding(top = 8.dp, bottom = 24.dp),
+                    ) {
+                        state.error?.let { message ->
+                            Group { BasicComponent(title = "未能完成", summary = message) }
+                            Spacer(Modifier.height(12.dp))
+                        }
+                        when (destination) {
+                            SettingsPage.Home -> HomePage(state) { navigate(SettingsPage.Status) }
+                            SettingsPage.Model -> ModelPage(state)
+                            SettingsPage.Control -> ControlPage(state, openSettings) { navigate(SettingsPage.Virtual) }
+                            SettingsPage.Virtual -> VirtualScreenPage(state)
+                            SettingsPage.Status -> StatusPage(state, openSettings, { navigate(SettingsPage.Virtual) }) { navigate(SettingsPage.Test) }
+                            SettingsPage.Test -> TestPage(state, onScreenTask)
+                        }
                     }
                 }
             }
         }
         ConfirmDialog(
-            show = leaveTo != null, title = "保存当前配置？", summary = "地址、密钥或模型有未保存的修改。",
-            confirm = "保存并返回", onDismiss = { leaveTo = null },
-            error = state.error,
+            show = leaveTo != null, title = "保存当前配置？", summary = "还有未保存的修改。",
+            confirm = "保存并离开", onDismiss = { leaveTo = null }, error = state.error,
             onConfirm = { if (state.saveProfile()) { page = leaveTo!!; leaveTo = null } },
             alternative = "放弃修改", onAlternative = { state.discard(); page = leaveTo!!; leaveTo = null },
         )
     }
 }
 
+/** Animate only draw layers. No lookahead, animated measurement, or idle animation. */
 @Composable
-private fun HomePage(state: SettingsState, navigate: (SettingsPage) -> Unit) {
-    var confirmGlobal by remember { mutableStateOf(false) }
-    Group {
-        SwitchPreference(
-            title = "启用控屏工具", summary = "让小爱完成手机上的操作",
-            checked = state.config.enabled, onCheckedChange = { state.setOption("enabled", it) },
-        )
+private fun PageTransition(page: SettingsPage, modifier: Modifier, content: @Composable (SettingsPage) -> Unit) {
+    val transition = updateTransition(page, label = "page")
+    val forward = transition.targetState.depth >= transition.currentState.depth
+    val distance = with(LocalDensity.current) { 48.dp.toPx() }
+    Box(modifier.clipToBounds()) {
+        listOf(transition.currentState, transition.targetState).distinct().forEach { destination ->
+            key(destination) {
+                val visibility = transition.animateFloat(transitionSpec = {
+                    if (initialState.depth == 0 && targetState.depth == 0) snap()
+                    else tween(260, easing = FastOutSlowInEasing)
+                }, label = "page-${destination.name}") { if (it == destination) 1f else 0f }
+                val incoming = destination == transition.targetState
+                Box(Modifier.fillMaxSize().testTag("page-${destination.name}")
+                    .graphicsLayer {
+                        alpha = visibility.value
+                        translationX = (1f - visibility.value) * distance *
+                            (if (incoming) { if (forward) 1f else -0.35f } else { if (forward) -0.35f else 1f })
+                    }
+                    .then(if (!incoming) Modifier.clearAndSetSemantics { hideFromAccessibility() }
+                        .pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                while (true) awaitPointerEvent(PointerEventPass.Initial).changes.forEach { it.consume() }
+                            }
+                        } else Modifier)) {
+                    content(destination)
+                }
+            }
+        }
     }
-    Hint("更改启用状态后，重启小爱生效。")
-    Section("模型") {
-        ArrowPreference(title = "模型服务", summary = state.profiles?.active()?.let {
-            if (it.endpoint.isBlank()) "尚未配置 · 使用小爱无需填写" else "${it.name} · ${it.model.ifBlank { "未选择模型" }}"
-        } ?: "配置读取失败", onClick = { navigate(SettingsPage.Model) })
-        OverlayDropdownPreference(
-            title = "控屏规划", summary = "由哪个模型决定下一步操作",
-            items = listOf("小爱当前模型", "独立外部模型"), selectedIndex = if (state.config.planner == "external") 1 else 0,
-            onSelectedIndexChange = { state.setOption("planner", if (it == 1) "external" else "native") },
-        )
-        SwitchPreference(title = "外部模型对话", summary = "替换小爱的对话与工具规划模型",
-            checked = state.config.globalModel, onCheckedChange = {
-                if (it) confirmGlobal = true else state.setOption("globalModel", false)
-            })
+}
+
+@Composable
+private fun HomePage(state: SettingsState, openStatus: () -> Unit) {
+    val reported = state.hookRecordedAt > 0L
+    val ready = reported && state.hookReport.startsWith("ready:")
+    val status = when { !reported -> "暂无注入报告"; ready -> "上次注入成功"; else -> "上次注入异常" }
+    Card(
+        modifier = Modifier.padding(horizontal = 12.dp).fillMaxWidth(),
+        colors = CardDefaults.defaultColors(
+            color = if (ready) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.surfaceContainer,
+            contentColor = if (ready) MiuixTheme.colorScheme.onPrimary else MiuixTheme.colorScheme.onSurfaceContainer,
+        ),
+    ) {
+        Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Icon(SettingsIcons.Module, null, Modifier.size(32.dp),
+                tint = if (ready) MiuixTheme.colorScheme.onPrimary else MiuixTheme.colorScheme.primary)
+            Text(status, style = MiuixTheme.textStyles.title2)
+            Text(if (reported) android.text.format.DateUtils.formatDateTime(
+                androidx.compose.ui.platform.LocalContext.current, state.hookRecordedAt,
+                android.text.format.DateUtils.FORMAT_SHOW_DATE or android.text.format.DateUtils.FORMAT_SHOW_TIME)
+                else "启用模块后重启小爱", style = MiuixTheme.textStyles.footnote1)
+        }
     }
-    Hint(if (state.config.globalModel) "对话和工具上下文将发送至当前模型服务。更改后重启小爱。"
-        else "默认使用小爱当前模型，无需额外 API。")
-    Section("更多设置") {
-        ArrowPreference(title = "控屏设置", summary = "执行方式、动作协议与步数", onClick = { navigate(SettingsPage.Control) })
-        ArrowPreference(title = "运行状态", summary = "模块连接、权限与测试", onClick = { navigate(SettingsPage.Status) })
+    Spacer(Modifier.height(12.dp))
+    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        DashboardTile("模块版本", BuildConfig.VERSION_NAME, Modifier.weight(1f))
+        DashboardTile("无障碍", if (state.accessible) "已连接" else "未连接", Modifier.weight(1f))
     }
-    Hint("MiAIPlus  ${BuildConfig.VERSION_NAME}", centered = true)
-    ConfirmDialog(show = confirmGlobal, title = "使用外部模型对话？",
-        summary = "小爱的聊天历史、系统提示和工具上下文会发送至当前模型服务。语音仍由系统提供。",
-        confirm = "开启", onDismiss = { confirmGlobal = false },
-        onConfirm = { state.setOption("globalModel", true); confirmGlobal = false })
+    Section("当前配置") {
+        BasicComponent(title = "控屏工具", summary = if (state.config.enabled) "已开启" else "已关闭")
+        BasicComponent(title = "执行屏幕", summary = if (state.config.backgroundDisplay) "虚拟屏" else "主屏")
+        BasicComponent(title = "规划模型", summary = if (state.config.planner == "external")
+            state.profiles?.active()?.model?.ifBlank { "未选择" } ?: "未配置" else "小爱当前模型")
+    }
+    Spacer(Modifier.height(16.dp))
+    Group { ArrowPreference(title = "运行状态", summary = "连接与诊断", onClick = openStatus) }
+}
+
+@Composable
+private fun DashboardTile(label: String, value: String, modifier: Modifier) {
+    Card(modifier) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(label, style = MiuixTheme.textStyles.footnote1, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+            Text(value, style = MiuixTheme.textStyles.headline2)
+        }
+    }
 }
 
 @Composable
 private fun ModelPage(state: SettingsState) {
     val draft = state.draft ?: run { Hint("配置读取失败。请保留应用数据，重新打开设置。"); return }
     val profiles = state.profiles ?: return
+    var confirmGlobal by remember { mutableStateOf(false) }
     var switchTo by remember { mutableStateOf<String?>(null) }
     var showNew by remember { mutableStateOf(false) }
     var newName by remember { mutableStateOf("") }
@@ -206,12 +290,12 @@ private fun ModelPage(state: SettingsState) {
             },
         )
     }
-    Hint("配置包含地址、密钥、模型和 API 协议，切换后用于新请求。")
+
     Section("连接信息") {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Input("配置名称", draft.name, { state.updateProfile(name = it) })
             Input("服务地址", draft.endpoint, { state.updateProfile(endpoint = it) }, type = KeyboardType.Uri)
-            Text("填写 Base URL，保留服务要求的路径，如 /v1。", style = MiuixTheme.textStyles.footnote1,
+            Text("Base URL，如 https://api.example.com/v1", style = MiuixTheme.textStyles.footnote1,
                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary, modifier = Modifier.padding(horizontal = 4.dp))
             TextField(value = draft.apiKey, onValueChange = { state.updateProfile(key = it) }, label = "API 密钥（可留空）",
                 singleLine = true, modifier = Modifier.fillMaxWidth(),
@@ -225,21 +309,30 @@ private fun ModelPage(state: SettingsState) {
             Input("模型名称", draft.model, { state.updateProfile(model = it) })
         }
         ArrowPreference(title = if (state.fetching) "正在获取模型…" else "从服务选择模型",
-            summary = "控屏需支持视觉和工具调用", enabled = !state.fetching && draft.endpoint.isNotBlank(),
+            enabled = !state.fetching && draft.endpoint.isNotBlank(),
             onClick = { state.fetchModels() })
         OverlayDropdownPreference(title = "API 协议", items = listOf("自动", "Responses", "Chat Completions"),
             selectedIndex = listOf("auto", "responses", "chat").indexOf(draft.api).coerceAtLeast(0),
             onSelectedIndexChange = { state.updateProfile(api = listOf("auto", "responses", "chat")[it]) })
     }
-    Hint("自动模式为 GPT-6 系列选择 Responses。使用模型别名时，请按服务要求选择。")
+    Hint("自动：GPT-6 使用 Responses，其余使用 Chat Completions。")
+    Section("小爱对话") {
+        SwitchPreference(title = "使用外部模型", checked = state.config.globalModel,
+            enabled = !state.dirty, summary = if (state.dirty) "保存配置后可更改" else null,
+            onCheckedChange = { if (it) confirmGlobal = true else state.setOption("globalModel", false) })
+    }
+    Hint("更改后重启小爱。")
     Section("管理配置") {
-        ArrowPreference(title = "另存为新配置", summary = "保留当前填写的连接信息", onClick = { newName = ""; showNew = true })
+        ArrowPreference(title = "另存为新配置", onClick = { newName = ""; showNew = true })
         ArrowPreference(title = "删除当前配置", enabled = profiles.profiles.size > 1,
-            summary = if (profiles.profiles.size == 1) "至少保留一份配置" else "同时删除此配置的密钥",
+            summary = if (profiles.profiles.size == 1) "至少保留一份配置" else null,
             onClick = { showDelete = true })
     }
-    Hint("密钥仅保存在本机应用私有存储中。")
-    ConfirmDialog(show = switchTo != null, title = "切换前保存修改？", summary = "当前配置有未保存的内容。",
+    ConfirmDialog(show = confirmGlobal, title = "使用外部模型对话？",
+        summary = "聊天记录和工具上下文将发送至当前 API 服务。更改后重启小爱。",
+        confirm = "开启", onDismiss = { confirmGlobal = false },
+        onConfirm = { state.setOption("globalModel", true); confirmGlobal = false })
+    ConfirmDialog(show = switchTo != null, title = "切换前保存修改？", summary = "还有未保存的修改。",
         confirm = "保存并切换", onDismiss = { switchTo = null },
         error = state.error,
         onConfirm = { val id = switchTo!!; if (state.saveProfile() && state.switchProfile(id)) switchTo = null },
@@ -252,13 +345,13 @@ private fun ModelPage(state: SettingsState) {
         }
     }
     ConfirmDialog(show = showDelete, title = "删除「${profiles.active().name}」？",
-        summary = "此配置及密钥将被删除，并切换至另一份配置。未保存的修改也会丢弃。",
+        summary = "删除配置和密钥，未保存的修改也会丢弃。",
         confirm = "删除", onDismiss = { showDelete = false },
         error = state.error,
         onConfirm = { if (state.deleteProfile()) showDelete = false })
     OverlayDialog(show = state.modelList != null, title = "选择模型", onDismissRequest = { state.modelList = null }) {
-        Column(Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState())) {
-            state.modelList.orEmpty().forEach { model ->
+        LazyColumn(Modifier.heightIn(max = 400.dp)) {
+            items(state.modelList.orEmpty(), key = { it }) { model ->
                 ArrowPreference(title = model, onClick = { state.updateProfile(model = model); state.modelList = null })
             }
         }
@@ -267,27 +360,33 @@ private fun ModelPage(state: SettingsState) {
 }
 
 @Composable
-private fun ControlPage(state: SettingsState, openSettings: (Boolean) -> Unit) {
+private fun ControlPage(state: SettingsState, openSettings: (Boolean) -> Unit, openVirtual: () -> Unit) {
     var editSteps by remember { mutableStateOf(false) }
     var steps by remember { mutableStateOf("") }
-    Section("执行") {
-        OverlayDropdownPreference(title = "动作协议", items = listOf("Phone Use", "AutoGLM"),
-            summary = "按模型支持的格式选择", selectedIndex = if (state.config.protocol == "autoglm") 1 else 0,
-            onSelectedIndexChange = { state.setOption("protocol", if (it == 1) "autoglm" else "phone_use") })
-        ArrowPreference(title = "最大步数", summary = "每次任务最多执行 ${state.config.maxSteps} 步",
-            onClick = { steps = state.config.maxSteps.toString(); editSteps = true })
-        SwitchPreference(title = "后台屏幕执行", summary = "在独立屏幕上运行控屏任务",
-            checked = state.config.backgroundDisplay, onCheckedChange = { state.setOption("backgroundDisplay", it) })
+    Group {
+        SwitchPreference(title = "启用控屏工具", checked = state.config.enabled,
+            onCheckedChange = { state.setOption("enabled", it) })
     }
-    Hint("后台屏幕需要 root，且手机须保持解锁。不支持时会停止任务，不会转到主屏。")
+    Hint("更改后重启小爱。")
+    Section("执行") {
+        OverlayDropdownPreference(title = "规划模型", items = listOf("小爱当前模型", "外部模型"),
+            selectedIndex = if (state.config.planner == "external") 1 else 0,
+            onSelectedIndexChange = { state.setOption("planner", if (it == 1) "external" else "native") })
+        OverlayDropdownPreference(title = "动作协议", items = listOf("Phone Use", "AutoGLM"),
+            selectedIndex = if (state.config.protocol == "autoglm") 1 else 0,
+            onSelectedIndexChange = { state.setOption("protocol", if (it == 1) "autoglm" else "phone_use") })
+        ArrowPreference(title = "最大步数", summary = "${state.config.maxSteps} 步",
+            onClick = { steps = state.config.maxSteps.toString(); editSteps = true })
+        ArrowPreference(title = "虚拟屏", summary = if (state.config.backgroundDisplay) "已开启" else "已关闭",
+            onClick = openVirtual)
+    }
     Section("权限") {
         ArrowPreference(title = "无障碍服务", summary = if (state.accessible) "已连接" else "未连接 · 前往开启",
             onClick = { openSettings(false) })
         SwitchPreference(title = "任务前检查无障碍", summary = if (state.guardChanging) "正在应用…" else "连接失效时尝试用 root 恢复",
             checked = state.guardEnabled, enabled = !state.guardChanging, onCheckedChange = { state.setGuard(it) })
-        ArrowPreference(title = "应用权限", summary = "后台弹出界面等系统权限", onClick = { openSettings(true) })
+        ArrowPreference(title = "应用权限", summary = "后台弹出界面", onClick = { openSettings(true) })
     }
-    Hint("无障碍仅在任务开始前检查。其他权限提示仍需手动处理。")
     OverlayDialog(show = editSteps, title = "最大步数", summary = "设置 1–80 步，默认 30 步。", onDismissRequest = { editSteps = false }) {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Input("步数", steps, { steps = it }, type = KeyboardType.Number)
@@ -302,23 +401,91 @@ private fun ControlPage(state: SettingsState, openSettings: (Boolean) -> Unit) {
 }
 
 @Composable
-private fun StatusPage(state: SettingsState, openSettings: (Boolean) -> Unit, openTest: () -> Unit) {
+private fun StatusPage(state: SettingsState, openSettings: (Boolean) -> Unit, openVirtual: () -> Unit, openTest: () -> Unit) {
     Section("模块") {
         BasicComponent(title = "小爱连接", summary = state.hookReport)
         BasicComponent(title = "框架与热重载", summary = state.reloadStatus)
-        ArrowPreference(title = "重载模块", summary = "安装更新后使用，任务执行中不可重载", onClick = { state.reload() })
+        ArrowPreference(title = "重载模块", summary = "任务结束后可用", onClick = { state.reload() })
     }
-    Hint("在 LSPosed 中启用 MiAIPlus，作用域仅选择超级小爱，然后重启小爱。")
+    Hint("LSPosed 作用域选择超级小爱，启用后重启小爱。")
     Section("权限") {
         ArrowPreference(title = "无障碍服务", summary = if (state.accessible) "已连接" else "未连接或已失效", onClick = { openSettings(false) })
         BasicComponent(title = "任务前检查", summary = state.guardStatus)
     }
     Section("诊断") {
-        ArrowPreference(title = if (state.checkingBackground) "正在检查后台屏…" else "检查后台屏可用性",
-            summary = "检查 root 与锁屏状态，不创建屏幕", enabled = !state.checkingBackground,
-            onClick = { state.checkBackgroundDisplay() })
-        state.backgroundCheck?.let { BasicComponent(title = it.title, summary = it.summary) }
-        ArrowPreference(title = "直接测试", summary = "测试外部模型对话或控屏", onClick = openTest)
+        ArrowPreference(title = "虚拟屏", summary = "检查与能力检测", onClick = openVirtual)
+        ArrowPreference(title = "直接测试", onClick = openTest)
+    }
+}
+
+@Composable
+private fun VirtualScreenPage(state: SettingsState) {
+    val screen = state.virtualScreen
+    var confirmProbe by remember { mutableStateOf(false) }
+    var appQuery by remember { mutableStateOf("") }
+    var detail by remember { mutableStateOf<DisplayProbeItem?>(null) }
+    Group {
+        SwitchPreference(title = "使用虚拟屏", checked = state.config.backgroundDisplay,
+            summary = "应用于新任务，进行中的任务保持原屏幕",
+            enabled = !screen.busy, onCheckedChange = { state.setOption("backgroundDisplay", it) })
+    }
+    Hint("在独立屏幕执行，需要 root 和解锁。不可用时停止，不转到主屏。")
+    Section("检查") {
+        ArrowPreference(title = if (screen.checking) "正在检查…" else "检查前置条件",
+            summary = "检查 root 与锁屏，不创建屏幕", enabled = !screen.busy,
+            onClick = { screen.check() })
+        screen.availability?.let { BasicComponent(title = it.title, summary = it.summary) }
+    }
+    Section("能力检测") {
+        ArrowPreference(title = if (screen.loadingApps) "正在读取应用…" else "测试应用",
+            summary = screen.selectedApp?.name ?: "不启动应用", enabled = !screen.busy && !screen.loadingApps,
+            onClick = { appQuery = ""; screen.loadApps() })
+        ArrowPreference(title = if (screen.probing) "正在检测…" else "开始检测",
+            enabled = !screen.busy, onClick = { confirmProbe = true })
+    }
+    Hint("检测会创建并关闭虚拟屏；主屏请保持不动。")
+    screen.error?.let { Group { BasicComponent(title = "未能完成", summary = it) } }
+    screen.report?.let { report ->
+        Section("检测结果") {
+            BasicComponent(title = report.summary, summary = "测试应用：${report.appName}")
+            report.items.forEach { item ->
+                ArrowPreference(title = item.title, summary = item.verdict, onClick = { detail = item })
+            }
+        }
+        Hint("只代表本次检测，中文输入需另测。")
+    }
+    ConfirmDialog(show = confirmProbe, title = "检测虚拟屏？",
+        summary = if (screen.selectedApp == null) "会短暂创建虚拟屏并发送测试输入，不启动应用。期间请勿操作主屏。"
+            else "会在虚拟屏打开「${screen.selectedApp!!.name}」，发送点击和按键，结束后关闭。请选择无个人数据的测试应用，期间请勿操作主屏。",
+        confirm = "开始", onDismiss = { confirmProbe = false },
+        onConfirm = { confirmProbe = false; screen.probe() })
+    OverlayDialog(show = screen.apps != null, title = "测试应用", onDismissRequest = { screen.dismissApps() }) {
+        Column {
+            Input("搜索应用", appQuery, { appQuery = it })
+            Spacer(Modifier.height(12.dp))
+            val matches = remember(screen.apps, appQuery) {
+                screen.apps.orEmpty().filter { app -> app.name.contains(appQuery.trim(), ignoreCase = true)
+                    || app.component.substringBefore('/').contains(appQuery.trim(), ignoreCase = true) }
+            }
+            LazyColumn(Modifier.heightIn(max = 320.dp).weight(1f, fill = false)) {
+                item { ArrowPreference(title = "不启动应用", onClick = { screen.selectApp(null) }) }
+                items(matches, key = { it.component }) { app ->
+                    ArrowPreference(title = app.name, summary = app.component.substringBefore('/'),
+                        onClick = { screen.selectApp(app) })
+                }
+                if (matches.isEmpty()) item { Hint("没有匹配的应用") }
+            }
+            TextButton("取消", { screen.dismissApps() }, Modifier.fillMaxWidth().padding(top = 12.dp))
+        }
+    }
+    OverlayDialog(show = detail != null, title = detail?.title ?: "检测详情", onDismissRequest = { detail = null }) {
+        Column {
+            SelectionContainer {
+                Text(detail?.detail.orEmpty(), style = MiuixTheme.textStyles.footnote1,
+                    modifier = Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()))
+            }
+            TextButton("关闭", { detail = null }, Modifier.fillMaxWidth().padding(top = 12.dp))
+        }
     }
 }
 
@@ -328,8 +495,8 @@ private fun TestPage(state: SettingsState, onScreenTask: () -> Unit) {
         OverlayDropdownPreference(title = "测试类型", items = listOf("识屏控屏", "纯对话"), selectedIndex = state.testMode,
             enabled = state.job == null && !state.starting, onSelectedIndexChange = { state.testMode = it })
     }
-    Hint(if (state.testMode == 0) "使用已保存的外部模型配置。使用小爱当前模型时，请直接向小爱说出任务。"
-        else "使用已保存的模型服务，不读取屏幕。")
+    Hint(if (state.testMode == 0) "使用已保存的外部模型。小爱模型请在小爱中测试。"
+        else "使用已保存的外部模型，不读取屏幕。")
     Group {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             TextField(value = state.query, onValueChange = { state.query = it },

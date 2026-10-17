@@ -4,6 +4,7 @@ import android.app.Application
 import android.os.Bundle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
@@ -26,6 +27,7 @@ data class ProfileDraft(val id: String, val name: String, val endpoint: String,
 class SettingsState(application: Application) : AndroidViewModel(application) {
     private val context = application
     private val prefs = Config.prefs(context)
+    val virtualScreen = VirtualScreenState(application, viewModelScope)
     var config by mutableStateOf(Config(context))
         private set
     var profiles by mutableStateOf<EndpointProfiles?>(null)
@@ -44,13 +46,11 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
         private set
     var hookReport by mutableStateOf("")
         private set
+    var hookRecordedAt by mutableLongStateOf(0L)
+        private set
     var reloadStatus by mutableStateOf("")
         private set
     var guardStatus by mutableStateOf("")
-        private set
-    var checkingBackground by mutableStateOf(false)
-        private set
-    var backgroundCheck by mutableStateOf<BackgroundCheck?>(null)
         private set
     var query by mutableStateOf("")
     var testMode by mutableIntStateOf(0)
@@ -146,6 +146,7 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
     fun refresh() {
         accessible = ScreenService.isHealthy()
         hookReport = prefs.getString("hook_report", null) ?: "暂无报告，请在 LSPosed 中启用模块后重启小爱"
+        hookRecordedAt = prefs.getLong("hook_at", 0L)
         reloadStatus = HotReload.status()
         guardStatus = AccessibilityGuard.status(context)
         if (!AccessibilityGuard.isChanging()) guardEnabled = AccessibilityGuard.enabled(context)
@@ -153,29 +154,13 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
 
     fun reload() { HotReload.request(); refresh() }
 
-    /** Root is queried only after the user taps the check row, never by the refresh timer. */
-    fun checkBackgroundDisplay() {
-        if (checkingBackground) return
-        checkingBackground = true
-        viewModelScope.launch {
-            try {
-                val response = withContext(Dispatchers.IO) {
-                    context.contentResolver.call(BridgeProvider.URI, "background_display_status", null, null)
-                }
-                backgroundCheck = BackgroundCheck.from(response)
-            } catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { backgroundCheck = BackgroundCheck("检查失败", "请稍后重试") }
-            finally { checkingBackground = false }
-        }
-    }
-
     fun fetchModels() {
         val source = draft ?: return
         if (fetching) return
         fetching = true; error = null
         viewModelScope.launch {
             try {
-                val models = withContext(Dispatchers.IO) { ModelClient.listModels(source.endpoint, source.apiKey).toList() }
+                val models = withContext(Dispatchers.IO) { ModelClient.listModels(source.endpoint, source.apiKey).distinct() }
                 if (draft?.id == source.id && draft?.endpoint == source.endpoint && draft?.apiKey == source.apiKey) {
                     if (models.isEmpty()) error = "服务未返回模型，可手动填写" else modelList = models
                 }
@@ -190,6 +175,7 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
 
     fun startTest(onScreenTask: () -> Unit) {
         if (job != null || starting) return
+        if (virtualScreen.busy) { error = "请先等待虚拟屏检查完成"; return }
         if (query.isBlank()) { error = "请先填写任务或问题"; return }
         if (testMode == 0 && config.planner == "native") {
             result = "请向小爱说出任务。这里仅测试独立外部模型。"; return
@@ -200,9 +186,9 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
         result = "正在启动…"
         val testQuery = query.trim()
         val screen = testMode == 0
-        // Hide the secure settings window before the worker can capture its first screen.
+        // Physical capture needs the secure settings window hidden; background tasks use their own display.
         // This callback runs immediately and is not retained by the polling coroutine.
-        if (screen) onScreenTask()
+        if (screen && !config.backgroundDisplay) onScreenTask()
         viewModelScope.launch {
             try {
                 val extras = Bundle().apply {
@@ -238,10 +224,11 @@ data class BackgroundCheck(val title: String, val summary: String) {
     companion object {
         fun from(response: Bundle?): BackgroundCheck = when {
             response == null -> BackgroundCheck("检查失败", "未收到模块返回的结果")
+            response.getString("error") == "任务不存在或不可访问" -> BackgroundCheck("后端需更新", "当前版本不支持虚拟屏检查")
             response.getString("error") != null -> BackgroundCheck("暂不可用", response.getString("error")!!)
             !response.getBoolean("root") -> BackgroundCheck("未取得 root 授权", "请在 root 管理器中允许 MiAIPlus")
             response.getBoolean("deviceLocked") -> BackgroundCheck("手机已锁定", "解锁后重新检查")
-            else -> BackgroundCheck("前置条件已满足", "已取得 root 授权，手机已解锁。设备兼容性以实际任务结果为准。")
+            else -> BackgroundCheck("前置条件已满足", "已取得 root，手机已解锁。")
         }
     }
 }

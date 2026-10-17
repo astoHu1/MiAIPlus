@@ -20,9 +20,32 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
-    buildTypes { release { minifyEnabled false } }
+    buildTypes {
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+        // Local device builds need optimized Compose code too. Debug remains available
+        // for instrumentation, with all of its runtime checks and tooling.
+        preview {
+            initWith release
+            signingConfig signingConfigs.debug
+            matchingFallbacks = ['release']
+        }
+    }
     buildFeatures { compose true; buildConfig true }
     lint { abortOnError true }
+    testBuildType = providers.gradleProperty("uiTestBuildType").getOrElse("debug")
+    if (testBuildType == 'preview') {
+        defaultConfig.testInstrumentationRunner 'io.github.miaiplus.SettingsUiRunner'
+        sourceSets.androidTest {
+            manifest.srcFile 'src/uiTest/AndroidManifest.xml'
+            java.setSrcDirs(['src/uiTest/java'])
+        }
+    } else {
+        sourceSets.androidTest.java.srcDir 'src/uiTest/java'
+    }
     testOptions { unitTests.includeAndroidResources = true }
 }
 dependencies {

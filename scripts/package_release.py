@@ -11,7 +11,10 @@ version = re.search(r"versionName '([^']+)'", (root / 'app/build.gradle').read_t
 dist = root / 'dist'
 dist.mkdir(exist_ok=True)
 shutil.copyfile(root / 'app/build/outputs/apk/release/app-release-unsigned.apk', dist / f'MiAIPlus-{version}-unsigned.apk')
-files = ['.gitignore', 'AGENTS.md', 'README.md', 'IMPLEMENTATION-STATUS.md', 'LICENSE', 'NOTICE', 'settings.gradle', 'build.gradle', 'gradle.properties', 'gradlew', 'gradlew.bat', 'app/build.gradle']
+preview = root / 'app/build/outputs/apk/preview/app-preview.apk'
+if preview.is_file():
+    shutil.copyfile(preview, dist / f'MiAIPlus-{version}-preview.apk')
+files = ['.gitignore', 'AGENTS.md', 'README.md', 'IMPLEMENTATION-STATUS.md', 'LICENSE', 'NOTICE', 'settings.gradle', 'build.gradle', 'gradle.properties', 'gradlew', 'gradlew.bat', 'app/build.gradle', 'app/proguard-rules.pro']
 for folder in ['app/src', 'gradle/wrapper', 'docs', 'scripts', 'third_party']:
     files.extend(str(p.relative_to(root)) for p in (root / folder).rglob('*') if p.is_file() and '__pycache__' not in p.parts and p.suffix != '.pyc')
 with zipfile.ZipFile(dist / f'MiAIPlus-{version}-source.zip', 'w', zipfile.ZIP_DEFLATED) as archive:

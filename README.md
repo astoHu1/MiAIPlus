@@ -78,8 +78,10 @@ OpenAI 在 Responses 中使用 `reasoning.effort`，Chat 中使用 `reasoning_ef
 
 需要 JDK 17+、Android SDK platform 37 / build-tools 37.0.0。项目使用 Gradle 9.6.0、AGP 9.4.1，targetSdk 仍为 35。LSPosed 运行时需要支持 libxposed API 102；首次从旧入口迁移后要重启一次小爱，后续可在设置页请求热重载。
 
+日常实机试用使用 `./gradlew :app:assemblePreview`，安装 `app/build/outputs/apk/preview/app-preview.apk`。Preview 与 Release 都优化 Compose 代码；Debug 保留调试开销，不作为性能体验版本。详见 [性能记录](docs/settings-performance.md)。
+
 ```sh
-./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug :app:assembleRelease :app:lintRelease
+./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug :app:assembleRelease :app:lintRelease :app:assemblePreview
 python3 scripts/package_release.py
 ```
 
