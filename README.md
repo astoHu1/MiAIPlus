@@ -50,6 +50,7 @@ GitHub Actions 在 main 推送、PR 和手动触发时执行测试、Lint 与构
 - 优化Phone Use的工作效率
 - 为虚拟屏添加更多画布分辨率支持
 - 减少错误提示的Phone Use失败灵动岛事件
+- 为x-opencode-session请求头提供兼容
 - You tell me
 
 ## 更多说明
