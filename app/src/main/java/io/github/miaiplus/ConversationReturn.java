@@ -13,6 +13,7 @@ import java.util.concurrent.TimeUnit;
 final class ConversationReturn {
     private static final ThreadLocal<String> ORIGIN = new ThreadLocal<>();
     private static final String NAVIGATION = "page_navigation_data";
+    private static final String RETURN_ROUTE = "io.github.miaiplus.CONVERSATION_RETURN";
     private ConversationReturn() {}
 
     static String currentIdentity() { return ORIGIN.get(); }
@@ -97,7 +98,7 @@ final class ConversationReturn {
         if (!Boolean.TRUE.equals(Reflector.callMethod(ui, "isFullScreenInForeground"))) return null;
         Object manager = Reflector.callMethod(ui, "getFloatManager");
         Object tabs = manager == null ? null : Reflector.callMethod(manager, "getTabHostManager");
-        Object activity = tabs == null ? null : Reflector.callMethod(tabs, "getTabHostMainActivity");
+        Object activity = tabs == null ? null : Reflector.callMethod(tabs, HostCompatibility.choose("getTabHostMainActivity", "getConversationHost"));
         Object page = activity == null ? null : Reflector.callMethod(activity, "getPageNavigationData");
         if (page != null && Reflector.callMethod(page, "getTopicGroupInfo") != null) return page;
         return null;
@@ -152,15 +153,42 @@ final class ConversationReturn {
     }
 
     private static Object navigation(ClassLoader loader, Object group) {
-        // Same persisted fields and route as ro1.c.navigateToSessionChat in supported XiaoAI 8.2.65.4714.
+        // Persisted topic fields are shared by both exact host versions.
         Object info = Reflector.newInstance(Reflector.findClass("com.xiaomi.voiceassistant.data.model.TopicGroupInfo", loader),
             Reflector.callMethod(group, "getTopicId"), Reflector.callMethod(group, "getAgentId"), null,
             Reflector.callMethod(group, "getChatId"), Reflector.callMethod(group, "getAvatar"), Reflector.callMethod(group, "getType"));
         return Reflector.newInstance(Reflector.findClass("com.xiaomi.voiceassistant.data.model.PageNavigationData", loader), info, "quick");
     }
 
-    private static Intent route(Context context, Object page) {
-        return new Intent().setClassName(context.getPackageName(), "com.xiaomi.voiceassistant.TabHostMainActivity")
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).putExtra(NAVIGATION, (Parcelable)page);
+    static Intent route(Context context, Object page) {
+        return new Intent().setClassName(context.getPackageName(), HostCompatibility.chatActivity())
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).putExtra(NAVIGATION, (Parcelable)page)
+            .putExtra(RETURN_ROUTE, true);
+    }
+
+    /** The new navigator does not consume a conversation extra on an ordinary onNewIntent. */
+    static Runnable navigation(android.app.Activity activity, Intent intent, ClassLoader loader) {
+        if (!HostCompatibility.modern() || intent == null || !intent.getBooleanExtra(RETURN_ROUTE, false)) return null;
+        Object page = intent.getParcelableExtra(NAVIGATION);
+        if (page == null) return null;
+        intent.removeExtra(RETURN_ROUTE);
+        // Capture before the host's queued initialization consumes its Intent extras.
+        return () -> {
+            if (activity.isFinishing() || activity.isDestroyed()) return;
+            try {
+                Object info = Reflector.callMethod(page, "getTopicGroupInfo");
+                if (info == null) {
+                    Reflector.callMethod(activity, "navigateToMainConversationFromList");
+                    return;
+                }
+                Object target = Reflector.newInstance(Reflector.findClass("pm1.q$b", loader), page);
+                Object kind = Reflector.getStaticObjectField(Reflector.findClass("pm1.r0", loader), "CONVERSATION");
+                Object key = Reflector.newInstance(Reflector.findClass("pm1.q0", loader), kind,
+                    Reflector.callMethod(info, "getTopicId"));
+                Reflector.callMethod(activity, "navigateToDetail", target, key, false, false);
+            } catch (RuntimeException failure) {
+                android.util.Log.e("MiAIPlus", "Conversation return navigation failed", failure);
+            }
+        };
     }
 }

@@ -136,18 +136,18 @@ public final class HookSmokeProbe {
     private static String dualTools(Context context, ClassLoader loader) throws Exception {
         if (context.getSystemService(android.app.KeyguardManager.class).isKeyguardLocked())
             throw new AssertionError("unlock device for dual-tool test");
-        Object registry = Reflector.getStaticObjectField(Reflector.findClass("com.aios.osbot.tools.ToolRegistry", loader), "instance");
+        Object registry = NativePhoneUseTool.registry(context, loader);
         if (registry == null) throw new AssertionError("native tool registry was not initialized");
         String foregroundName = "miaiplus_phone_use", backgroundName = "miaiplus_background_phone_use";
-        Object foreground = invoke(registry, "get", foregroundName), background = invoke(registry, "get", backgroundName);
+        Object foreground = invoke(registry, HostCompatibility.choose("get", "peek"), foregroundName), background = invoke(registry, HostCompatibility.choose("get", "peek"), backgroundName);
         if (foreground == null || background == null || foreground == background)
             throw new AssertionError("both distinct native tools must be registered");
         CompletableFuture<Object> definitionsDone = new CompletableFuture<>();
-        List<?> definitions = (List<?>)await(loader, invoke(registry, "getToolDefinitions", continuation(loader, definitionsDone)), definitionsDone);
+        List<?> definitions = (List<?>)await(loader, invoke(registry, HostCompatibility.choose("getToolDefinitions", "getAll"), continuation(loader, definitionsDone)), definitionsDone);
         for (String name : List.of(foregroundName, backgroundName)) {
             List<?> matches = definitions.stream().filter(d -> name.equals(invoke(d, "getName"))).collect(java.util.stream.Collectors.toList());
             if (matches.size() != 1) throw new AssertionError("model definition missing or duplicated: " + name);
-            Object tool = invoke(registry, "get", name);
+            Object tool = invoke(registry, HostCompatibility.choose("get", "peek"), name);
             if (!String.valueOf(invoke(matches.get(0), "getParameters")).equals(String.valueOf(invoke(tool, "getParameters"))))
                 throw new AssertionError("exported schema differs from executable tool: " + name);
         }
@@ -156,8 +156,11 @@ public final class HookSmokeProbe {
             String observed = executePhoneTool(loader, foreground, new org.json.JSONObject().put("goal", "只观察 MiAIPlus 主屏测试页面，不操作其他应用"));
             foregroundSession = phoneSession(observed);
             assertPhoneBackend(observed, "foreground", foregroundName);
-            if (!observed.contains("前台=io.github.miaiplus；"))
-                throw new AssertionError("foreground tool did not observe physical fixture: " + TaskProgress.compact(observed));
+            if (!observed.contains("前台=io.github.miaiplus；")) {
+                var foregroundPackage = java.util.regex.Pattern.compile("前台=([a-zA-Z0-9_./$]+)").matcher(observed);
+                throw new AssertionError("foreground tool did not observe physical fixture; foreground="
+                    + (foregroundPackage.find() ? foregroundPackage.group(1) : "unavailable"));
+            }
             // Hiding a host Activity can rotate the owned fixture. Refresh after that transition before
             // testing an anchored tap, whose production page-change guard must remain strict.
             String settled = executePhoneTool(loader, foreground, new org.json.JSONObject().put("session", foregroundSession)
@@ -274,7 +277,10 @@ public final class HookSmokeProbe {
         boolean compact = MainThread.call(() -> root != null && root.isAttachedToWindow() && root.isShown()
             && root.getLayoutParams() instanceof android.view.WindowManager.LayoutParams params
             && params.type >= android.view.WindowManager.LayoutParams.FIRST_SYSTEM_WINDOW);
-        if (!compact && origin == null) throw new AssertionError("no resumed XiaoAi activity or shortcut overlay");
+        if (!compact && origin == null) throw new AssertionError("no resumed XiaoAi activity or shortcut overlay; "
+            + MainThread.call(() -> root == null ? "root=null" : "attached=" + root.isAttachedToWindow()
+                + ",shown=" + root.isShown() + ",params=" + (root.getLayoutParams() == null ? "null"
+                    : root.getLayoutParams().getClass().getName())));
         Object service = Reflector.newInstance(Reflector.findClass("com.xiaomi.voiceassistant.UIAgentServiceForOSBot", loader));
         String observation = String.valueOf(invoke(invoke(service, "controlApp", "只观察测试页面，不操作"), "getText"));
         consumeFrame(context, observation);
@@ -460,7 +466,7 @@ public final class HookSmokeProbe {
     }
     private static Object currentMode(Object manager) throws Exception {
         for (Method method : manager.getClass().getDeclaredMethods())
-            if (method.getName().equals("getCurrentMode") && method.getReturnType().getName().equals("io1.a")) return method.invoke(manager);
+            if (method.getName().equals("getCurrentMode") && method.getReturnType().getName().equals(HostCompatibility.name("io1.a"))) return method.invoke(manager);
         throw new AssertionError("stock mode getter missing");
     }
     private static String transportFailures(ClassLoader loader) throws Exception {
@@ -522,7 +528,8 @@ public final class HookSmokeProbe {
     private static String run(Context context, ClassLoader loader, String fixtureToken) throws Exception {
         var settings = NativeModelHook.config(context);
         chatRouting(context, loader);
-        if (Set.of("gpt-6.1-sol", "qwen3.8-max").contains(settings.getString("model"))) reasoningUi(context, loader, false);
+        String reasoningResult = Set.of("gpt-6.1-sol", "qwen3.8-max").contains(settings.getString("model"))
+            ? reasoningUi(context, loader, false) : "";
         Object ongoing = Reflector.newInstance(Reflector.findClass("com.aios.osbot.tools.ToolResult$Success", loader),
             "CONTINUE：控屏尚未完成。 MIAIPLUS_FRAME:00000000-0000-0000-0000-000000000000", Map.of("cli_internal_direct_answer", true), null, List.of(), true, null, false);
         if (Boolean.TRUE.equals(invoke(ongoing, "isDirectAnswer")) || ((Map<?, ?>)invoke(ongoing, "getMetadata")).containsKey("cli_internal_direct_answer"))
@@ -569,7 +576,7 @@ public final class HookSmokeProbe {
         }
         Object client = dynClient;
         if (client == null) throw new AssertionError("DynLlmClient not initialized");
-        Object config = Reflector.newInstance(Reflector.findClass("sm.a", loader), "unused-native", 0.0, Integer.valueOf(1024), 1.0,
+        Object config = NativeModelHook.newConfig(loader, "unused-native", 0.0, Integer.valueOf(1024), 1.0,
             null, null, "MIAIPLUS_NATIVE_SYSTEM", null, false, "taiyi", null, false,
             Reflector.newInstance(Reflector.findClass("sm.f", loader)), null, false);
         Object json = Reflector.getStaticObjectField(Reflector.findClass("s92.b", loader), "d");
@@ -585,9 +592,9 @@ public final class HookSmokeProbe {
             clients.add(Reflector.newInstance(Reflector.findClass(type, loader), "unused-native-key", "http://127.0.0.1:1", http));
         for (Object transport : clients) {
             List<Object> events = collect(loader, transport, List.of(message(loader, "USER", "MIAIPLUS_NATIVE_STREAM_TEST", null)), List.of(tool), config);
-            if (events.stream().noneMatch(e -> e.getClass().getName().equals("sm.b$f"))) throw new AssertionError("no native tool-call event for " + transport.getClass().getName() + ": " + events);
+            if (events.stream().noneMatch(e -> e.getClass().getName().equals(HostCompatibility.name("sm.b$f")))) throw new AssertionError("no native tool-call event for " + transport.getClass().getName() + ": " + events);
             assertStreamEnded(events, "TOOL_CALLS");
-            Object called = events.stream().filter(e -> e.getClass().getName().equals("sm.b$f")).findFirst().orElseThrow();
+            Object called = events.stream().filter(e -> e.getClass().getName().equals(HostCompatibility.name("sm.b$f"))).findFirst().orElseThrow();
             Object nativeCall = Reflector.newInstance(Reflector.findClass("com.aios.osbot.agent.model.ToolCall", loader),
                 invoke(called, "getId"), invoke(called, "getName"), invoke(called, "getArguments"), "probe-result",
                 enumValue(loader, "ToolStatus", "COMPLETED"), List.of(), null, null, null);
@@ -599,11 +606,11 @@ public final class HookSmokeProbe {
                 System.currentTimeMillis(), enumValue(loader, "MessageSource", "CHAT"), null, null, null);
             List<Object> continued = collect(loader, transport,
                 List.of(message(loader, "USER", "MIAIPLUS_NATIVE_STREAM_TEST", null), assistant, toolResult), List.of(tool), config);
-            if (continued.stream().noneMatch(e -> e.getClass().getName().equals("sm.b$d") && String.valueOf(invoke(e, "getText")).contains("native-roundtrip-ok")))
+            if (continued.stream().noneMatch(e -> e.getClass().getName().equals(HostCompatibility.name("sm.b$d")) && String.valueOf(invoke(e, "getText")).contains("native-roundtrip-ok")))
                 throw new AssertionError("native tool result/image roundtrip failed for " + transport.getClass().getName() + ": " + continued);
             assertStreamEnded(continued, "STOP");
             List<Object> textEvents = collect(loader, transport, List.of(message(loader, "USER", "MIAIPLUS_NATIVE_STREAM_FINAL", null)), List.of(), config);
-            if (textEvents.stream().noneMatch(e -> e.getClass().getName().equals("sm.b$d") && String.valueOf(invoke(e, "getText")).contains("native-stream-ok")))
+            if (textEvents.stream().noneMatch(e -> e.getClass().getName().equals(HostCompatibility.name("sm.b$d")) && String.valueOf(invoke(e, "getText")).contains("native-stream-ok")))
                 throw new AssertionError("no native text event for " + transport.getClass().getName() + ": " + textEvents);
             assertStreamEnded(textEvents, "STOP");
         }
@@ -625,8 +632,16 @@ public final class HookSmokeProbe {
         invoke(routeConfig, "setCustomPrompt", "MIAIPLUS_CAPABILITY_SYSTEM");
         Object capability = Reflector.newInstance(Reflector.findClass("com.aios.osbot.router.a", loader), http);
         CompletableFuture<Object> capabilityDone = new CompletableFuture<>();
-        Object capabilityResult = await(loader, invoke(capability, "b", routeConfig, "MIAIPLUS_CAPABILITY_TEST", continuation(loader, capabilityDone)), capabilityDone);
-        if (!"capability-ok".equals(invoke(capabilityResult, "getContent"))) throw new AssertionError("capability override failed");
+        Object capabilityRaw = HostCompatibility.modern()
+            ? invoke(capability, "i", routeConfig, "MIAIPLUS_CAPABILITY_V2_TEST", List.of(), continuation(loader, capabilityDone))
+            : invoke(capability, "b", routeConfig, "MIAIPLUS_CAPABILITY_TEST", continuation(loader, capabilityDone));
+        Object capabilityResult = await(loader, capabilityRaw, capabilityDone);
+        if (HostCompatibility.modern()) {
+            Object parsed = invoke(capability, "k", invoke(capabilityResult, "getContent"));
+            if (parsed == null || !"fixture intent".equals(invoke(parsed, "getUserIntent"))
+                || !List.of("fixture capability").equals(invoke(parsed, "getCapabilities")))
+                throw new AssertionError("capability override/schema parsing failed");
+        } else if (!"capability-ok".equals(invoke(capabilityResult, "getContent"))) throw new AssertionError("capability override failed");
         Class<?> loggerType = Reflector.findClass("r32.e", loader);
         Object logger = Proxy.newProxyInstance(loader, new Class<?>[]{loggerType}, (p,m,args) -> null);
         Object router = Reflector.newInstance(Reflector.findClass("com.aios.osbot.router.t", loader), http, logger);
@@ -634,7 +649,8 @@ public final class HookSmokeProbe {
         Object routerResult = await(loader, invoke(router, "b", routeConfig, "MIAIPLUS_ROUTER_TEST", null, continuation(loader, routerDone)), routerDone);
         Object decision = invoke(routerResult, "getResult");
         if (decision == null || !"FALLBACK".equals(invoke(decision, "getStatus"))) throw new AssertionError("router protocol adaptation failed");
-        return "PROBE PASS: actual controlApp hook (lock gate or native observation); stock getCurrentPackage; native images and continuation; Dyn/direct model and memory overrides; SSE text/tools; actual gate, capability and intent router requests plus native response parsing";
+        return "PROBE PASS: actual controlApp hook (lock gate or native observation); stock getCurrentPackage; native images and continuation; Dyn/direct model and memory overrides; SSE text/tools; actual gate, capability and intent router requests plus native response parsing"
+            + (reasoningResult.isEmpty() ? "" : "\n" + reasoningResult);
     }
     private static void chatRouting(Context context, ClassLoader loader) throws Exception {
         CompletableFuture<Boolean> done = new CompletableFuture<>();
@@ -642,7 +658,7 @@ public final class HookSmokeProbe {
             try {
                 Object callback = chatCallback.get();
                 if (callback == null) throw new AssertionError("native text-chat callback unavailable");
-                Method route = Reflector.findClass("ll1.f0", loader).getDeclaredMethod("C");
+                Method route = Reflector.findClass("ll1.f0", loader).getDeclaredMethod(HostCompatibility.choose("C", "D"));
                 boolean actual = (Boolean)route.invoke(callback);
                 boolean original = (Boolean)io.github.miaiplus.hook.Hooks.invokeOriginalMethod(route, callback, new Object[0]);
                 boolean external = NativeModelHook.config(context).getBoolean("globalModel");
@@ -704,8 +720,8 @@ public final class HookSmokeProbe {
                 android.view.View bar = functionBar.get();
                 if (bar == null || !bar.isAttachedToWindow() || !bar.isShown()) throw new AssertionError("full-screen chat entry not visible");
                 Object viewModel = invoke(bar, "getViewModel");
-                Object fullMode = invoke(viewModel, "x");
-                List<?> fullItems = (List<?>)invoke(viewModel, "w");
+                Object fullMode = invoke(viewModel, HostCompatibility.choose("x", "y"));
+                List<?> fullItems = (List<?>)invoke(viewModel, HostCompatibility.choose("w", "x"));
                 if (fullItems.size() != 3) throw new AssertionError("stock full-screen choices changed");
                 Object effect = Reflector.newInstance(Reflector.findClass("com.xiaomi.voiceassistant.mainui.functionbar.b$b", loader),
                     0, fullMode, fullItems);
@@ -716,6 +732,28 @@ public final class HookSmokeProbe {
                     if (nativePopup == null || !Boolean.TRUE.equals(invoke(Reflector.getObjectField(nativePopup, "a"), "isShowing")))
                         throw new AssertionError("stock full-screen popup missing");
                     invoke(factory, "dismiss");
+                } else if (HostCompatibility.modern()) {
+                    Object nativePopup = Reflector.callStaticMethod(Reflector.findClass("com.xiaomi.voiceassistant.mainui.functionbar.d", loader), "access$getCurrentVisible$cp");
+                    Object menuPopup = Reflector.getObjectField(nativePopup, "a");
+                    if (!Boolean.TRUE.equals(invoke(menuPopup, "isShowing"))) throw new AssertionError("native full-screen effort menu missing");
+                    android.view.Menu menu = (android.view.Menu)invoke(menuPopup, "getMenu");
+                    var choices = ReasoningPolicy.choices(settings.getString("model"), settings.getString("api"));
+                    if (menu.size() != choices.size()) throw new AssertionError("wrong native full-screen efforts");
+                    String expected = "responses".equals(settings.getString("api")) ? "high" : "on";
+                    for (int i = 0; i < choices.size(); i++)
+                        if (!ReasoningPolicy.label(choices.get(i)).contentEquals(menu.getItem(i).getTitle()))
+                            throw new AssertionError("wrong native full-screen effort label");
+                    Object window = Reflector.getObjectField(menuPopup, "mHyperPopupWindow");
+                    Object listener = Reflector.getObjectField(window, "mMenuItemClickListener");
+                    invoke(listener, "onMenuItemClick", menu.getItem(0));
+                    if (!choices.get(0).equals(NativeModelHook.config(context).getString("reasoning")))
+                        throw new AssertionError("native full-screen effort did not persist");
+                    invoke(listener, "onMenuItemClick", menu.getItem(choices.indexOf(expected)));
+                    if (!expected.equals(NativeModelHook.config(context).getString("reasoning")))
+                        throw new AssertionError("native full-screen effort did not restore");
+                    invoke(factory, "dismiss");
+                    if (currentMode(manager) != before) throw new AssertionError("native full-screen selection overwrote Xiaomi mode");
+                    if (!ReasoningPolicy.label(expected).equals(invoke(viewModel, "c0", fullMode))) throw new AssertionError("native full-screen effort label missing");
                 } else {
                     android.widget.PopupWindow popup = NativeReasoningHook.activePopup();
                     if (popup == null || !popup.isShowing()) throw new AssertionError("full-screen effort menu missing");
@@ -725,12 +763,113 @@ public final class HookSmokeProbe {
                     if (list.getAdapter().getCount() != choices.size()) throw new AssertionError("wrong full-screen efforts");
                     list.performItemClick(null, choices.indexOf(expected), choices.indexOf(expected));
                     if (currentMode(manager) != before) throw new AssertionError("full-screen selection overwrote Xiaomi mode");
-                    if (!ReasoningPolicy.label(expected).equals(invoke(viewModel, "Z", fullMode))) throw new AssertionError("full-screen effort label missing");
+                    if (!ReasoningPolicy.label(expected).equals(invoke(viewModel, HostCompatibility.choose("Z", "c0"), fullMode))) throw new AssertionError("full-screen effort label missing");
                 }
-                done.complete("PROBE PASS: native voice-bar and full-screen chat reasoning entries " + (stock ? "retain stock AUTO/QUICK/EXPERT and labels" : "select and persist model effort without changing stock mode"));
+                floatingReasoningUi(context, loader, anchor, stock, manager, before);
+                done.complete("PROBE PASS: native voice-bar, full-screen and floating reasoning entries " + (stock ? "retain stock AUTO/QUICK/EXPERT and labels" : "select and persist model effort without changing stock mode"));
             } catch (Throwable failure) { done.completeExceptionally(failure); }
         });
-        return done.get(15, TimeUnit.SECONDS);
+        String result = done.get(15, TimeUnit.SECONDS);
+        if (HostCompatibility.modern() && !stock) {
+            fullScreenReasoningMotion(loader);
+            result += "; native full-screen forward/reverse animations completed";
+        }
+        return result;
+    }
+    private static void fullScreenReasoningMotion(ClassLoader loader) throws Exception {
+        Thread.sleep(600); // Let menus from the selection regression finish their native exit animation.
+        var events = java.util.concurrent.ConcurrentHashMap.<String>newKeySet();
+        CountDownLatch entered = new CountDownLatch(1), exited = new CountDownLatch(1);
+        Class<?> animationListener = Reflector.findClass("miuix.popupwidget.widget.n", loader);
+        Object listener = Proxy.newProxyInstance(loader, new Class<?>[]{animationListener}, (proxy, method, args) -> {
+            switch (method.getName()) {
+                case "onForwardAnimationStart", "onReverseAnimationStart" -> events.add(method.getName());
+                case "onForwardAnimationEnd" -> { events.add(method.getName()); entered.countDown(); }
+                case "onReverseAnimationEnd" -> { events.add(method.getName()); exited.countDown(); }
+                case "hashCode" -> { return System.identityHashCode(proxy); }
+                case "equals" -> { return proxy == args[0]; }
+                case "toString" -> { return "MiAIPlus animation probe"; }
+                default -> { }
+            }
+            return null;
+        });
+        var helpers = new java.util.concurrent.CopyOnWriteArrayList<Object>();
+        var hooks = io.github.miaiplus.hook.Hooks.hookAllConstructors(Reflector.findClass("miuix.popupwidget.widget.o", loader), new io.github.miaiplus.hook.HookCallback() {
+            @Override protected void afterHookedMethod(MethodHookParam p) {
+                if (helpers.contains(p.thisObject)) return;
+                helpers.add(p.thisObject);
+                invoke(p.thisObject, "addPopupAnimationListener", listener);
+            }
+        });
+        Object factory = Reflector.getStaticObjectField(Reflector.findClass("com.xiaomi.voiceassistant.mainui.functionbar.d", loader), "d");
+        try {
+            MainThread.call(() -> {
+                android.view.View bar = functionBar.get();
+                Object model = invoke(bar, "getViewModel");
+                invoke(bar, "v", Reflector.newInstance(Reflector.findClass("com.xiaomi.voiceassistant.mainui.functionbar.b$b", loader),
+                    0, invoke(model, "y"), invoke(model, "x")));
+                Object visible = Reflector.callStaticMethod(Reflector.findClass("com.xiaomi.voiceassistant.mainui.functionbar.d", loader), "access$getCurrentVisible$cp");
+                Object popup = Reflector.getObjectField(visible, "a");
+                android.view.Menu menu = (android.view.Menu)invoke(popup, "getMenu");
+                Bundle config = NativeModelHook.config(bar.getContext());
+                var choices = ReasoningPolicy.choices(config.getString("model"), config.getString("api"));
+                int selected = choices.indexOf(config.getString("reasoning"));
+                for (int i = 0; i < menu.size(); i++)
+                    if (menu.getItem(i).isChecked() != (i == selected))
+                        throw new AssertionError("native full-screen selection not restored on reopen");
+                if (Boolean.TRUE.equals(invoke(Reflector.getObjectField(popup, "mHyperPopupWindow"), "isFocusable")))
+                    throw new AssertionError("native full-screen menu changed keyboard focus behavior");
+                return null;
+            });
+            if (!entered.await(4, TimeUnit.SECONDS)) throw new AssertionError("native full-screen enter animation did not finish: " + events);
+            MainThread.call(() -> { invoke(factory, "dismiss"); return null; });
+            if (!exited.await(4, TimeUnit.SECONDS)) throw new AssertionError("native full-screen exit animation did not finish: " + events);
+            if (!events.containsAll(List.of("onForwardAnimationStart", "onForwardAnimationEnd", "onReverseAnimationStart", "onReverseAnimationEnd")))
+                throw new AssertionError("native full-screen animation lifecycle incomplete: " + events);
+        } finally {
+            MainThread.call(() -> {
+                invoke(factory, "dismiss");
+                for (Object helper : helpers) invoke(helper, "removePopupAnimationListener", listener);
+                for (var hook : hooks) hook.unhook();
+                return null;
+            });
+        }
+    }
+    private static void floatingReasoningUi(Context context, ClassLoader loader, android.view.View anchor,
+        boolean stock, Object manager, Object before) throws Exception {
+        Object floating = Reflector.getStaticObjectField(Reflector.findClass("zd1.b0", loader), "a");
+        try {
+            invoke(floating, "show", anchor, anchor.getRootView());
+            Object popup = Reflector.getObjectField(floating, "d");
+            android.view.Menu menu = (android.view.Menu)invoke(popup, "getMenu");
+            int parentId = NativeReasoningHook.floatingModeItem();
+            android.view.MenuItem parent = menu.findItem(parentId);
+            if (parent == null || !parent.hasSubMenu()) throw new AssertionError("floating modes missing");
+            android.view.SubMenu modes = parent.getSubMenu();
+            if (stock) {
+                if (modes.size() != 3) throw new AssertionError("stock floating choices changed");
+                return;
+            }
+            Bundle config = NativeModelHook.config(context);
+            var choices = ReasoningPolicy.choices(config.getString("model"), config.getString("api"));
+            if (modes.size() != choices.size()) throw new AssertionError("floating effort choices missing");
+            for (int i = 0; i < choices.size(); i++)
+                if (!ReasoningPolicy.label(choices.get(i)).contentEquals(modes.getItem(i).getTitle()))
+                    throw new AssertionError("floating effort label mismatch");
+            String callback = HostCompatibility.choose("o", "A");
+            invoke(floating, callback, modes.getItem(0), anchor.getContext());
+            if (!choices.get(0).equals(NativeModelHook.config(context).getString("reasoning")))
+                throw new AssertionError("floating effort did not persist");
+            invoke(floating, "show", anchor, anchor.getRootView());
+            Boolean[] checks = (Boolean[])invoke(floating, HostCompatibility.choose("g", "n"));
+            if (checks.length != choices.size() || !checks[0]) throw new AssertionError("floating selection not restored");
+            popup = Reflector.getObjectField(floating, "d");
+            modes = ((android.view.Menu)invoke(popup, "getMenu")).findItem(parentId).getSubMenu();
+            int selected = choices.indexOf(config.getString("reasoning"));
+            invoke(floating, callback, modes.getItem(selected), anchor.getContext());
+            if (!config.getString("reasoning").equals(NativeModelHook.config(context).getString("reasoning"))
+                || currentMode(manager) != before) throw new AssertionError("floating selection changed native mode");
+        } finally { invoke(floating, "dismiss"); }
     }
     private static Object continuation(ClassLoader loader, CompletableFuture<Object> future) {
         Class<?> type = Reflector.findClass("kotlin.coroutines.Continuation", loader);
@@ -747,12 +886,12 @@ public final class HookSmokeProbe {
         return result;
     }
     private static void assertStreamEnded(List<Object> events, String reason) {
-        long completions = events.stream().filter(e -> e.getClass().getName().equals("sm.b$b")).count();
+        long completions = events.stream().filter(e -> e.getClass().getName().equals(HostCompatibility.name("sm.b$b"))).count();
         if (completions != 1 || events.isEmpty()
-            || !events.get(events.size() - 1).getClass().getName().equals("sm.b$b")
+            || !events.get(events.size() - 1).getClass().getName().equals(HostCompatibility.name("sm.b$b"))
             || !reason.equals(String.valueOf(invoke(events.get(events.size() - 1), "getReason"))))
             throw new AssertionError("native stream did not end with one " + reason + " completion");
-        if (events.stream().anyMatch(e -> e.getClass().getName().equals("sm.b$a")))
+        if (events.stream().anyMatch(e -> e.getClass().getName().equals(HostCompatibility.name("sm.b$a"))))
             throw new AssertionError("native stream emitted an error before completion");
     }
     private static List<Object> collect(ClassLoader loader, Object client, List<?> messages, List<?> tools, Object config) throws Exception {

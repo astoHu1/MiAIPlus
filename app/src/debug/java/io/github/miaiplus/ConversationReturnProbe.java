@@ -33,8 +33,8 @@ final class ConversationReturnProbe {
         String topicA = "miaiplus-return-" + UUID.randomUUID(), topicB = "miaiplus-return-" + UUID.randomUUID();
         String chatA = "miaiplus-probe-" + UUID.randomUUID(), chatB = "miaiplus-probe-" + UUID.randomUUID();
         Object ctxA = executionContext(loader, chatA), ctxB = executionContext(loader, chatB);
-        Object registry = Reflector.getStaticObjectField(Reflector.findClass("com.aios.osbot.tools.ToolRegistry", loader), "instance");
-        Object tool = Reflector.callMethod(registry, "get", "miaiplus_phone_use");
+        Object registry = NativePhoneUseTool.registry(context, loader);
+        Object tool = Reflector.callMethod(registry, HostCompatibility.choose("get", "peek"), "miaiplus_phone_use");
         check(tool != null, "foreground native tool unavailable");
         String session = null;
         Throwable failure = null;
@@ -119,7 +119,7 @@ final class ConversationReturnProbe {
         });
         for (var constructor : Reflector.findClass("com.aios.osbot.tools.ExecutionContext", loader).getConstructors()) {
             Class<?>[] types = constructor.getParameterTypes();
-            if (types.length != 34 || !types[33].getName().equals("kotlin.jvm.internal.DefaultConstructorMarker")) continue;
+            if (types.length != (HostCompatibility.modern() ? 36 : 34) || !types[types.length - 1].getName().equals("kotlin.jvm.internal.DefaultConstructorMarker")) continue;
             Object[] values = new Object[types.length];
             for (int i = 0; i < types.length; i++) {
                 if (types[i] == boolean.class) values[i] = false;
@@ -127,7 +127,9 @@ final class ConversationReturnProbe {
                 else if (types[i] == long.class) values[i] = 0L;
             }
             values[0] = "miaiplus-local-probe"; values[1] = scoped; values[4] = permission;
-            values[32] = ~0x13; // Kotlin defaults for everything except required userId, agentId and permissionManager.
+            // Kotlin defaults except required userId, agentId and permissionManager; 8.3.30 needs two masks.
+            values[types.length - (HostCompatibility.modern() ? 3 : 2)] = ~0x13;
+            if (HostCompatibility.modern()) values[34] = -1;
             Object execution = constructor.newInstance(values);
             check(scoped.equals(Reflector.callMethod(execution, "getContextVarIdentity")), "host execution context lost scoped chat identity");
             return execution;
@@ -173,8 +175,7 @@ final class ConversationReturnProbe {
         MainThread.call(() -> { context.startActivity(intent); return null; });
     }
     private static Intent route(Context context, Object page) {
-        return new Intent().setClassName(context.getPackageName(), "com.xiaomi.voiceassistant.TabHostMainActivity")
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).putExtra("page_navigation_data", (Parcelable)page);
+        return ConversationReturn.route(context, page);
     }
     private static String routeChat(Intent intent) {
         if (intent == null) return null;
@@ -183,26 +184,31 @@ final class ConversationReturnProbe {
     }
     private static void assertChat(Context context, ClassLoader loader, String expected, String expectedTopic) throws Exception {
         long deadline = SystemClock.elapsedRealtime() + 10_000;
+        boolean[] state = new boolean[4];
         do {
             boolean matched = MainThread.call(() -> {
                 Object page = currentPage(context, loader);
                 Object info = page == null ? null : Reflector.callMethod(page, "getTopicGroupInfo");
                 Object ui = Reflector.callStaticMethod(Reflector.findClass("com.xiaomi.voiceassistant.UiManager", loader), "getInstance", context);
                 Object manager = Reflector.callMethod(ui, "getFloatManager");
-                return info != null && expected.equals(Reflector.callMethod(info, "getChatId"))
-                    && expectedTopic.equals(Reflector.callMethod(manager, "getTopicGroupId"));
+                state[0] = page != null;
+                state[1] = info != null;
+                state[2] = info != null && expected.equals(Reflector.callMethod(info, "getChatId"));
+                state[3] = expectedTopic.equals(Reflector.callMethod(manager, "getTopicGroupId"));
+                return state[2] && state[3];
             });
             if (matched) return;
             Thread.sleep(100);
         } while (SystemClock.elapsedRealtime() < deadline);
-        throw new AssertionError("host did not display the requested owned conversation");
+        throw new AssertionError("host did not display the requested owned conversation: page/info/chat/topic="
+            + java.util.Arrays.toString(state));
     }
     private static Object currentPage(Context context, ClassLoader loader) {
         Object thread = Reflector.callStaticMethod(Reflector.findClass("android.app.ActivityThread", null), "currentActivityThread");
         for (Object record : ((Map<?, ?>)Reflector.getObjectField(thread, "mActivities")).values()) {
             Activity activity = (Activity)Reflector.getObjectField(record, "activity");
             if (!Boolean.TRUE.equals(Reflector.getObjectField(record, "paused"))
-                && activity.getClass().getName().equals("com.xiaomi.voiceassistant.TabHostMainActivity"))
+                && activity.getClass().getName().equals(HostCompatibility.chatActivity()))
                 return Reflector.callMethod(activity, "getPageNavigationData");
         }
         return null;

@@ -18,7 +18,7 @@ final class NativeChatRoutingHook {
         Class<?> callback = Reflector.findClass("ll1.f0", loader);
         // Xposed logs exceptions from hook callbacks and then runs the original.
         // Stop the UI submit explicitly when configuration cannot be read.
-        hooks.add(Hooks.hookMethod(callback.getDeclaredMethod("A", String.class, String.class), new HookCallback() {
+        hooks.add(Hooks.hookMethod(callback.getDeclaredMethod(HostCompatibility.choose("A", "B"), String.class, String.class), new HookCallback() {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
                 try { NativeModelHook.requestConfig(context); }
                 catch (Exception unavailable) {
@@ -27,7 +27,7 @@ final class NativeChatRoutingHook {
                 }
             }
         }));
-        var route = callback.getDeclaredMethod("C");
+        var route = callback.getDeclaredMethod(HostCompatibility.choose("C", "D"));
         if (route.getReturnType() != boolean.class) throw new IllegalStateException("chat route signature mismatch");
         hooks.add(Hooks.hookMethod(route, new HookCallback() {
             @Override protected void beforeHookedMethod(MethodHookParam p) {

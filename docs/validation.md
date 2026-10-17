@@ -1,4 +1,36 @@
-# MiAIPlus 0.3.3 实现与验证状态
+# MiAIPlus 1.0.0-preview 实现与验证状态
+
+## 新版全屏思考强度菜单动画修复（2026-10-17）
+
+8.3.30 全屏外部模型菜单此前替换为普通 Android `PopupWindow`，绕过了宿主原生动画。现在保留原生 `FunctionModePopup`／`HyperPopupMenu`，只在工厂同步调用内替换档位、勾选状态及经 UID／配置身份校验的保存回调。保留原生定位、键盘焦点策略、再次点击收起、配置变更处理与 Miuix 动画；热重载释放选择回调并关闭菜单。旧版全屏和普通输入栏路径保持原实现。
+
+本地 235 项 JVM/Robolectric 测试通过（0 failures/errors/skipped）；Debug、Release、AndroidTest 构建及两套完整 Lint 通过（0 errors，Debug 31／Release 24 warnings）；`git diff --check` 通过。
+
+同一 Xiaomi 25019PNF3C / xuanyuan、API 37、小爱 8.3.30.4420（508003030）已安装修复版 Debug／AndroidTest。`--hook --responses --reasoning` 和 `--hook --reasoning` 两套实机回归通过：覆盖官方三档保持、外部模型菜单与保存、全屏重开勾选、键盘焦点策略、线上推理参数，以及原生全屏动画的 forward start／end 和 reverse start／end 四个回调。动画检查等待实际完成，不以 `isShowing` 代替动画完成。模型请求使用本机 mock，未验证真实服务任务质量；动画回调证据不等于逐帧视觉效果评估。本轮 mock 已停止、18765 reverse 已删除，无活动 instrumentation，无障碍服务列表保持原值。
+
+## 超级小爱 8.3.30 适配（2026-10-17）
+
+ADB 测试机已升级为超级小爱 **8.3.30.4420（508003030）**。新增精确 APK 兼容档案，保留 **8.2.65.4714（508002065）** 的原绑定；versionName 和 versionCode 必须同时匹配，其他版本仍拒绝启用。适配模型配置新增字段、混淆类／方法、能力分类云端提示、本机 DI 工具注册表、三套推理菜单、全屏／浮窗收起入口与新版主聊天页导航。外部能力分类补充本地 JSON schema；不扩大分类器的工具执行权限。
+
+本地验证：235 项 JVM/Robolectric 测试通过（0 failures/errors/skipped），包含新增精确版本门禁／档案切换和新版能力分类请求回归。Debug、Release、AndroidTest 构建和两套完整 Lint 通过（0 errors，Debug 31 / Release 24 warnings）；Python 语法与 `git diff --check` 通过。
+
+同一 Xiaomi 25019PNF3C / xuanyuan、API 37 上安装适配 Debug/AndroidTest，实机已通过：
+
+- Chat Completions 与 Responses 两套原生 Hook：Dyn／直接客户端、SSE 文字／工具调用与严格终态、工具结果和图片回传、记忆、gate、能力分类及 intent 路由的实际请求和原生解析。使用本机 mock，校验独立认证、私有字段清理及推理参数。
+- 原生输入栏、全屏和浮窗三套推理菜单：关闭外部模式保留 AUTO／QUICK／EXPERT；开启后验证档位数量、标签、保存、重开选中状态和线上参数，不改小爱原模式。
+- `--robust-screen`：无关文字每 100ms 刷新仍可点击，目标移动／替换后零旧触摸并在原会话重新规划；严格 3 次触摸／点击，50ms 采样跨步通知终态。
+- `--dual-tools`：两种兼容默认屏幕设置下，两工具分别注册／导出并固定选屏，错误工具续调拒绝；后台实际点击／滑动且主屏不变，helper／display 正常退出。
+- `--conversation-return`：两条自有本地对话，跨上下文续调／结束，切换对话再点击完成通知仍返回首次对话，页面 chatId 与实际 topicId 同时匹配。
+- `--focus`：全屏收起、跨步通知、快速任务交接、停止、结束不抢前台和完成通知返回。
+- `--foreground-consent` 与 `--action-confirmation`：真实通知同意／拒绝／停止及真实 60 秒超时，首次／中途应用冲突交接、拒绝后的 direct answer／原生 STOP gate；等待期间主屏焦点保持。确认仅批准一次固定无害点击，拒绝／停止／超时均零触摸。
+- `--reply-actions`／`--reply-actions-chat`：自有 UUID 对话实际提交，固定原生文字流、STOP 且无 Error，复制／重试按钮经无障碍确认可见、启用、可点击。Responses 采用 35 秒完成、每 5 秒心跳场景；Chat 作对照。原生正文匹配与按钮检查通过，未对正文做截图视觉核对；新版旧卡片内部诊断计数不适用，不影响上述必需断言。
+- API 102 热重载返回 SUCCEEDED，小爱 PID 保持不变；随后 `--dual-tools --no-restart` 在两种兼容默认设置下完整通过，包括 DI 注册表工具／schema、真实前后台动作、跨工具续调拒绝和正常清理。
+
+`--focus --popup` 尚未通过：服务动作唤醒后没有 resumed 宿主页面，`FloatManager.getRootLayout()` 为 null，未满足浮窗已显示的前置条件。加入关闭麦克风／电源键来源的试验同样未建立浮窗，未据此放宽探针或宣称实体电源键浮窗焦点链已验证；三套模式菜单的实际 popup 测试通过不等于此项焦点验证。
+
+最终 Debug 已安装。测试后停止本轮两个本机 mock，删除 18765／18766 reverse 映射；无活动 instrumentation、无 DisplayHelper，仅 display 0。无障碍服务列表逐字保持原值，重新连接后健康查询为 `connected=true,busy=false`；各 runner 恢复原配置并清理自己的对话／页面。
+
+以上协议为 mock，控屏为确定动作与自有页面验证，未调用真实外部模型或验证新版官方模型自主规划成功率。旧版绑定保留并经本地回归，本轮设备未降级重测旧小爱。研究 APK／反编译材料只保留在忽略目录 `work/`，不进入发行物。未提交、推送或发布。
 
 ## 动态页面局部稳定区域（2026-10-17）
 

@@ -10,7 +10,7 @@
 
 ```sh
 # apksigner 在 Android SDK build-tools 目录中；使用交互式密码提示
-apksigner sign --ks /你的私有目录/release.jks --out MiAIPlus-signed.apk dist/MiAIPlus-0.3.3-unsigned.apk
+apksigner sign --ks /你的私有目录/release.jks --out MiAIPlus-signed.apk dist/MiAIPlus-1.0.0-preview-unsigned.apk
 apksigner verify --verbose MiAIPlus-signed.apk
 ```
 
@@ -67,7 +67,7 @@ macOS 可用 `base64 -i "$HOME/.android-signing/miaiplus-release.jks" | pbcopy` 
 发布步骤：
 
 1. 将待发布源码和 workflow 提交、推送到 main；更新 `versionName` 和 `versionCode`，完成实机回归。
-2. 创建版本标签并推送，例如 `git tag v0.3.3`、`git push origin v0.3.3`。手动重跑可在 Actions → Signed Release → Run workflow 填同一标签。
+2. 创建版本标签并推送，例如 `git tag v1.0.0-preview`、`git push origin v1.0.0-preview`。推送标签会自动触发；手动重跑可在 Actions → Signed Release → Run workflow 的 `Existing version tag` 填 `v1.0.0-preview`。标签带 `v`，应用 `versionName` 不带 `v`。
 3. workflow 先运行单元测试、完整两套 Lint、Release/AndroidTest 构建，再进入 `release` 环境签名任务。该环境应允许发布标签 `v*`，建议配置审批人；不要仅允许 main 分支而阻塞标签运行。
 4. 下载并检查 `signed-release` artifact，或打开自动创建的 GitHub Release 草稿。核对 APK、证书 SHA-256、源码包及 SHA256SUMS，补充支持版本与未验证限制，然后手动发布。
 

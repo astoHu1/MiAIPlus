@@ -37,7 +37,7 @@ public final class NativePhoneUseTool {
     private static volatile boolean registered;
     private static final java.util.Set<Object> registries = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
     private static void register(Object registry, Object tool) {
-        Reflector.callMethod(registry, "registerSystem", tool);
+        Reflector.callMethod(registry, HostCompatibility.choose("registerSystem", "register"), tool);
         synchronized (registries) { registries.add(registry); }
         registered = true;
     }
@@ -46,7 +46,8 @@ public final class NativePhoneUseTool {
             for (Object registry : registries) {
                 for (String name : new String[]{NAME, BACKGROUND_NAME}) {
                     Reflector.callMethod(registry, "unregister", name);
-                    ((java.util.Set<?>)Reflector.getObjectField(registry, "systemToolNames")).remove(name);
+                    if (!HostCompatibility.modern())
+                        ((java.util.Set<?>)Reflector.getObjectField(registry, "systemToolNames")).remove(name);
                 }
             }
             registries.clear();
@@ -109,11 +110,30 @@ public final class NativePhoneUseTool {
             };
         });
         Class<?> registry = Reflector.findClass("com.aios.osbot.tools.ToolRegistry", loader);
-        Object existing = Reflector.getStaticObjectField(registry, "instance");
-        if (existing != null) register(existing, tool);
+        if (HostCompatibility.modern()) {
+            // 8.3.30 uses a DI-owned registry, with no static instance or registerSystem.
+            // Reads also cover existing registries after hot reload, and repopulate after evict().
+            for (var method : registry.getDeclaredMethods()) {
+                if (!java.util.Set.of("get", "getAll", "peek", "peekAll", "searchTools").contains(method.getName())) continue;
+                hooks.add(Hooks.hookMethod(method, new HookCallback() {
+                    @Override protected void beforeHookedMethod(MethodHookParam p) { register(p.thisObject, tool); }
+                }));
+            }
+            registered = true;
+        } else {
+            Object existing = Reflector.getStaticObjectField(registry, "instance");
+            if (existing != null) register(existing, tool);
+        }
         hooks.addAll(Hooks.hookAllConstructors(registry, new HookCallback() {
             @Override protected void afterHookedMethod(MethodHookParam p) { register(p.thisObject, tool); }
         }));
+    }
+    static Object registry(Context context, ClassLoader loader) {
+        if (!HostCompatibility.modern())
+            return Reflector.getStaticObjectField(Reflector.findClass("com.aios.osbot.tools.ToolRegistry", loader), "instance");
+        Object entry = Reflector.callStaticMethod(Reflector.findClass("n02.e", loader), "fromApplication", context,
+            Reflector.findClass("com.aios.osbot.tools.phone.service.InCallServiceEntryPoint", loader));
+        return Reflector.callMethod(entry, "toolRegistry");
     }
     static void addDefinition(Context context, HookCallback.MethodHookParam p) {
         if (!registered || !available(context) || definitions.isEmpty() || !(p.args[1] instanceof List<?> old)) return;

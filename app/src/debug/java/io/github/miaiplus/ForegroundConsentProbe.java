@@ -21,9 +21,9 @@ final class ForegroundConsentProbe {
     static void signalReady() { CountDownLatch waiting = ready; if (waiting != null) waiting.countDown(); }
 
     static String run(Context context, ClassLoader loader) throws Exception {
-        Object registry = Reflector.getStaticObjectField(Reflector.findClass("com.aios.osbot.tools.ToolRegistry", loader), "instance");
+        Object registry = NativePhoneUseTool.registry(context, loader);
         check(registry != null, "native registry unavailable");
-        Object tool = call(registry, "get", PhoneUseRouting.BACKGROUND_TOOL);
+        Object tool = call(registry, HostCompatibility.choose("get", "peek"), PhoneUseRouting.BACKGROUND_TOOL);
         check(tool != null, "background native tool unavailable");
         Thread pendingAction = null;
         try {
@@ -124,7 +124,7 @@ final class ForegroundConsentProbe {
             text(denied), pending, List.of(), null, null, null);
         Object gate = Reflector.newInstance(Reflector.findClass("kj.g", loader), List.of());
         Object decision = call(gate, "evalShouldStopAfterTool", null, nativeCall, denied, null);
-        check(decision != null && decision.getClass().getName().equals("kj.i$b"), "native stop gate did not terminate denied tool");
+        check(decision != null && decision.getClass().getName().equals(HostCompatibility.name("kj.i$b")), "native stop gate did not terminate denied tool");
         check(Reflector.getStaticObjectField(Reflector.findClass("oj.b", loader), "STOP") == call(decision, "getReason"),
             "native gate returned a different terminal reason");
     }

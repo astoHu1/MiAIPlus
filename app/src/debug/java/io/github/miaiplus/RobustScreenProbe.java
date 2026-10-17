@@ -24,9 +24,9 @@ final class RobustScreenProbe {
     static void signalReady() { CountDownLatch waiting = ready; if (waiting != null) waiting.countDown(); }
 
     static String run(Context context, ClassLoader loader) throws Exception {
-        Object registry = Reflector.getStaticObjectField(Reflector.findClass("com.aios.osbot.tools.ToolRegistry", loader), "instance");
+        Object registry = NativePhoneUseTool.registry(context, loader);
         check(registry != null, "native registry unavailable");
-        Object tool = call(registry, "get", PhoneUseRouting.FOREGROUND_TOOL);
+        Object tool = call(registry, HostCompatibility.choose("get", "peek"), PhoneUseRouting.FOREGROUND_TOOL);
         check(tool != null, "foreground native tool unavailable");
         AtomicBoolean monitor = new AtomicBoolean(false);
         AtomicReference<Throwable> notificationFailure = new AtomicReference<>();

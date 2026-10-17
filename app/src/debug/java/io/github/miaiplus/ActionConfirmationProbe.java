@@ -27,9 +27,9 @@ final class ActionConfirmationProbe {
 
     static String run(Context context, ClassLoader loader) throws Exception {
         cancelled = false;
-        Object registry = Reflector.getStaticObjectField(Reflector.findClass("com.aios.osbot.tools.ToolRegistry", loader), "instance");
+        Object registry = NativePhoneUseTool.registry(context, loader);
         check(registry != null, "native registry unavailable");
-        Object tool = call(registry, "get", PhoneUseRouting.FOREGROUND_TOOL);
+        Object tool = call(registry, HostCompatibility.choose("get", "peek"), PhoneUseRouting.FOREGROUND_TOOL);
         check(tool != null, "foreground native tool unavailable");
         Thread worker = null;
         PendingIntent priorAllow = null, priorDeny = null;

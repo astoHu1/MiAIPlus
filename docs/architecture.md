@@ -22,6 +22,16 @@ flowchart TD
   A <--> E
 ```
 
+## 小爱精确版本适配
+
+`HostCompatibility` 同时检查 versionName 与 versionCode，只接受 8.2.65.4714（508002065）和 8.3.30.4420（508003030）。通过门禁后按当前 APK 选择绑定；没有按版本前缀放行、运行时猜测混淆类或跨版本回退。下文未特别标注的旧混淆名称作为 8.2.65 绑定键保留，`Reflector` 对宿主 ClassLoader 查类时转到对应的新名称。
+
+8.3.30 的主要绑定为 `rs.a` PromptBuilder、`dn.c` DynLlmClient、`dn.i/j/b` 三种直接客户端、`hn.k` Taiyi、`fn.a` 模型配置、`sp.j` 记忆、`ur.e0` HTTP getter、`rm1.f0.B/D` 普通文字发送／路由。新模型配置多一个 `sendTopP`，替换时保留原请求的该字段；外部连接仍使用模块独立干净客户端。新版能力分类以 `prompt_source=cloud` 请求小米服务端注入提示；改接外部服务时补充本地 `user_intent`／`required_capabilities` 分类 schema，并移除该私有字段，保留主 Agent 的工具选择与执行边界。
+
+新版 ToolRegistry 由依赖注入管理，不再提供静态 instance、registerSystem 或 systemToolNames。模块通过实例构造与工具查询入口向实际注册表注册两个代理，并在缓存淘汰后查询时补回；重载清理已接触实例的两个工具，不修改宿主其他工具。旧版继续使用原注册方式。新版浮窗使用 `cf1.f1` / HyperPopupMenu，在原可见性处理之后、菜单复制之前替换回答模式子项；其检查数组、选择回调与资源 ID 按版本选择。全屏页面启动签名、浮窗窗口挂载和显示方法也分别绑定。
+
+新版主聊天页为 `MainNavigatorActivity`，普通 `onNewIntent` 不再直接消费旧会话 extra。模块生成的返回 Intent 显式标记自己的导航请求，在页面初始化后调用原生 `navigateToDetail`；无话题入口调用原生主对话导航。任务运行及静默窗口内不导航，完成通知通过本任务 token 解除静默。导航数据在宿主异步消费 Intent 前捕获，页面回调由 `InteractionUi` 跟踪，重载时一并清理；首次对话定位、独立 PendingIntent 和跨工具步绑定保持不变。
+
 ## 默认官方模型控屏
 
 `NativeSession` 在模块 UID 维护四分钟以内的会话、最近观察、最大步数和停止状态。首次请求返回 `CONTINUE`、会话号和观察；模型可调用注册到原生 ToolRegistry 的两个函数：`miaiplus_phone_use` 前台控屏、`miaiplus_background_phone_use` 虚拟屏控屏。首次通过所选工具提交 `goal`，后续沿用同一工具提交 `session` 和 `action`；两者不受兼容入口默认屏幕开关影响；兼容入口接收 `MIAIPLUS:{session,action}`。结构化函数默认按实际 JPEG 像素接收坐标，也支持显式物理屏幕像素与0..1000；统一换算后再交给执行器。旧入口默认归一化坐标。结构化函数只在启用本机原生规划时加入模型工具列表，执行时再次校验配置。每步只执行一个数据动作，之后重新观察。对包含模块 CONTINUE 和截图 token 的 ToolResult.Success，清除直接答案标记与内部 CLI 直接答案 metadata，确保原 Agent 把中间观察回送模型；其他工具结果保持原行为。结束/接管显式关闭会话。
@@ -43,6 +53,8 @@ flowchart TD
 ## 原聊天入口的外部模型推理档位
 
 `NativeReasoningHook` 只在 `globalModel` 开启时接管三套原生入口：`StandardEditInputView` 的模式 popup、全屏 `FunctionBarView` 的模式 popup，以及电源键唤醒等非全屏界面 `FloatStateMorePopup`（`zd1.b0`）的“＋ → 回答模式”子菜单。浮窗在原菜单可见性处理后、Miuix 复制菜单前替换子项，并按模型档位生成 `preCheckSecondaryItem` 的选中数组；其他附件／输入切换入口沿用原逻辑。原生 AUTO/QUICK/EXPERT 枚举、回调和持久化保持原状；外部选择经 UID 校验的 `set_reasoning` IPC 写入模块私有配置，以 endpoint/model/api 的摘要分别存储。写入前校验当前模型身份与有效档位，拒绝过期菜单写入。关闭外部模式时原菜单照常执行；热重载清理浮窗和弱引用的菜单配置快照。
+
+8.3.30 的全屏入口保留原生 `FunctionModePopup`／`HyperPopupMenu`，仅在工厂同步调用期间替换档位、选中状态与保存回调。继续使用宿主原生定位、不抢键盘焦点、弹出／收回动画及配置变更清理；热重载先释放外部选择回调并收起菜单。8.2.65 的全屏入口和普通输入栏仍使用原有弹窗路径。
 
 `ReasoningPolicy` 为已确认模型提供不同档位，未知名称只允许默认，不推测任意网关能力。独立 `ModelClient` 与原生隔离客户端均在最终线上请求阶段注入参数；Responses 用 `reasoning.effort`，Chat 使用已确认的标准或服务扩展字段。隔离客户端按协议及档位缓存，每次新建请求按当时选择取得客户端，不在协程异步发送期间读取共享线程局部状态。清除原生 enableThinking 布尔值的影响；模型默认不继承小爱原模式所产生的关闭思考参数。原 Responses 适配器同时承担 Chat 请求的思考参数注入；Chat 响应保持原样解析。
 

@@ -169,17 +169,20 @@ final class ReplyActionsProbe {
             hooks.addAll(io.github.miaiplus.hook.Hooks.hookAllConstructors(Reflector.findClass("sm.b$a", loader), new io.github.miaiplus.hook.HookCallback() {
                 @Override protected void afterHookedMethod(MethodHookParam p) { errors.incrementAndGet(); }
             }));
-            Class<?> card = Reflector.findClass("com.xiaomi.voiceassistant.instruction.card.stream.c", loader);
-            for (var method : card.getDeclaredMethods()) {
-                if (!method.getName().equals("i1") && !method.getName().equals("K1") && !method.getName().equals("g1")) continue;
-                hooks.add(io.github.miaiplus.hook.Hooks.hookMethod(method, new io.github.miaiplus.hook.HookCallback() {
-                    @Override protected void afterHookedMethod(MethodHookParam p) {
-                        if (method.getName().equals("K1")) finishes.incrementAndGet();
-                        if (method.getName().equals("g1")) stopVisible = String.valueOf(Reflector.getStaticObjectField(card, "ca"));
-                        Object info = Reflector.getObjectField(p.thisObject, "X2");
-                        footer = info == null ? "no-metadata" : "wait=" + Reflector.callMethod(info, "isShouldWaitCardFinish");
-                    }
-                }));
+            // Legacy card counters are optional diagnostics; native stream and visible controls remain required.
+            if (!HostCompatibility.modern()) {
+                Class<?> card = Reflector.findClass("com.xiaomi.voiceassistant.instruction.card.stream.c", loader);
+                for (var method : card.getDeclaredMethods()) {
+                    if (!method.getName().equals("i1") && !method.getName().equals("K1") && !method.getName().equals("g1")) continue;
+                    hooks.add(io.github.miaiplus.hook.Hooks.hookMethod(method, new io.github.miaiplus.hook.HookCallback() {
+                        @Override protected void afterHookedMethod(MethodHookParam p) {
+                            if (method.getName().equals("K1")) finishes.incrementAndGet();
+                            if (method.getName().equals("g1")) stopVisible = String.valueOf(Reflector.getStaticObjectField(card, "ca"));
+                            Object info = Reflector.getObjectField(p.thisObject, "X2");
+                            footer = info == null ? "no-metadata" : "wait=" + Reflector.callMethod(info, "isShouldWaitCardFinish");
+                        }
+                    }));
+                }
             }
             for (var method : Reflector.findClass("g51.a", loader).getDeclaredMethods()) {
                 if (!method.getName().equals("buildResultOperationInfo")) continue;
@@ -206,14 +209,15 @@ final class ReplyActionsProbe {
         });
         for (var constructor : Reflector.findClass("com.aios.osbot.tools.ExecutionContext", loader).getConstructors()) {
             Class<?>[] types = constructor.getParameterTypes();
-            if (types.length != 34 || !types[33].getName().equals("kotlin.jvm.internal.DefaultConstructorMarker")) continue;
+            if (types.length != (HostCompatibility.modern() ? 36 : 34) || !types[types.length - 1].getName().equals("kotlin.jvm.internal.DefaultConstructorMarker")) continue;
             Object[] values = new Object[types.length];
             for (int i = 0; i < types.length; i++) {
                 if (types[i] == boolean.class) values[i] = false;
                 else if (types[i] == int.class) values[i] = 0;
                 else if (types[i] == long.class) values[i] = 0L;
             }
-            values[0] = "miaiplus-local-probe"; values[1] = scoped; values[4] = permission; values[32] = ~0x13;
+            values[0] = "miaiplus-local-probe"; values[1] = scoped; values[4] = permission; values[types.length - (HostCompatibility.modern() ? 3 : 2)] = ~0x13;
+            if (HostCompatibility.modern()) values[34] = -1;
             return constructor.newInstance(values);
         }
         throw new AssertionError("pinned execution context constructor unavailable");
@@ -224,7 +228,7 @@ final class ReplyActionsProbe {
         do {
             if (MainThread.call(() -> {
                 Activity activity = activity();
-                if (activity == null || !activity.getClass().getName().equals("com.xiaomi.voiceassistant.TabHostMainActivity")) return false;
+                if (activity == null || !activity.getClass().getName().equals(HostCompatibility.chatActivity())) return false;
                 Object page = Reflector.callMethod(activity, "getPageNavigationData");
                 Object info = page == null ? null : Reflector.callMethod(page, "getTopicGroupInfo");
                 Object ui = Reflector.callStaticMethod(Reflector.findClass("com.xiaomi.voiceassistant.UiManager", loader), "getInstance", context);
@@ -247,8 +251,7 @@ final class ReplyActionsProbe {
         MainThread.call(() -> { context.startActivity(intent); return null; });
     }
     private static Intent route(Context context, Object page) {
-        return new Intent().setClassName(context.getPackageName(), "com.xiaomi.voiceassistant.TabHostMainActivity")
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).putExtra("page_navigation_data", (Parcelable)page);
+        return ConversationReturn.route(context, page);
     }
     private interface Call { Object invoke(Object continuation); }
     private static Object suspend(ClassLoader loader, Call call) throws Exception {

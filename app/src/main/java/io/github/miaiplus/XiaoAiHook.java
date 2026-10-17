@@ -12,7 +12,7 @@ import io.github.miaiplus.hook.Reflector;
 
 import java.lang.reflect.Method;
 
-/** Compatibility profile: XiaoAi 8.2.65.4714, versionCode 508002065. */
+/** Exact-version XiaoAI integration; bindings are selected before installing any host hooks. */
 public final class XiaoAiHook extends XposedModule {
     private static final java.util.List<HookCallback.Unhook> installed = new java.util.ArrayList<>();
     private static Context context;
@@ -49,11 +49,13 @@ public final class XiaoAiHook extends XposedModule {
         context = application;
         try {
             var info = context.getPackageManager().getPackageInfo("com.miui.voiceassist", 0);
-            if (info.getLongVersionCode() != 508002065L || !"8.2.65.4714".equals(info.versionName)) {
-                report("unsupported: " + info.versionName); return;
+            if (!HostCompatibility.select(info.versionName, info.getLongVersionCode())) {
+                report("unsupported: " + info.versionName + " (" + info.getLongVersionCode() + ")"); return;
             }
             install(loader);
         } catch (Throwable failure) {
+            Hooks.log(failure);
+            android.util.Log.e("MiAIPlus", "Host hook initialization failed", failure);
             Hooks.unhookAll(); installed.clear();
             if (interaction != null && !interaction.isRunning()) try { interaction.dispose(); } catch (Exception ignored) { }
             report("hook failed, rolled back: " + failure.getClass().getSimpleName());

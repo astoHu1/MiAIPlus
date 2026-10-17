@@ -37,6 +37,7 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
     private final Context receiverContext;
     private final ClassLoader loader;
     private final Handler main = new Handler(Looper.getMainLooper());
+    private final java.util.Map<View, Runnable> returnNavigations = new java.util.HashMap<>();
     private WeakReference<Activity> resumed = new WeakReference<>(null);
     private ActivityManager.AppTask originTask;
     private PendingIntent returnIntent;
@@ -150,16 +151,24 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
         // navigation data even during the short window that suppresses old tool-result UI updates.
         for (String method : new String[]{"onCreate", "onNewIntent"}) {
             try {
-                Reflector.findAndHookMethod("com.xiaomi.voiceassistant.TabHostMainActivity", loader, method,
+                Reflector.findAndHookMethod(HostCompatibility.chatActivity(), loader, method,
                     method.equals("onCreate") ? Bundle.class : Intent.class, new HookCallback() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) throws Exception {
                             Intent intent = method.equals("onCreate") ? ((Activity)p.thisObject).getIntent() : (Intent)p.args[0];
                             if (!running && intent != null && returnToken != null
                                 && returnToken.equals(intent.getStringExtra(RETURN_TOKEN))) userEnteredHost();
                         }
+                        @Override protected void afterHookedMethod(MethodHookParam p) {
+                            Activity activity = (Activity)p.thisObject;
+                            Intent intent = method.equals("onCreate") ? activity.getIntent() : (Intent)p.args[0];
+                            if (HostCompatibility.modern() && !hostQuiet()) {
+                                Runnable navigation = ConversationReturn.navigation(activity, intent, loader);
+                                if (navigation != null) queueReturnNavigation(activity, navigation);
+                            }
+                        }
                     });
             } catch (RuntimeException missing) {
-                missingGuards.add("com.xiaomi.voiceassistant.TabHostMainActivity." + method);
+                missingGuards.add(HostCompatibility.chatActivity() + "." + method);
             }
         }
         // Shortcut wake-up uses a system window, without a resumed FloatActivity.
@@ -181,12 +190,14 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
         // bridge works only as long as nothing calls the real method directly. Q is the actual 1080-instruction
         // startImpl that every UiManager.start overload funnels into.
         guard(loader, "com.xiaomi.voiceassistant.mainui.c4", "Q", new Class<?>[]{Intent.class});
-        guard(loader, "com.xiaomi.voiceassistant.TabHostMainActivity$a", "g", new Class<?>[]{
-            Context.class, String.class, boolean.class, boolean.class, Bundle.class,
-            Reflector.findClass("com.xiaomi.voiceassistant.data.model.PageNavigationData", loader), boolean.class});
-        guard(loader, "com.xiaomi.voiceassistant.LaunchHomeRouterActivity", "N", new Class<?>[]{});
-        guard(loader, "com.xiaomi.voiceassistant.LaunchHomeRouterActivity", "L", new Class<?>[]{String.class});
-        for (String method : new String[]{"X0", "removeWindows"}) Reflector.findAndHookMethod("com.xiaomi.voiceassistant.widget.s1", loader, method, new HookCallback() {
+        guard(loader, "com.xiaomi.voiceassistant.TabHostMainActivity$a", HostCompatibility.choose("g", "l"),
+            HostCompatibility.modern() ? new Class<?>[]{Context.class, String.class, boolean.class, boolean.class, Bundle.class,
+                Reflector.findClass("com.xiaomi.voiceassistant.data.model.PageNavigationData", loader), boolean.class, boolean.class}
+                : new Class<?>[]{Context.class, String.class, boolean.class, boolean.class, Bundle.class,
+                    Reflector.findClass("com.xiaomi.voiceassistant.data.model.PageNavigationData", loader), boolean.class});
+        guard(loader, "com.xiaomi.voiceassistant.LaunchHomeRouterActivity", HostCompatibility.choose("N", "U"), new Class<?>[]{});
+        guard(loader, "com.xiaomi.voiceassistant.LaunchHomeRouterActivity", HostCompatibility.choose("L", "M"), new Class<?>[]{String.class});
+        for (String method : new String[]{HostCompatibility.choose("X0", "l1"), "removeWindows"}) Reflector.findAndHookMethod("com.xiaomi.voiceassistant.widget.s1", loader, method, new HookCallback() {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
                 if (overlayHidden && p.thisObject == overlayManager) p.setResult(null);
             }
@@ -196,15 +207,29 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
                 if (overlayHidden && p.thisObject == overlayManager && p.getResult() instanceof WindowManager.LayoutParams params) hideWindowParams(params);
             }
         });
-        for (String method : new String[]{"O2", "enableWindowTouchEvent"}) {
+        for (String method : new String[]{HostCompatibility.choose("O2", "o3"), "enableWindowTouchEvent"}) {
             HookCallback callback = new HookCallback() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     if (overlayHidden && p.thisObject == overlayManager) p.args[0] = false;
                 }
             };
-            if (method.equals("O2")) Reflector.findAndHookMethod("com.xiaomi.voiceassistant.widget.s1", loader, method, boolean.class, boolean.class, callback);
+            if (!method.equals("enableWindowTouchEvent")) Reflector.findAndHookMethod("com.xiaomi.voiceassistant.widget.s1", loader, method, boolean.class, boolean.class, callback);
             else Reflector.findAndHookMethod("com.xiaomi.voiceassistant.widget.s1", loader, method, boolean.class, callback);
         }
+    }
+    private void queueReturnNavigation(Activity activity, Runnable restore) {
+        View root = activity.getWindow().getDecorView();
+        Runnable previous = returnNavigations.remove(root);
+        if (previous != null) root.removeCallbacks(previous);
+        Runnable navigation = new Runnable() {
+            @Override public void run() {
+                returnNavigations.remove(root, this);
+                if (!hostQuiet()) restore.run();
+            }
+        };
+        returnNavigations.put(root, navigation);
+        // Decor posting follows native page initialization; retain ownership for hot-reload cleanup.
+        root.post(navigation);
     }
     /** Capture once for the whole native multi-call session, never for individual continuation steps. */
     void begin(String taskId) throws Exception {
@@ -552,6 +577,8 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
         releaseOverlay();
         clearConsentActions();
         main.removeCallbacksAndMessages(null);
+        returnNavigations.forEach(View::removeCallbacks);
+        returnNavigations.clear();
         app.unregisterActivityLifecycleCallbacks(this); receiverContext.unregisterReceiver(stop);
         app.getSystemService(NotificationManager.class).cancel(NOTIFICATION);
         resumed.clear(); overlayManager = null; overlayRoot = null; returnIntent = null; returnToken = null; originTask = null; return null;

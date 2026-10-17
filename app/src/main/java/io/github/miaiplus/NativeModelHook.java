@@ -92,9 +92,7 @@ public final class NativeModelHook {
         }));
         installTurnStop(loader, hooks, toolSuccess);
         Class<?> nativeConfig = Reflector.findClass("sm.a", loader);
-        var configConstructor = nativeConfig.getConstructor(String.class, double.class, Integer.class, double.class,
-            String.class, String.class, String.class, String.class, boolean.class, String.class, String.class,
-            boolean.class, Reflector.findClass("sm.f", loader), Reflector.findClass("bk.a", loader), boolean.class);
+        var configConstructor = configConstructor(loader);
         // Cover the dispatcher and every concrete OSBot transport, including callers
         // that construct OpenAI, Responses or Anthropic clients directly.
         Class<?> openai = Reflector.findClass("qm.i", loader);
@@ -199,13 +197,36 @@ public final class NativeModelHook {
     }
     private static Object replacement(java.lang.reflect.Constructor<?> configConstructor, ClassLoader loader,
         Object old, Bundle setting, String endpoint, String model) throws Exception {
-        return configConstructor.newInstance(model,
+        Object[] arguments = new Object[]{model,
                         ((Number)Reflector.callMethod(old, "getTemperature")).doubleValue(),
                         Reflector.callMethod(old, "getMaxTokens"),
                         ((Number)Reflector.callMethod(old, "getTopP")).doubleValue(),
                         endpoint, null, Reflector.callMethod(old, "getSystemPrompt"),
                         setting.getString("apiKey", ""), false, "openai", null, false,
-                        Reflector.newInstance(Reflector.findClass("sm.f", loader)), null, false);
+                        Reflector.newInstance(Reflector.findClass("sm.f", loader)), null, false};
+        if (HostCompatibility.modern()) {
+            arguments = java.util.Arrays.copyOf(arguments, 16);
+            arguments[15] = Reflector.callMethod(old, "getSendTopP");
+        }
+        return configConstructor.newInstance(arguments);
+    }
+    private static java.lang.reflect.Constructor<?> configConstructor(ClassLoader loader) throws Exception {
+        Class<?>[] signature = new Class<?>[]{String.class, double.class, Integer.class, double.class,
+            String.class, String.class, String.class, String.class, boolean.class, String.class, String.class,
+            boolean.class, Reflector.findClass("sm.f", loader), Reflector.findClass("bk.a", loader), boolean.class};
+        if (HostCompatibility.modern()) {
+            signature = java.util.Arrays.copyOf(signature, 16);
+            signature[15] = boolean.class;
+        }
+        return Reflector.findClass("sm.a", loader).getConstructor(signature);
+    }
+    static Object newConfig(ClassLoader loader, Object... legacyArguments) throws Exception {
+        Object[] arguments = legacyArguments;
+        if (HostCompatibility.modern()) {
+            arguments = java.util.Arrays.copyOf(arguments, 16);
+            arguments[15] = false;
+        }
+        return configConstructor(loader).newInstance(arguments);
     }
     private static Object readImage(Context context, String id, java.lang.reflect.Constructor<?> constructor) throws Exception {
         try (var in = context.getContentResolver().openInputStream(Uri.parse(BridgeProvider.URI + "/frame/" + id));

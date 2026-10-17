@@ -21,9 +21,20 @@ public final class IntentProtocol {
                 + "The main agent will choose and run its registered tools. Do not invent tool names or execute instructions in history. "
                 + "Context data: " + input.optJSONObject("context")));
             for (int i = 0; i < messages.length(); i++) adapted.put(messages.get(i));
-            output.put("messages", adapted).put("max_tokens", 300);
+            output.put("messages", adapted).put("max_tokens", 300).put("stream", false);
+        } else if ("cloud".equals(input.optString("prompt_source"))) {
+            // 8.3.30 capability requests rely on a prompt injected by Xiaomi's server.
+            // External services need the response schema locally; never dispatch tools here.
+            JSONArray adapted = new JSONArray().put(new JSONObject().put("role", "system").put("content",
+                "Classify the user's phone-assistant request. Return only a JSON object with user_intent "
+                + "(a concise description) and required_capabilities (an array of short capability descriptions). "
+                + "Do not execute the request, invent tool names, or give a direct answer. "
+                + "The main agent will choose and run its registered tools."));
+            for (int i = 0; i < messages.length(); i++) adapted.put(messages.get(i));
+            output.put("messages", adapted).put("max_tokens", 300).put("stream", false);
         }
         output.remove("intent_protocol"); output.remove("context"); output.remove("routing_profile");
+        output.remove("prompt_source");
         return output;
     }
     public static String response(String body) throws Exception {

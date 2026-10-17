@@ -12,7 +12,7 @@ import java.util.List;
 public final class Reflector {
     private Reflector() {}
     public static Class<?> findClass(String name, ClassLoader loader) {
-        try { return Class.forName(name, false, loader); }
+        try { return Class.forName(loader == null ? name : io.github.miaiplus.HostCompatibility.name(name), false, loader); }
         catch (ClassNotFoundException e) { throw new IllegalArgumentException("Missing host class: " + name, e); }
     }
     public static HookCallback.Unhook findAndHookMethod(String name, ClassLoader loader, String method, Object... signature) {

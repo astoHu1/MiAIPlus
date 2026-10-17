@@ -28,6 +28,17 @@ public final class IntentProtocolTest {
         assertEquals("FALLBACK", message.getString("status")); assertFalse(message.getBoolean("direct_path"));
         assertFalse(message.has("tool_name")); assertEquals(9, result.getJSONObject("usage").getInt("prompt_tokens"));
     }
+    @Test public void suppliesLocalCapabilitySchemaForCloudPromptRequests() throws Exception {
+        JSONObject result = IntentProtocol.request("{\"prompt_source\":\"cloud\",\"rid\":\"private\",\"messages\":[{\"role\":\"user\",\"content\":\"task\"}]}", "chosen");
+        var messages = result.getJSONArray("messages");
+        assertEquals("system", messages.getJSONObject(0).getString("role"));
+        assertTrue(messages.getJSONObject(0).getString("content").contains("required_capabilities"));
+        assertEquals("task", messages.getJSONObject(1).getString("content"));
+        assertFalse(result.has("prompt_source"));
+        assertFalse(result.has("rid"));
+        assertEquals(300, result.getInt("max_tokens"));
+        assertFalse(result.getBoolean("stream"));
+    }
     @Test(expected = org.json.JSONException.class) public void rejectsInvalidRoutingContent() throws Exception {
         IntentProtocol.response("{\"choices\":[{\"message\":{\"content\":\"not a decision\"}}]}");
     }

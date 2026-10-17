@@ -5,6 +5,7 @@ Never logs request content, images, or Authorization headers.
 import json
 import re
 import time
+import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -96,11 +97,14 @@ class Handler(BaseHTTPRequestHandler):
             assert request["model"] == expected_model, "wrong API path for selected fixture model"
             messages = request["messages"]
             task = next(m["content"] for m in messages if m["role"] == "user")
-            if task in ("MIAIPLUS_GATE_TEST", "MIAIPLUS_CAPABILITY_TEST", "MIAIPLUS_ROUTER_TEST"):
+            if task in ("MIAIPLUS_GATE_TEST", "MIAIPLUS_CAPABILITY_TEST", "MIAIPLUS_CAPABILITY_V2_TEST", "MIAIPLUS_ROUTER_TEST"):
                 assert request["model"] == expected_model and request["stream"] is False
-                assert not any(k in request for k in ("rid", "intent_protocol", "routing_profile", "context"))
-                assert messages[0]["role"] == "system"
+                assert not any(k in request for k in ("rid", "intent_protocol", "routing_profile", "context", "prompt_source"))
+                assert messages[0]["role"] == "system", "system role missing for " + task
+                if task == "MIAIPLUS_CAPABILITY_V2_TEST":
+                    assert "required_capabilities" in messages[0]["content"], "capability response schema missing"
                 content = {"MIAIPLUS_GATE_TEST": "gate-ok", "MIAIPLUS_CAPABILITY_TEST": "capability-ok",
+                           "MIAIPLUS_CAPABILITY_V2_TEST": '{"user_intent":"fixture intent","required_capabilities":["fixture capability"]}',
                            "MIAIPLUS_ROUTER_TEST": '{"status":"FALLBACK","direct_path":false,"difficulty":"easy","reason":"fixture route"}'}[task]
                 self.respond({"choices": [{"message": {"role": "assistant", "content": content}}]})
                 return
@@ -182,7 +186,8 @@ class Handler(BaseHTTPRequestHandler):
                     message = {"role": "assistant", "content": f"<answer>{text}</answer>"}
             self.respond({"choices": [{"message": message}]})
         except Exception as e:
-            print("fixture failure:", type(e).__name__, str(e), flush=True)
+            line = traceback.extract_tb(e.__traceback__)[-1].lineno
+            print("fixture failure:", type(e).__name__, f"line={line}", str(e), flush=True)
             self.respond({"error": "invalid fixture request"}, 400)
 
 
