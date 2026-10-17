@@ -12,9 +12,9 @@
 
 ## 开始使用
 
-1. 安装 APK，在 LSPosed 启用 MiAIPlus，作用域只选超级小爱 `com.miui.voiceassist`。
+1. 安装 APK，在 LSPosed 启用 MiAIPlus，保持默认作用域。
 2. 打开 MiAIPlus，开启控屏工具，并在系统无障碍设置中启用 MiAIPlus。
-3. 控屏规划保持“小爱当前模型”，API 配置可以全部留空。小米系统如无法打开其他应用，请允许 MiAIPlus“后台弹出界面”。
+3. 控屏规划保持“小爱当前模型”，API 配置可以全部留空。如无法打开其他应用，请允许 MiAIPlus“后台弹出界面”。
 4. 重启小爱，在聊天中提出具体任务，例如“打开计算器，清空当前结果”。
 
 操作中可展开通知岛停止任务；结束后点击完成通知返回原对话。敏感操作可能需要确认或手动接管。
@@ -44,6 +44,13 @@
 试用 APK：`app/build/outputs/apk/preview/app-preview.apk`。Preview 为优化开销后的开发签名版本。Debug请勿使用。
 
 GitHub Actions 在 main 推送、PR 和手动触发时执行测试、Lint 与构建；成功后在该次运行的 **Artifacts** 下载 APK、源码包和校验文件。
+
+## TODO
+- 在模型耗尽步数/Phone Use遇到错误后返回合适的错误信息
+- 优化Phone Use的工作效率
+- 为虚拟屏添加更多画布分辨率支持
+- 减少错误提示的Phone Use失败灵动岛事件
+- You tell me
 
 ## 更多说明
 
