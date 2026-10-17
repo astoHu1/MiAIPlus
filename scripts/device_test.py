@@ -11,9 +11,17 @@ def adb(*args):
 process = subprocess.Popen(['adb', 'shell', 'am', 'instrument', '--user', '0', '-w', '-e', 'hook', str('--hook' in sys.argv).lower(),
     '-e', 'profiles', str('--profiles' in sys.argv).lower(),
     '-e', 'api', 'responses' if '--responses' in sys.argv else 'chat',
+    '-e', 'reply_actions', str('--reply-actions' in sys.argv or '--reply-actions-chat' in sys.argv or '--reply-actions-current-config' in sys.argv).lower(),
+    '-e', 'reply_actions_api', 'chat' if '--reply-actions-chat' in sys.argv else 'responses',
+    '-e', 'reply_actions_current_config', str('--reply-actions-current-config' in sys.argv).lower(),
     '-e', 'reasoning', str('--reasoning' in sys.argv).lower(),
     '-e', 'focus', str('--focus' in sys.argv).lower(),
     '-e', 'launch', str('--launch' in sys.argv).lower(),
+    '-e', 'scroll', str('--scroll' in sys.argv).lower(),
+    '-e', 'robust_screen', str('--robust-screen' in sys.argv).lower(),
+    '-e', 'conversation_return', str('--conversation-return' in sys.argv).lower(),
+    '-e', 'dual_tools', str('--dual-tools' in sys.argv).lower(),
+    '-e', 'foreground_consent', str('--foreground-consent' in sys.argv).lower(),
     'io.github.miaiplus.test/io.github.miaiplus.DeviceTestRunner'], stdout=subprocess.PIPE,
     stderr=subprocess.STDOUT, text=True, bufsize=1)
 passed = False
@@ -35,7 +43,8 @@ try:
             adb('shell', 'settings', 'put', 'secure', 'enabled_accessibility_services', ':'.join(services))
             if '--no-restart' not in sys.argv:
                 adb('shell', 'am', 'force-stop', 'com.miui.voiceassist')
-            adb('shell', 'am', 'start', '-W', '-n', 'io.github.miaiplus/.FixtureActivity')
+            fixture = 'RobustFixtureActivity' if '--robust-screen' in sys.argv else 'FixtureActivity'
+            adb('shell', 'am', 'start', '-W', '-n', 'io.github.miaiplus/.' + fixture)
             adb('shell', 'am', 'start', '-W', '-n', 'com.miui.voiceassist/com.xiaomi.voiceassistant.LaunchHomeRouterActivity')
             if '--popup' in sys.argv:
                 adb('shell', 'am', 'start', '-W', '-n', 'io.github.miaiplus/.FixtureActivity')

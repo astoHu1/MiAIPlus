@@ -69,7 +69,8 @@ public final class NativeModelHook {
             List.class, List.class, boolean.class, String.class, boolean.class);
         hooks.add(Hooks.hookMethod(successConstructor, new HookCallback() {
             @Override protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                if (!(param.args[0] instanceof String text) || !text.contains("CONTINUE：控屏尚未完成。")) return;
+                if (!(param.args[0] instanceof String text)) return;
+                if (!text.contains("CONTINUE：控屏尚未完成。")) return;
                 var marker = FRAME.matcher(text);
                 if (marker.find()) {
                     try {
@@ -89,6 +90,7 @@ public final class NativeModelHook {
                 }
             }
         }));
+        installTurnStop(loader, hooks, toolSuccess);
         Class<?> nativeConfig = Reflector.findClass("sm.a", loader);
         var configConstructor = nativeConfig.getConstructor(String.class, double.class, Integer.class, double.class,
             String.class, String.class, String.class, String.class, boolean.class, String.class, String.class,
@@ -171,6 +173,27 @@ public final class NativeModelHook {
                     try { p.setResult(cleanHttp(loader, memorySettings.get())); }
                     catch (Throwable failure) { p.setThrowable(new IllegalStateException("外部记忆推理连接初始化失败", failure)); }
                 }
+            }
+        }));
+    }
+    /** The pinned host consumes this decision for every result, including mixed parallel-tool batches. */
+    private static void installTurnStop(ClassLoader loader, List<HookCallback.Unhook> hooks, Class<?> success)
+        throws Exception {
+        Class<?> context = Reflector.findClass("hj.e", loader);
+        Class<?> continuation = Reflector.findClass("kotlin.coroutines.Continuation", loader);
+        Object stop = Reflector.getStaticObjectField(Reflector.findClass("oj.b", loader), "STOP");
+        Object stopAfterTool = Reflector.newInstance(Reflector.findClass("kj.i$b", loader), stop);
+        Method gate = Reflector.findClass("kj.g", loader).getDeclaredMethod("evalShouldStopAfterTool", context,
+            Reflector.findClass("com.aios.osbot.agent.model.ToolCall", loader),
+            Reflector.findClass("com.aios.osbot.tools.ToolResult", loader), continuation);
+        hooks.add(Hooks.hookMethod(gate, new HookCallback() {
+            @Override protected void beforeHookedMethod(MethodHookParam p) {
+                if (!success.isInstance(p.args[2])) return;
+                String text = (String)Reflector.callMethod(p.args[2], "getResult");
+                if (!ForegroundConsent.endsNativeTurn(text)) return;
+                String name = (String)Reflector.callMethod(p.args[1], "getName");
+                Object arguments = Reflector.callMethod(p.args[1], "getArguments");
+                if (ForegroundConsent.endsNativeToolTurn(name, String.valueOf(arguments), text)) p.setResult(stopAfterTool);
             }
         }));
     }

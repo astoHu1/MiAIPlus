@@ -78,10 +78,7 @@ public final class ScreenService extends AccessibilityService {
         hideControls();
     }
     private <T> T onMain(Callable<T> callable) throws Exception {
-        if (Looper.myLooper() == Looper.getMainLooper()) return callable.call();
-        CompletableFuture<T> f = new CompletableFuture<>();
-        main.post(() -> { try { f.complete(callable.call()); } catch (Throwable e) { f.completeExceptionally(e); } });
-        return f.get(5, TimeUnit.SECONDS);
+        return MainThread.call(callable);
     }
     private void unlocked(RunState run) {
         run.check();
@@ -140,7 +137,7 @@ public final class ScreenService extends AccessibilityService {
                         || window.getType() == android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) continue;
                     AccessibilityNodeInfo root = window.getRoot();
                     if (root == null || !root.refresh()) continue;
-                    if (!expectedPackage.isEmpty() && expectedPackage.equals(String.valueOf(root.getPackageName()))) {
+                    if (matchesPackage(expectedPackage, root)) {
                         StringBuilder builder = new StringBuilder();
                         service.dump(root, builder, new int[]{0});
                         return builder.toString();
@@ -158,51 +155,150 @@ public final class ScreenService extends AccessibilityService {
     }
 
     /**
-     * Types into the editable node on the target display and reports whether a node accepted the text.
+     * Types into the editable node on the target display and reports whether the text is now in that node.
      *
      * <p>Chinese cannot travel through {@code input text}, and borrowing the physical screen's input focus would
      * type into whatever the user is doing. So the text goes to the target display's own editable node, and a
-     * password field is refused. {@code false} means no editable node was found, which the caller reports as an
-     * unsupported action rather than silently typing somewhere else.
+     * password field is refused. {@code false} means no focused editable node was found or verified, which the
+     * caller reports as an unsupported action rather than silently typing somewhere else.
+     *
+     * <p>The result is the text read back off the node, not the node's answer to the request.
+     * {@code performAction} returning true means the request was accepted, which an app may accept and then not
+     * apply — the action can be handled by a listener that rewrites, rejects or reformats the value. Reporting
+     * acceptance as success would let the agent believe it typed something that never appeared, so the value is
+     * read back from the node and compared. When the tree cannot be read at all the action fails rather than
+     * claiming an unverifiable success.
      */
     static boolean setTextOnDisplay(int displayId, String expectedPackage, String text) {
         ScreenService service = instance;
         if (service == null) return false;
         try {
-            return service.onMain(() -> {
+            EditableTarget edited = service.onMain(() -> {
                 java.util.List<android.view.accessibility.AccessibilityWindowInfo> windows = null;
                 try {
                     var byDisplay = service.getWindowsOnAllDisplays();
                     if (byDisplay != null) windows = byDisplay.get(displayId);
                 } catch (RuntimeException unsupported) {
-                    return false;
+                    return null;
                 }
-                if (windows == null) return false;
+                if (windows == null) return null;
                 for (var window : windows) {
                     if (window.getType() == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD
                         || window.getType() == android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) continue;
                     AccessibilityNodeInfo root = window.getRoot();
                     if (root == null || !root.refresh()) continue;
-                    if (!expectedPackage.isEmpty() && !expectedPackage.equals(String.valueOf(root.getPackageName()))) continue;
+                    if (!matchesPackage(expectedPackage, root)) continue;
                     AccessibilityNodeInfo target = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
-                    if (target == null || !target.isEditable()) target = findEditable(root);
-                    if (target == null || !target.isEditable() || target.isPassword()) continue;
+                    if (target == null || !target.isEditable() || target.isPassword()
+                        || !target.isVisibleToUser() || !matchesPackage(expectedPackage, target)) continue;
+                    EditableTarget identity = new EditableTarget(window.getId(), target);
                     Bundle arguments = new Bundle();
                     arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text);
-                    return target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments);
+                    return target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments) ? identity : null;
                 }
-                return false;
+                return null;
             });
+            if (edited == null) return false;
+            // The read runs outside the main thread and re-enumerates the display's windows every attempt. Two
+            // reasons, both learned from a write that landed but was reported as a failure: the window object is
+            // stale once the app rebuilds its hierarchy in response to the edit, and an edit is applied on the
+            // view's next frame rather than the moment it is accepted. Waiting here also keeps a sleep off the
+            // accessibility service's main thread, which an ANR would consume.
+            long deadline = android.os.SystemClock.uptimeMillis() + 1200;
+            while (true) {
+                if (textMatches(readTextOnDisplay(service, displayId, expectedPackage, edited), text)) return true;
+                if (android.os.SystemClock.uptimeMillis() >= deadline) return false;
+                Thread.sleep(80);
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            return false;
         } catch (Exception unavailable) {
             return false;
         }
     }
 
-    private static AccessibilityNodeInfo findEditable(AccessibilityNodeInfo node) {
-        if (node == null) return null;
-        if (node.isEditable() && node.isVisibleToUser()) return node;
+    /**
+     * The value in the original editable node and window, read from a fresh display enumeration.
+     *
+     * <p>Re-enumerated per call rather than reusing a window handle from before the edit, because that handle can
+     * go stale and then reports the pre-edit value.
+     */
+    private static EditableValue readTextOnDisplay(
+        ScreenService service, int displayId, String expectedPackage, EditableTarget edited) throws Exception {
+        return service.onMain(() -> {
+            java.util.List<android.view.accessibility.AccessibilityWindowInfo> windows = null;
+            try {
+                var byDisplay = service.getWindowsOnAllDisplays();
+                if (byDisplay != null) windows = byDisplay.get(displayId);
+            } catch (RuntimeException unsupported) {
+                return null;
+            }
+            if (windows == null) return null;
+            for (var window : windows) {
+                if (window.getId() != edited.windowId()) continue;
+                if (window.getType() == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD
+                    || window.getType() == android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) continue;
+                AccessibilityNodeInfo root = window.getRoot();
+                if (root == null || !root.refresh()) continue;
+                if (!matchesPackage(expectedPackage, root)) continue;
+                return readBackText(root, edited.node());
+            }
+            return null;
+        });
+    }
+
+    /**
+     * The text in the node that received the edit, even if the app has since focused a different field.
+     *
+     * <p>Node equality identifies the accessibility source node and window, rather than its text, bounds or view
+     * id (which can be shared by multiple fields). If rebuilding the page removes that identity, verification
+     * fails instead of reading another field that happens to have focus or the expected value.
+     */
+    private static EditableValue readBackText(AccessibilityNodeInfo root, AccessibilityNodeInfo original) {
+        AccessibilityNodeInfo node = findSameNode(root, original, new int[]{0});
+        if (node == null || !node.isEditable() || node.isPassword()) return null;
+        CharSequence value = node.getText();
+        return value == null ? new EditableValue(null, node.isEditable()) : new EditableValue(value.toString(), true);
+    }
+
+    /** A node's value plus whether the node itself was found, so "empty field" is not confused with "no field". */
+    private record EditableValue(String text, boolean present) { }
+
+    private record EditableTarget(int windowId, AccessibilityNodeInfo node) { }
+
+    /** Compares what was typed against what the node reports, treating an unreadable field as unverified. */
+    private static boolean textMatches(EditableValue actual, String expected) {
+        if (actual == null || !actual.present()) return false;
+        String read = actual.text();
+        // Formatting is not guessed: a retained suffix or non-empty value after clearing proves the requested
+        // replacement did not occur. A null reading remains unverified, including when clearing a field.
+        if (read == null) return false;
+        return read.equals(expected);
+    }
+
+    /**
+     * Whether a window root belongs to the expected application, accepting either a package or a component.
+     *
+     * <p>The helper reports the target display's foreground as a component ({@code pkg/activity}) because that is
+     * what the window dump carries, while a node root reports its package alone. Comparing the two directly never
+     * matches, which made every background observation look like "this ROM exposes no tree" and made typing fail
+     * on a page that had a perfectly good field. Normalised here so both forms are accepted.
+     */
+    private static boolean matchesPackage(String expected, AccessibilityNodeInfo root) {
+        if (expected.isEmpty()) return true;
+        String wanted = expected;
+        int slash = wanted.indexOf('/');
+        if (slash > 0) wanted = wanted.substring(0, slash);
+        return wanted.equals(String.valueOf(root.getPackageName()));
+    }
+
+    private static AccessibilityNodeInfo findSameNode(
+        AccessibilityNodeInfo node, AccessibilityNodeInfo original, int[] visited) {
+        if (node == null || visited[0]++ >= 1000) return null;
+        if (node.equals(original)) return node;
         for (int index = 0; index < node.getChildCount(); index++) {
-            AccessibilityNodeInfo found = findEditable(node.getChild(index));
+            AccessibilityNodeInfo found = findSameNode(node.getChild(index), original, visited);
             if (found != null) return found;
         }
         return null;
@@ -245,20 +341,43 @@ public final class ScreenService extends AccessibilityService {
         if (node.isVisibleToUser()) {
             Rect bounds = new Rect(); node.getBoundsInScreen(bounds);
             out.append(node.getClassName()).append(' ').append(bounds.toShortString());
-            if (node.isPassword()) out.append(" [password redacted]");
-            else {
-                if (node.getText() != null) out.append(" text=").append(node.getText());
-                if (node.getContentDescription() != null) out.append(" description=").append(node.getContentDescription());
-            }
+            out.append(" window=").append(node.getWindowId());
+            if (node.getViewIdResourceName() != null) out.append(" id=").append(node.getViewIdResourceName());
+            out.append(" enabled=").append(node.isEnabled());
             if (node.isClickable()) out.append(" clickable");
             if (node.isEditable()) out.append(" editable");
             if (node.isFocused()) out.append(" focused");
+            if (node.isPassword()) out.append(" [password redacted]");
+            else {
+                if (node.getText() != null) out.append(" text=").append(treeText(node.getText()));
+                if (node.getContentDescription() != null) out.append(" description=").append(treeText(node.getContentDescription()));
+            }
             out.append('\n');
         }
         for (int i = 0; i < node.getChildCount() && count[0] < 250; i++) {
             AccessibilityNodeInfo child = node.getChild(i);
             if (child != null) dump(child, out, count);
         }
+    }
+    private static String treeText(CharSequence text) {
+        return text.toString().replace("\\", "\\\\").replace("\r", "\\r").replace("\n", "\\n");
+    }
+
+    /** No input has been dispatched; the caller can return a new observation in the same session. */
+    static final class ObservationChanged extends Exception {
+        ObservationChanged() { super("动作目标已变化"); }
+    }
+
+    private void verifyActionTarget(Action action, Frame planned, AccessibilityNodeInfo root) throws Exception {
+        StringBuilder tree = new StringBuilder();
+        if (root != null) dump(root, tree, new int[]{0});
+        Rect bounds = getSystemService(WindowManager.class).getMaximumWindowMetrics().getBounds();
+        // This last main-thread check refreshes nodes immediately before dispatch. The full screenshot
+        // comparison already happened on the worker; do not take a blocking screenshot on the main thread.
+        Frame live = new Frame(planned.image(), tree.toString(), bounds.width(), bounds.height(),
+            root == null ? "" : String.valueOf(root.getPackageName()), planned.imageWidth(), planned.imageHeight(),
+            planned.displayId(), planned.generation());
+        if (!PageGuard.canExecute(action, planned, live)) throw new ObservationChanged();
     }
     private java.util.List<AppLaunchTarget> launchTargets() {
         java.util.List<AppLaunchTarget> entries = new java.util.ArrayList<>();
@@ -376,20 +495,27 @@ public final class ScreenService extends AccessibilityService {
             unlocked(run);
             AccessibilityNodeInfo root = currentRoot();
             if (root == null || !String.valueOf(root.getPackageName()).equals(frame.foreground()))
-                throw new IllegalStateException("前台应用已改变，请重新发起任务");
+                throw new ObservationChanged();
             return null;
         });
         switch (action.name) {
             case "tap", "long_press", "double_tap" -> {
                 double[] p = action.point("element");
-                gesture(p, p, action.name.equals("long_press") ? 800 : 60, frame, run);
-                if (action.name.equals("double_tap")) { run.pause(100); gesture(p, p, 60, frame, run); }
+                gesture(p, p, action.name.equals("long_press") ? 800 : 60, frame, run, action);
+                if (action.name.equals("double_tap")) {
+                    run.pause(100);
+                    try { gesture(p, p, 60, frame, run, action); }
+                    catch (ObservationChanged changed) {
+                        throw new IllegalStateException("双击首击已执行，页面随后变化，未执行第二击；请检查当前页面");
+                    }
+                }
             }
-            case "swipe" -> gesture(action.point("start"), action.point("end"), 450, frame, run);
+            case "swipe" -> gesture(action.point("start"), action.point("end"), 450, frame, run, null);
             case "type" -> {
                 boolean ok = onMain(() -> {
                     unlocked(run);
                     AccessibilityNodeInfo root = currentRoot();
+                    verifyActionTarget(action, frame, root);
                     AccessibilityNodeInfo focused = root == null ? null : root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
                     if (focused == null || !focused.isEditable() || focused.isPassword()) return false;
                     Bundle b = new Bundle(); b.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, action.data.getString("text"));
@@ -407,17 +533,18 @@ public final class ScreenService extends AccessibilityService {
         }
         run.check();
     }
-    private void gesture(double[] from, double[] to, long duration, Frame frame, RunState run) throws Exception {
+    private void gesture(double[] from, double[] to, long duration, Frame frame, RunState run, Action action) throws Exception {
         CompletableFuture<Boolean> done = new CompletableFuture<>();
         onMain(() -> {
             unlocked(run);
             AccessibilityNodeInfo root = currentRoot();
             if (root == null || !String.valueOf(root.getPackageName()).equals(frame.foreground()))
-                throw new IllegalStateException("前台应用已改变，请重新发起任务");
+                throw new ObservationChanged();
             // Reject stale coordinates after rotation rather than tapping the wrong UI.
             Rect current = getSystemService(WindowManager.class).getMaximumWindowMetrics().getBounds();
             if (current.width() != frame.width() || current.height() != frame.height())
-                throw new IllegalStateException("屏幕尺寸已改变，请重新发起任务");
+                throw new ObservationChanged();
+            if (action != null) verifyActionTarget(action, frame, root);
             Path path = new Path();
             path.moveTo(pixel(from[0], frame.width()), pixel(from[1], frame.height()));
             if (from[0] != to[0] || from[1] != to[1]) path.lineTo(pixel(to[0], frame.width()), pixel(to[1], frame.height()));

@@ -232,13 +232,13 @@ class SettingsUiTest {
         compose.onNodeWithText("虚拟屏").performClick()
         compose.onNodeWithText("测试应用").performClick()
         compose.waitUntil(timeoutMillis = 5000) {
-            compose.onAllNodesWithText("搜索应用").fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithText("搜索").fetchSemanticsNodes().isNotEmpty()
         }
         compose.runOnIdle { assertEquals(null, state.virtualScreen.error) }
-        compose.onNodeWithText("搜索应用").performTextReplacement("no-match")
+        compose.onNodeWithText("搜索").performTextReplacement("no-match")
         compose.onNodeWithText("虚拟屏测试").assertDoesNotExist()
         compose.onNodeWithText("没有匹配的应用").assertExists()
-        compose.onNodeWithText("搜索应用").performTextReplacement("virtualfixture")
+        compose.onNodeWithText("搜索").performTextReplacement("virtualfixture")
         compose.onNodeWithText("虚拟屏测试").performClick()
         compose.runOnIdle {
             assertEquals("org.example.virtualfixture/org.example.virtualfixture.Main", state.virtualScreen.selectedApp?.component)

@@ -98,7 +98,7 @@ private fun SettingsApp(state: SettingsState, openSettings: (Boolean) -> Unit, o
         lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             state.refresh()
             if (page == SettingsPage.Status) {
-                while (true) { delay(2000); state.refresh() }
+                while (true) { delay(3500); state.refreshLight() }
             }
         }
     }
@@ -188,25 +188,26 @@ private fun SettingsApp(state: SettingsState, openSettings: (Boolean) -> Unit, o
     }
 }
 
-/** Animate only draw layers. No lookahead, animated measurement, or idle animation. */
+/** Lightweight page transition: opacity crossfade + minimal slide. */
 @Composable
 private fun PageTransition(page: SettingsPage, modifier: Modifier, content: @Composable (SettingsPage) -> Unit) {
     val transition = updateTransition(page, label = "page")
+    val tabSwitch = transition.targetState.tab != transition.currentState.tab
     val forward = transition.targetState.depth >= transition.currentState.depth
-    val distance = with(LocalDensity.current) { 48.dp.toPx() }
+    val distance = with(LocalDensity.current) { if (tabSwitch) 24.dp.toPx() else 40.dp.toPx() }
     Box(modifier.clipToBounds()) {
         listOf(transition.currentState, transition.targetState).distinct().forEach { destination ->
             key(destination) {
                 val visibility = transition.animateFloat(transitionSpec = {
-                    if (initialState.depth == 0 && targetState.depth == 0) snap()
-                    else tween(260, easing = FastOutSlowInEasing)
+                    if (tabSwitch) tween(200, easing = FastOutSlowInEasing)
+                    else tween(240, easing = FastOutSlowInEasing)
                 }, label = "page-${destination.name}") { if (it == destination) 1f else 0f }
                 val incoming = destination == transition.targetState
                 Box(Modifier.fillMaxSize().testTag("page-${destination.name}")
                     .graphicsLayer {
                         alpha = visibility.value
                         translationX = (1f - visibility.value) * distance *
-                            (if (incoming) { if (forward) 1f else -0.35f } else { if (forward) -0.35f else 1f })
+                            (if (incoming) { if (forward) 1f else -0.3f } else { if (forward) -0.3f else 1f })
                     }
                     .then(if (!incoming) Modifier.clearAndSetSemantics { hideFromAccessibility() }
                         .pointerInput(Unit) {
@@ -233,24 +234,26 @@ private fun HomePage(state: SettingsState, openStatus: () -> Unit) {
             contentColor = if (ready) MiuixTheme.colorScheme.onPrimary else MiuixTheme.colorScheme.onSurfaceContainer,
         ),
     ) {
-        Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Icon(SettingsIcons.Module, null, Modifier.size(32.dp),
+        Row(Modifier.padding(24.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(SettingsIcons.Module, null, Modifier.size(48.dp),
                 tint = if (ready) MiuixTheme.colorScheme.onPrimary else MiuixTheme.colorScheme.primary)
-            Text(status, style = MiuixTheme.textStyles.title2)
-            Text(if (reported) android.text.format.DateUtils.formatDateTime(
-                androidx.compose.ui.platform.LocalContext.current, state.hookRecordedAt,
-                android.text.format.DateUtils.FORMAT_SHOW_DATE or android.text.format.DateUtils.FORMAT_SHOW_TIME)
-                else "启用模块后重启小爱", style = MiuixTheme.textStyles.footnote1)
+            Spacer(Modifier.width(16.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(status, style = MiuixTheme.textStyles.title3)
+                Text(if (reported) android.text.format.DateUtils.formatDateTime(
+                    androidx.compose.ui.platform.LocalContext.current, state.hookRecordedAt,
+                    android.text.format.DateUtils.FORMAT_SHOW_DATE or android.text.format.DateUtils.FORMAT_SHOW_TIME)
+                    else "启用模块后重启小爱", style = MiuixTheme.textStyles.footnote2)
+            }
         }
     }
     Spacer(Modifier.height(12.dp))
     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        DashboardTile("模块版本", BuildConfig.VERSION_NAME, Modifier.weight(1f))
+        DashboardTile("版本", BuildConfig.VERSION_NAME, Modifier.weight(1f))
         DashboardTile("无障碍", if (state.accessible) "已连接" else "未连接", Modifier.weight(1f))
     }
     Section("当前配置") {
         BasicComponent(title = "控屏工具", summary = if (state.config.enabled) "已开启" else "已关闭")
-        BasicComponent(title = "执行屏幕", summary = if (state.config.backgroundDisplay) "虚拟屏" else "主屏")
         BasicComponent(title = "规划模型", summary = if (state.config.planner == "external")
             state.profiles?.active()?.model?.ifBlank { "未选择" } ?: "未配置" else "小爱当前模型")
     }
@@ -261,8 +264,8 @@ private fun HomePage(state: SettingsState, openStatus: () -> Unit) {
 @Composable
 private fun DashboardTile(label: String, value: String, modifier: Modifier) {
     Card(modifier) {
-        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(label, style = MiuixTheme.textStyles.footnote1, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(label, style = MiuixTheme.textStyles.footnote2, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
             Text(value, style = MiuixTheme.textStyles.headline2)
         }
     }
@@ -308,20 +311,18 @@ private fun ModelPage(state: SettingsState) {
         Column(Modifier.padding(16.dp)) {
             Input("模型名称", draft.model, { state.updateProfile(model = it) })
         }
-        ArrowPreference(title = if (state.fetching) "正在获取模型…" else "从服务选择模型",
+        ArrowPreference(title = if (state.fetching) "正在获取…" else "从服务选择",
             enabled = !state.fetching && draft.endpoint.isNotBlank(),
             onClick = { state.fetchModels() })
         OverlayDropdownPreference(title = "API 协议", items = listOf("自动", "Responses", "Chat Completions"),
             selectedIndex = listOf("auto", "responses", "chat").indexOf(draft.api).coerceAtLeast(0),
             onSelectedIndexChange = { state.updateProfile(api = listOf("auto", "responses", "chat")[it]) })
     }
-    Hint("自动：GPT-6 使用 Responses，其余使用 Chat Completions。")
     Section("小爱对话") {
         SwitchPreference(title = "使用外部模型", checked = state.config.globalModel,
-            enabled = !state.dirty, summary = if (state.dirty) "保存配置后可更改" else null,
+            enabled = !state.dirty, summary = if (state.dirty) "保存后可更改" else "更改后重启小爱",
             onCheckedChange = { if (it) confirmGlobal = true else state.setOption("globalModel", false) })
     }
-    Hint("更改后重启小爱。")
     Section("管理配置") {
         ArrowPreference(title = "另存为新配置", onClick = { newName = ""; showNew = true })
         ArrowPreference(title = "删除当前配置", enabled = profiles.profiles.size > 1,
@@ -365,9 +366,8 @@ private fun ControlPage(state: SettingsState, openSettings: (Boolean) -> Unit, o
     var steps by remember { mutableStateOf("") }
     Group {
         SwitchPreference(title = "启用控屏工具", checked = state.config.enabled,
-            onCheckedChange = { state.setOption("enabled", it) })
+            summary = "更改后重启小爱", onCheckedChange = { state.setOption("enabled", it) })
     }
-    Hint("更改后重启小爱。")
     Section("执行") {
         OverlayDropdownPreference(title = "规划模型", items = listOf("小爱当前模型", "外部模型"),
             selectedIndex = if (state.config.planner == "external") 1 else 0,
@@ -377,13 +377,13 @@ private fun ControlPage(state: SettingsState, openSettings: (Boolean) -> Unit, o
             onSelectedIndexChange = { state.setOption("protocol", if (it == 1) "autoglm" else "phone_use") })
         ArrowPreference(title = "最大步数", summary = "${state.config.maxSteps} 步",
             onClick = { steps = state.config.maxSteps.toString(); editSteps = true })
-        ArrowPreference(title = "虚拟屏", summary = if (state.config.backgroundDisplay) "已开启" else "已关闭",
+        ArrowPreference(title = "虚拟屏", summary = "能力检测 · 兼容入口默认屏幕",
             onClick = openVirtual)
     }
     Section("权限") {
-        ArrowPreference(title = "无障碍服务", summary = if (state.accessible) "已连接" else "未连接 · 前往开启",
+        ArrowPreference(title = "无障碍服务", summary = if (state.accessible) "已连接" else "前往开启",
             onClick = { openSettings(false) })
-        SwitchPreference(title = "任务前检查无障碍", summary = if (state.guardChanging) "正在应用…" else "连接失效时尝试用 root 恢复",
+        SwitchPreference(title = "任务前检查无障碍", summary = if (state.guardChanging) "正在应用…" else "失效时用 root 恢复",
             checked = state.guardEnabled, enabled = !state.guardChanging, onCheckedChange = { state.setGuard(it) })
         ArrowPreference(title = "应用权限", summary = "后台弹出界面", onClick = { openSettings(true) })
     }
@@ -407,9 +407,8 @@ private fun StatusPage(state: SettingsState, openSettings: (Boolean) -> Unit, op
         BasicComponent(title = "框架与热重载", summary = state.reloadStatus)
         ArrowPreference(title = "重载模块", summary = "任务结束后可用", onClick = { state.reload() })
     }
-    Hint("LSPosed 作用域选择超级小爱，启用后重启小爱。")
     Section("权限") {
-        ArrowPreference(title = "无障碍服务", summary = if (state.accessible) "已连接" else "未连接或已失效", onClick = { openSettings(false) })
+        ArrowPreference(title = "无障碍服务", summary = if (state.accessible) "已连接" else "失效或未连接", onClick = { openSettings(false) })
         BasicComponent(title = "任务前检查", summary = state.guardStatus)
     }
     Section("诊断") {
@@ -425,34 +424,31 @@ private fun VirtualScreenPage(state: SettingsState) {
     var appQuery by remember { mutableStateOf("") }
     var detail by remember { mutableStateOf<DisplayProbeItem?>(null) }
     Group {
-        SwitchPreference(title = "使用虚拟屏", checked = state.config.backgroundDisplay,
-            summary = "应用于新任务，进行中的任务保持原屏幕",
+        SwitchPreference(title = "兼容入口默认使用虚拟屏", checked = state.config.backgroundDisplay,
+            summary = "旧控屏入口 · 不可用时停止而非转主屏",
             enabled = !screen.busy, onCheckedChange = { state.setOption("backgroundDisplay", it) })
     }
-    Hint("在独立屏幕执行，需要 root 和解锁。不可用时停止，不转到主屏。")
     Section("检查") {
         ArrowPreference(title = if (screen.checking) "正在检查…" else "检查前置条件",
-            summary = "检查 root 与锁屏，不创建屏幕", enabled = !screen.busy,
+            summary = "检查 root 与锁屏", enabled = !screen.busy,
             onClick = { screen.check() })
         screen.availability?.let { BasicComponent(title = it.title, summary = it.summary) }
     }
     Section("能力检测") {
-        ArrowPreference(title = if (screen.loadingApps) "正在读取应用…" else "测试应用",
+        ArrowPreference(title = if (screen.loadingApps) "正在读取…" else "测试应用",
             summary = screen.selectedApp?.name ?: "不启动应用", enabled = !screen.busy && !screen.loadingApps,
             onClick = { appQuery = ""; screen.loadApps() })
         ArrowPreference(title = if (screen.probing) "正在检测…" else "开始检测",
-            enabled = !screen.busy, onClick = { confirmProbe = true })
+            summary = "创建虚拟屏 · 主屏保持不动", enabled = !screen.busy, onClick = { confirmProbe = true })
     }
-    Hint("检测会创建并关闭虚拟屏；主屏请保持不动。")
     screen.error?.let { Group { BasicComponent(title = "未能完成", summary = it) } }
     screen.report?.let { report ->
         Section("检测结果") {
-            BasicComponent(title = report.summary, summary = "测试应用：${report.appName}")
+            BasicComponent(title = report.summary, summary = report.appName)
             report.items.forEach { item ->
                 ArrowPreference(title = item.title, summary = item.verdict, onClick = { detail = item })
             }
         }
-        Hint("只代表本次检测，中文输入需另测。")
     }
     ConfirmDialog(show = confirmProbe, title = "检测虚拟屏？",
         summary = if (screen.selectedApp == null) "会短暂创建虚拟屏并发送测试输入，不启动应用。期间请勿操作主屏。"
@@ -461,11 +457,13 @@ private fun VirtualScreenPage(state: SettingsState) {
         onConfirm = { confirmProbe = false; screen.probe() })
     OverlayDialog(show = screen.apps != null, title = "测试应用", onDismissRequest = { screen.dismissApps() }) {
         Column {
-            Input("搜索应用", appQuery, { appQuery = it })
+            Input("搜索", appQuery, { appQuery = it })
             Spacer(Modifier.height(12.dp))
             val matches = remember(screen.apps, appQuery) {
-                screen.apps.orEmpty().filter { app -> app.name.contains(appQuery.trim(), ignoreCase = true)
-                    || app.component.substringBefore('/').contains(appQuery.trim(), ignoreCase = true) }
+                val q = appQuery.trim()
+                if (q.isEmpty()) screen.apps.orEmpty()
+                else screen.apps.orEmpty().filter { app -> app.name.contains(q, ignoreCase = true)
+                    || app.component.substringBefore('/').contains(q, ignoreCase = true) }
             }
             LazyColumn(Modifier.heightIn(max = 320.dp).weight(1f, fill = false)) {
                 item { ArrowPreference(title = "不启动应用", onClick = { screen.selectApp(null) }) }
@@ -473,7 +471,7 @@ private fun VirtualScreenPage(state: SettingsState) {
                     ArrowPreference(title = app.name, summary = app.component.substringBefore('/'),
                         onClick = { screen.selectApp(app) })
                 }
-                if (matches.isEmpty()) item { Hint("没有匹配的应用") }
+                if (matches.isEmpty()) item { Hint("没有匹配的应用", centered = true) }
             }
             TextButton("取消", { screen.dismissApps() }, Modifier.fillMaxWidth().padding(top = 12.dp))
         }
@@ -495,8 +493,6 @@ private fun TestPage(state: SettingsState, onScreenTask: () -> Unit) {
         OverlayDropdownPreference(title = "测试类型", items = listOf("识屏控屏", "纯对话"), selectedIndex = state.testMode,
             enabled = state.job == null && !state.starting, onSelectedIndexChange = { state.testMode = it })
     }
-    Hint(if (state.testMode == 0) "使用已保存的外部模型。小爱模型请在小爱中测试。"
-        else "使用已保存的外部模型，不读取屏幕。")
     Group {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             TextField(value = state.query, onValueChange = { state.query = it },

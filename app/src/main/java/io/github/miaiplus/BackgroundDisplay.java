@@ -27,6 +27,10 @@ public final class BackgroundDisplay implements AutoCloseable {
     public static final String ERROR_DISPLAY_LOST = "DISPLAY_LOST";
     public static final String ERROR_PERMISSION = "PERMISSION_DENIED";
     public static final String ERROR_DEVICE_LOCKED = "DEVICE_LOCKED";
+    public static final String ERROR_TASK_IN_USE = "TASK_IN_USE";
+    public static final String ERROR_CAPTURE_FAILED = "CAPTURE_FAILED";
+    public static final String ERROR_INPUT_FAILED = "INPUT_FAILED";
+    public static final String ERROR_IME_ISOLATION = "IME_ISOLATION_FAILED";
 
     private static final int DEFAULT_WIDTH = 1080, DEFAULT_HEIGHT = 1920, DEFAULT_DENSITY = 320;
     private static final long COMMAND_TIMEOUT_MS = 25_000;
@@ -37,14 +41,66 @@ public final class BackgroundDisplay implements AutoCloseable {
     private final BufferedWriter toHelper;
     private final BufferedReader fromHelper;
     private final File frameDirectory;
+    private final Object requestLock = new Object();
     private volatile DisplaySession session;
     private volatile boolean closed;
+
+    /**
+     * Runs the helper's development capability probe and returns its report.
+     *
+     * <p>Deliberately does not become the active session: the probe creates and destroys its own display, so it
+     * must not be mistaken for a display the caller can act on, and it must not block a real task afterwards. The
+     * display is torn down inside the helper even when a step fails.
+     */
+    public static JSONObject capability(Context context, String component, RunState run) throws Exception {
+        BackgroundDisplay display = start(context.getApplicationContext());
+        try {
+            display.request(run, "probe", null);
+            return display.request(run, "capability", component == null ? "" : component);
+        } finally {
+            display.close();
+        }
+    }
+
+    /**
+     * Lightweight availability check: starts the helper and asks who it is, without creating a display.
+     *
+     * <p>Separate from {@link #capability} because that one creates and destroys a real screen. A status refresh
+     * runs on a timer, so it must report the same facts without briefly giving the user a second display.
+     */
+    public static JSONObject availability(Context context, RunState run) throws Exception {
+        BackgroundDisplay display = start(context.getApplicationContext());
+        try {
+            return display.request(run, "probe", null);
+        } finally {
+            display.close();
+        }
+    }
 
     private BackgroundDisplay(Process helper, File frameDirectory) {
         this.helper = helper;
         this.frameDirectory = frameDirectory;
         this.toHelper = new BufferedWriter(new OutputStreamWriter(helper.getOutputStream(), StandardCharsets.UTF_8));
         this.fromHelper = new BufferedReader(new InputStreamReader(helper.getInputStream(), StandardCharsets.UTF_8));
+    }
+
+    private static File createFrameDirectory(Context context) throws IOException {
+        File parent = new File(context.getCacheDir(), "background-display");
+        if (!parent.isDirectory() && !parent.mkdirs() && !parent.isDirectory())
+            throw new IOException("无法创建后台截图缓存目录");
+        // Availability checks and capability probes own helpers too. Their teardown must never delete frames
+        // belonging to a real session, even when they run while that session is reading a capture.
+        return java.nio.file.Files.createTempDirectory(parent.toPath(), "session-").toFile();
+    }
+
+    private static BackgroundDisplay start(Context context) throws Exception {
+        File frames = createFrameDirectory(context);
+        try {
+            return new BackgroundDisplay(startHelper(context), frames);
+        } catch (Exception failure) {
+            frames.delete();
+            throw failure;
+        }
     }
 
     public DisplaySession session() { return session; }
@@ -60,9 +116,7 @@ public final class BackgroundDisplay implements AutoCloseable {
             if (active != null && active.isOpen()) return active;
             if (active != null) active.close();
             Context app = context.getApplicationContext();
-            File frames = new File(app.getCacheDir(), "background-display");
-            if (!frames.isDirectory() && !frames.mkdirs()) throw new IOException("无法创建后台截图缓存目录");
-            BackgroundDisplay display = new BackgroundDisplay(startHelper(app), frames);
+            BackgroundDisplay display = start(app);
             active = display;
             try {
                 JSONObject probe = display.request(run, "probe", null);
@@ -72,10 +126,13 @@ public final class BackgroundDisplay implements AutoCloseable {
                     throw new IllegalStateException(ERROR_DEVICE_LOCKED + "：请先解锁手机再使用后台显示");
                 JSONObject created = display.request(run, "create",
                     DEFAULT_WIDTH + " " + DEFAULT_HEIGHT + " " + DEFAULT_DENSITY);
-                display.session = new DisplaySession(created.getInt("displayId"), created.optString("surfaceFlingerId"),
+                DisplaySession createdSession = new DisplaySession(created.getInt("displayId"), created.optString("surfaceFlingerId"),
                     DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_DENSITY, 0);
                 // Keep the IME off the physical screen; the agent types through accessibility, not the keyboard.
-                display.request(run, "ime", null);
+                JSONObject ime = display.request(run, "ime", null);
+                if (!"LOCAL".equals(ime.optString("policy")) || !"true".equals(ime.optString("verified")))
+                    throw new IllegalStateException(ERROR_IME_ISOLATION + "：无法确认后台屏输入法隔离，任务已停止");
+                display.session = createdSession;
                 run.progress = "后台显示已就绪";
                 return display;
             } catch (Exception failure) {
@@ -97,7 +154,9 @@ public final class BackgroundDisplay implements AutoCloseable {
         Process process = new ProcessBuilder("su", "-c",
             "CLASSPATH='" + classpath + "' /system/bin/app_process /system/bin io.github.miaiplus.helper.DisplayHelper")
             .redirectErrorStream(false).start();
-        process.getOutputStream().close();
+        // The child's stdin is this protocol's command channel, so it must stay open: closing it here makes the
+        // helper see end-of-input and exit before it answers anything, which surfaces as an IOException on the
+        // first command. It closes on its own when this process dies, which is what tears the display down.
         drain(process.getErrorStream(), "background-display-stderr");
         return process;
     }
@@ -116,6 +175,12 @@ public final class BackgroundDisplay implements AutoCloseable {
 
     /** Sends one command and waits for its reply. A dead helper or a mismatched token becomes BACKEND_DIED. */
     private JSONObject request(RunState run, String verb, String arguments) throws Exception {
+        synchronized (requestLock) {
+            return requestLocked(run, verb, arguments);
+        }
+    }
+
+    private JSONObject requestLocked(RunState run, String verb, String arguments) throws Exception {
         if (closed) throw new IllegalStateException(ERROR_BACKEND_DIED + "：后台显示已关闭");
         if (!helper.isAlive()) throw new IllegalStateException(ERROR_BACKEND_DIED + "：后台显示进程已退出");
         long token = System.nanoTime();
@@ -130,7 +195,8 @@ public final class BackgroundDisplay implements AutoCloseable {
                 if (reply == null) throw new IllegalStateException(ERROR_BACKEND_DIED + "：后台显示进程已退出");
                 JSONObject parsed = new JSONObject(reply);
                 if (parsed.optLong("token") != token) continue; // Late reply for a command that already timed out.
-                if ("error".equals(parsed.optString("status"))) throw failure(parsed.optString("message"));
+                if ("error".equals(parsed.optString("status")))
+                    throw failure(parsed.optString("code"), parsed.optString("message"));
                 return parsed;
             }
             if (!helper.isAlive()) throw new IllegalStateException(ERROR_BACKEND_DIED + "：后台显示进程已退出");
@@ -139,12 +205,28 @@ public final class BackgroundDisplay implements AutoCloseable {
         throw new IllegalStateException(ERROR_BACKEND_DIED + "：后台显示无响应");
     }
 
-    private static IllegalStateException failure(String message) {
+    /**
+     * Turns a helper failure into the exception the run reports, keyed on the code rather than on prose.
+     *
+     * <p>The codes that are part of this client's own contract are translated here; anything else keeps the
+     * helper's own message, because a specific reason is more useful than a generic one. The two task codes are
+     * the important cases: the helper refuses a launch that would move a task the user already has on screen, and
+     * that must reach the user as a clear refusal instead of a retry that quietly takes their screen.
+     */
+    private static IllegalStateException failure(String code, String message) {
         String text = message == null ? "" : message;
-        if (text.contains(ERROR_PERMISSION)) return new IllegalStateException(ERROR_PERMISSION + "：后台显示需要 root 授权");
-        if (text.contains(ERROR_DEVICE_LOCKED)) return new IllegalStateException(ERROR_DEVICE_LOCKED + "：请先解锁手机再使用后台显示");
-        if (text.contains("NO_DISPLAY")) return new IllegalStateException(ERROR_DISPLAY_LOST + "：后台显示已失效，任务已停止");
-        return new IllegalStateException(text.isEmpty() ? ERROR_BACKEND_DIED + "：后台显示异常" : text);
+        String reason = code == null ? "" : code;
+        if (reason.equals(ERROR_PERMISSION)) return new IllegalStateException(ERROR_PERMISSION + "：后台显示需要 root 授权");
+        if (reason.equals(ERROR_DEVICE_LOCKED)) return new IllegalStateException(ERROR_DEVICE_LOCKED + "：请先解锁手机再使用后台显示");
+        if (reason.equals("NO_DISPLAY") || reason.equals("DISPLAY_UNAVAILABLE"))
+            return new IllegalStateException(ERROR_DISPLAY_LOST + "：后台显示已失效，任务已停止");
+        if (reason.equals("TASK_IN_USE")) return new IllegalStateException(ERROR_TASK_IN_USE
+            + "：该应用已在你的屏幕上打开，后台执行会把它移走，请先关闭该应用后重试");
+        if (reason.equals("TASK_STOLEN")) return new IllegalStateException(ERROR_TASK_IN_USE
+            + "：启动未落在后台屏，任务已停止");
+        if (reason.equals("CAPTURE_FAILED")) return new IllegalStateException(ERROR_CAPTURE_FAILED
+            + "：后台截图失败，任务已停止");
+        return new IllegalStateException(text.isEmpty() ? ERROR_BACKEND_DIED + "：后台显示异常" : reason + "：" + text);
     }
 
     /** Confirms the display still belongs to this session before any action reuses its coordinates. */
@@ -187,21 +269,54 @@ public final class BackgroundDisplay implements AutoCloseable {
         return request(run, "focus", null).optString("display");
     }
 
+    /** The current application on the physical screen, used only to request an explicit mode handoff. */
+    public String mainForeground(RunState run) throws Exception {
+        return request(run, "main_focus", null).optString("package");
+    }
+
+    /** Read-only task ownership evidence used before requesting a foreground handoff. */
+    public JSONObject taskState(RunState run, String packageName) throws Exception {
+        return request(run, "task_state", packageName);
+    }
+
     public void launch(RunState run, String component) throws Exception {
         request(run, "launch", component);
     }
 
     public void tap(RunState run, double normalizedX, double normalizedY) throws Exception {
-        request(run, "tap", pixel(normalizedX, session.width) + " " + pixel(normalizedY, session.height));
+        JSONObject reply = request(run, "tap", pixel(normalizedX, session.width) + " " + pixel(normalizedY, session.height));
+        requireInputAccepted(reply, "点击", "down", "up");
+    }
+
+    /**
+     * Holds the background display at one point.
+     *
+     * <p>Separate from {@link #tap} because the two are different gestures, not different durations: a long press
+     * has to keep the pointer down for real, which the helper does by sleeping between the down and up events. It
+     * returns whether the release was delivered, so a hold that was accepted but never released is not reported
+     * as a completed long press.
+     */
+    public void longPress(RunState run, double normalizedX, double normalizedY) throws Exception {
+        JSONObject reply = request(run, "longpress",
+            pixel(normalizedX, session.width) + " " + pixel(normalizedY, session.height));
+        requireInputAccepted(reply, "长按", "down", "up");
     }
 
     public void swipe(RunState run, double[] from, double[] to) throws Exception {
-        request(run, "swipe", pixel(from[0], session.width) + " " + pixel(from[1], session.height) + " "
+        JSONObject reply = request(run, "swipe", pixel(from[0], session.width) + " " + pixel(from[1], session.height) + " "
             + pixel(to[0], session.width) + " " + pixel(to[1], session.height) + " 450");
+        requireInputAccepted(reply, "滑动", "accepted");
     }
 
     public void key(RunState run, int keyCode) throws Exception {
-        request(run, "key", String.valueOf(keyCode));
+        requireInputAccepted(request(run, "key", String.valueOf(keyCode)), "按键", "delivered");
+    }
+
+    private static void requireInputAccepted(JSONObject reply, String action, String... fields) {
+        for (String field : fields) {
+            if (!"true".equals(reply.optString(field)))
+                throw new IllegalStateException(ERROR_INPUT_FAILED + "：后台屏" + action + "未确认送达，任务已停止");
+        }
     }
 
     private static int pixel(double normalized, int size) {
@@ -233,8 +348,8 @@ public final class BackgroundDisplay implements AutoCloseable {
     /** Frames left by a crashed helper would otherwise keep the last background screenshot on disk after teardown. */
     private void clearCache() {
         File[] files = frameDirectory.listFiles();
-        if (files == null) return;
-        for (File file : files) file.delete();
+        if (files != null) for (File file : files) file.delete();
+        frameDirectory.delete();
     }
 
     public static void closeActive() {

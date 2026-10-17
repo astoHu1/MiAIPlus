@@ -152,6 +152,11 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
         if (!AccessibilityGuard.isChanging()) guardEnabled = AccessibilityGuard.enabled(context)
     }
 
+    fun refreshLight() {
+        accessible = ScreenService.isHealthy()
+        reloadStatus = HotReload.status()
+    }
+
     fun reload() { HotReload.request(); refresh() }
 
     fun fetchModels() {

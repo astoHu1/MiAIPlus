@@ -26,8 +26,11 @@ public final class AgentEngine {
         不支持 Note、Call_API、Interact。需要询问用户时使用 Ask_user。
         """;
     public static String run(Config config, String mode, String query, RunState run) throws Exception {
+        return run(config, mode, query, run, config.backgroundDisplay, "");
+    }
+    static String run(Config config, String mode, String query, RunState run, boolean selectedBackground, String sourceTool) throws Exception {
         if (query == null || query.isBlank() || query.length() > 16000) throw new IllegalArgumentException("任务内容为空或过长");
-        if (mode.equals("screen") && config.planner.equals("native")) return NativeSession.handle(config, query, run.owner);
+        if (mode.equals("screen") && config.planner.equals("native")) return NativeSession.handle(config, query, run, selectedBackground, sourceTool);
         if (config.model.isBlank()) throw new IllegalStateException("请配置模型名称");
         config.completionsUrl();
         if (mode.equals("chat")) {
@@ -38,26 +41,33 @@ public final class AgentEngine {
         ScreenService screen = ScreenService.instance;
         if (screen == null || !ScreenService.isHealthy()) throw new IllegalStateException("MiAIPlus 无障碍未连接或已失效，请开启服务或 root 任务前检查");
         // The optional external loop shares one execution backend with the native one: same display, same rules.
-        boolean background = config.backgroundDisplay;
+        boolean background = selectedBackground;
         BackgroundDisplay display = null;
-        if (background) {
-            run.progress = "正在准备后台显示";
-            display = BackgroundDisplay.open(screen, run);
-        }
-        boolean auto = config.protocol.equals("autoglm");
-        JSONArray messages = new JSONArray().put(ModelClient.message("system", RULES
-            + (background ? "\n本任务在独立的手机后台屏幕上执行，截图只来自该后台屏；不要尝试操作主屏。后台模式不支持启动确认弹窗，需要授权时 take_over。" : "")
-            + (auto ? AUTOGLM : "必须通过 phone_use 工具返回一个动作。")
-            + "\n可启动应用：\n" + screen.apps())).put(ModelClient.message("user", query));
-        JSONArray tools = auto ? null : phoneUseTools();
-        run.pause(800);
-        String previous = "", outcome = "任务开始";
-        int repeats = 0;
+        BackgroundActions.LaunchPolicy launchPolicy = new BackgroundActions.LaunchPolicy();
+        String handoffPackage = null;
         try {
+            // Cancellation during setup must release the display just like cancellation during model work.
+            if (background) {
+                run.progress = "正在准备后台显示";
+                display = BackgroundDisplay.open(screen, run);
+            }
+            boolean auto = config.protocol.equals("autoglm");
+            JSONArray messages = new JSONArray().put(ModelClient.message("system", RULES
+                + (background ? "\n本任务在独立的手机后台屏幕上执行，截图只来自该后台屏；不要尝试操作主屏。后台模式不支持启动确认弹窗，需要授权时 take_over。" : "")
+                + (auto ? AUTOGLM : "必须通过 phone_use 工具返回一个动作。")
+                + "\n可启动应用：\n" + screen.apps())).put(ModelClient.message("user", query));
+            JSONArray tools = auto ? null : phoneUseTools();
+            run.pause(800);
+            String previous = "", outcome = "任务开始";
+            int repeats = 0;
             for (int step = 0; step < config.maxSteps; step++) {
                 run.check();
                 if (step == 0) run.progress = TaskProgress.goal(query);
                 ScreenService.Frame frame = observe(display, screen, run);
+                if (handoffPackage != null) {
+                    BackgroundActions.verifyHandoffFrame(frame, handoffPackage);
+                    handoffPackage = null;
+                }
                 // Keep text/action history but only the latest screenshot to bound request size.
                 for (int i = 0; i < messages.length(); i++) {
                     JSONObject m = messages.getJSONObject(i);
@@ -101,29 +111,49 @@ public final class AgentEngine {
                 run.progress = intent;
                 boolean confirmation = action.data.optBoolean("requires_confirmation", false)
                     || (!action.data.optString("message").isBlank() && !action.name.equals("wait"));
-                if (confirmation) {
-                    if (background) {
-                        // The confirmation overlay belongs to the physical screen; in background mode the task
-                        // pauses instead of covering what the user is doing, and submits nothing.
-                        return "PAUSE：后台任务暂停，等待你确认后重新发起。" + action.data.optString("message", "执行 " + action.name);
+                handoffPackage = background
+                    ? BackgroundActions.foregroundHandoff(display, action, run, launchPolicy) : null;
+                if (handoffPackage != null) {
+                    run.check();
+                    display.close();
+                    display = null;
+                    background = false;
+                    previous = ""; repeats = 0;
+                    // End this tool step without executing its old action. The next iteration must capture
+                    // the physical screen before the model can select any foreground coordinates.
+                    messages.getJSONObject(0).put("content", messages.getJSONObject(0).getString("content")
+                        .replace("本任务在独立的手机后台屏幕上执行，截图只来自该后台屏；不要尝试操作主屏。后台模式不支持启动确认弹窗，需要授权时 take_over。",
+                            "执行器已切换前台控屏模式，只根据最新物理屏截图操作，旧后台截图和坐标已作废。"));
+                    outcome = "已切换前台控屏；目标应用已在当前主屏。未执行旧动作，旧截图与坐标已作废，请依据下一张新截图重新规划";
+                } else {
+                    if (confirmation) {
+                        if (background) {
+                            // The confirmation overlay belongs to the physical screen; in background mode the task
+                            // pauses instead of covering what the user is doing, and submits nothing.
+                            return "PAUSE：后台任务暂停，等待你确认后重新发起。" + action.data.optString("message", "执行 " + action.name);
+                        }
+                        run.progress = "等待确认：" + intent;
+                        if (!screen.confirm(action.data.optString("message", "执行 " + action.name), run)) return "操作已取消";
+                        run.progress = intent;
+                        // Replan after user confirmation if the underlying screen changed.
+                        ScreenService.Frame after = observe(display, screen, run);
+                        if (!after.foreground().equals(frame.foreground()) || !after.tree().equals(frame.tree()))
+                            throw new IllegalStateException("确认期间界面发生变化，已停止，请重新发起任务");
                     }
-                    run.progress = "等待确认：" + intent;
-                    if (!screen.confirm(action.data.optString("message", "执行 " + action.name), run)) return "操作已取消";
-                    run.progress = intent;
-                    // Replan after user confirmation if the underlying screen changed.
-                    ScreenService.Frame after = observe(display, screen, run);
-                    if (!after.foreground().equals(frame.foreground()) || !after.tree().equals(frame.tree()))
-                        throw new IllegalStateException("确认期间界面发生变化，已停止，请重新发起任务");
+                    if (background) {
+                        BackgroundActions.execute(display, action, run, config);
+                        launchPolicy.used(action);
+                    } else screen.execute(action, frame, run);
+                    outcome = "动作已执行：" + action.name + "，请检查新截图确认效果";
                 }
-                if (background) BackgroundActions.execute(display, action, run, config);
-                else screen.execute(action, frame, run);
-                outcome = "动作已执行：" + action.name + "，请检查新截图确认效果";
                 if (auto) messages.put(ModelClient.message("user", outcome));
                 else messages.put(ModelClient.message("tool", outcome).put("tool_call_id", callId));
                 run.pause(800);
                 run.progress = TaskProgress.waiting(intent);
             }
             throw new IllegalStateException("达到最大步数，任务未确认完成");
+        } catch (ForegroundConsent.Paused pause) {
+            return pause.getMessage();
         } finally {
             // Release the root helper's display first; hiding the island controls cannot free a display.
             if (display != null) display.close();

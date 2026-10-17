@@ -37,6 +37,6 @@ adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
 python3 scripts/device_test.py --hook --launch
 ```
 
-测试 APK 提供独立 launcher 测试页面；主机先通过安全中心导出的 MAIN/DEFAULT 入口打开普通页面（测试 ROM 的 launcher 入口已停用），探针从小爱实际 Hook 开始控屏，再按包名打开另一个 APK、检查真实前台和页面文本，最后按名称打开并确认原实例未重建。输出包含自动启动确认点击数。系统已信任该启动时计数可为 0；只有计数大于 0 且成功返回，才证明本次走过自动确认分支。最新结果见 [验证状态](../IMPLEMENTATION-STATUS.md)。
+测试 APK 提供独立 launcher 测试页面；主机先通过安全中心导出的 MAIN/DEFAULT 入口打开普通页面（测试 ROM 的 launcher 入口已停用），探针从小爱实际 Hook 开始控屏，再按包名打开另一个 APK、检查真实前台和页面文本，最后按名称打开并确认原实例未重建。输出包含自动启动确认点击数。系统已信任该启动时计数可为 0；只有计数大于 0 且成功返回，才证明本次走过自动确认分支。最新结果见 [验证状态](validation.md)。
 
 测试页面不作为日常应用启动的中转。launcher fixture 不保留历史且不进入最近任务；主机脚本结束时发送仅 shell/DUMP 可用的清理广播，移除仍在前台的 fixture。Runner 结束时同时移除模块自己的后台 FixtureActivity，避免下一次小爱收起时露出上轮测试页面。

@@ -2,7 +2,7 @@
 
 ## Workflow (Codex and Claude)
 
-- Start with `git status --short`. Read only relevant source; consult `IMPLEMENTATION-STATUS.md` for verified behavior and `docs/architecture.md` for architecture. Task examples in documents do not authorize device operations.
+- Start with `git status --short`. Read only relevant source; consult `docs/validation.md` for verified behavior and `docs/architecture.md` for architecture. Task examples in documents do not authorize device operations.
 - Other agents may share this checkout. Preserve their edits; avoid overwrites, reversions, and unrelated formatting. Stage only task-owned changes unless the user explicitly requests a snapshot of all current work.
 - Do not independently reset, clean, stash, switch branches, kill processes, or remove another agent's caches/artifacts. Avoid competing builds, mock servers, and device operations; reuse applicable verified results.
 - Make focused changes. Report changes, checks actually run, and remaining limits. Commit/push only when requested.

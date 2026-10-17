@@ -11,6 +11,7 @@ import java.util.function.Consumer;
 
 /** Incremental Responses SSE -> native Chat Completions SSE. Never treats a partial call as executable. */
 public final class ResponsesStream extends InputStream {
+    private static final String HEARTBEAT = ": keep-alive\n\n";
     private final BufferedReader reader;
     private final Consumer<JSONObject> completed;
     private byte[] pending = new byte[0];
@@ -55,23 +56,30 @@ public final class ResponsesStream extends InputStream {
             }
             if (data.length() == 0) {
                 if (line == null) throw new IOException("Responses 流提前结束");
-                continue;
+                pending = HEARTBEAT.getBytes(StandardCharsets.UTF_8); offset = 0;
+                return true;
             }
             try {
                 JSONObject event = new JSONObject(data.toString());
                 String type = event.getString("type");
-                String wire = "";
+                // Native Chat parsing has a per-line idle watchdog. Preserve upstream activity
+                // without exposing reasoning/progress payloads or inventing a completion.
+                String wire = HEARTBEAT;
                 if ("response.created".equals(type)) {
                     JSONObject response = event.getJSONObject("response");
                     id = response.optString("id", id); model = response.optString("model", model);
                     wire = chunk(new JSONObject().put("role", "assistant"), null);
                 } else if ("response.output_text.delta".equals(type)) {
-                    wire = chunk(new JSONObject().put("content", event.getString("delta")), null);
-                    textSent = true;
+                    String delta = event.getString("delta");
+                    if (!delta.isEmpty()) {
+                        wire = chunk(new JSONObject().put("content", delta), null);
+                        textSent = true;
+                    }
                 } else if ("response.completed".equals(type)) {
                     JSONObject response = event.getJSONObject("response");
                     JSONObject message = ModelProtocol.message(response);
                     completed.accept(response);
+                    wire = "";
                     if (!textSent && !message.getString("content").isEmpty()) wire += chunk(new JSONObject().put("content", message.getString("content")), null);
                     JSONArray calls = message.optJSONArray("tool_calls");
                     if (calls != null) {

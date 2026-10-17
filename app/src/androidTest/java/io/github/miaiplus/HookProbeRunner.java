@@ -7,8 +7,8 @@ import java.util.Map;
 /** Configure the mock briefly, ask host to trigger the in-process debug smoke, then restore. */
 public class HookProbeRunner extends Instrumentation {
     private String api = "chat";
-    private boolean reasoning, focus, launch;
-    @Override public void onCreate(Bundle b) { super.onCreate(b); api = b.getString("api", "chat"); reasoning = "true".equals(b.getString("reasoning")); focus = "true".equals(b.getString("focus")); launch = "true".equals(b.getString("launch")); start(); }
+    private boolean reasoning, focus, launch, conversation;
+    @Override public void onCreate(Bundle b) { super.onCreate(b); api = b.getString("api", "chat"); reasoning = "true".equals(b.getString("reasoning")); focus = "true".equals(b.getString("focus")); launch = "true".equals(b.getString("launch")); conversation = "true".equals(b.getString("conversation_return")); start(); }
     private String probe(String token) throws Exception {
         Config.prefs(getTargetContext()).edit().remove("hook_report").commit();
         Bundle status = new Bundle(); status.putString("stream", "MIAIPLUS_RESTART_XIAOAI " + token + "\n"); sendStatus(1, status);
@@ -63,10 +63,13 @@ public class HookProbeRunner extends Instrumentation {
         var prefs = Config.prefs(getTargetContext()); Map<String, ?> saved = prefs.getAll();
         Bundle report = new Bundle(); int code = Activity.RESULT_CANCELED;
         try {
-            if (focus || launch) {
-                prefs.edit().putBoolean("enabled", true).putBoolean("globalModel", false).putString("planner", "native").commit();
+            if (focus || launch || conversation) {
+                // These probes are about the physical screen: the launch probe asserts the Security page is the
+                // foreground it observes, which cannot hold if the device is configured for the background display.
+                prefs.edit().putBoolean("enabled", true).putBoolean("globalModel", false).putBoolean("backgroundDisplay", false)
+                    .putString("planner", "native").commit();
                 int confirmations = ScreenService.instance == null ? 0 : ScreenService.instance.launchConfirmationCount;
-                report.putString("stream", probe(launch ? "MIAIPLUS_LAUNCH_UI" : "MIAIPLUS_FOCUS_UI") + (launch ? "; automatic launch confirmations="
+                report.putString("stream", probe(conversation ? "MIAIPLUS_CONVERSATION_RETURN" : launch ? "MIAIPLUS_LAUNCH_UI" : "MIAIPLUS_FOCUS_UI") + (launch ? "; automatic launch confirmations="
                     + (ScreenService.instance == null ? 0 : ScreenService.instance.launchConfirmationCount - confirmations) : "") + "\n"); code = Activity.RESULT_OK;
                 return;
             }
@@ -85,7 +88,11 @@ public class HookProbeRunner extends Instrumentation {
             android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(64, 64, android.graphics.Bitmap.Config.ARGB_8888);
             java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream(); bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, bytes); bitmap.recycle();
             int targetUid = getTargetContext().getPackageManager().getPackageUid("com.miui.voiceassist", 0);
-            String token = FrameStore.put(ScreenService.Frame.physical(android.util.Base64.encodeToString(bytes.toByteArray(), android.util.Base64.NO_WRAP), "synthetic fixture", 64, 64, "io.github.miaiplus"), targetUid);
+            // Built through the physical factory rather than the raw constructor: the record carries display and
+            // generation fields now, and this probe is about the transport, not about a background display.
+            String token = FrameStore.put(ScreenService.Frame.physical(
+                android.util.Base64.encodeToString(bytes.toByteArray(), android.util.Base64.NO_WRAP),
+                "synthetic fixture", 64, 64, "io.github.miaiplus"), targetUid);
             String result = probe(token);
             if (reasoning) result += "; native reasoning menu and selected wire effort";
             report.putString("stream", result + "\n"); code = Activity.RESULT_OK;
@@ -100,7 +107,7 @@ public class HookProbeRunner extends Instrumentation {
                 else if (e.getValue() instanceof Integer v) edit.putInt(e.getKey(), v);
             }
             edit.commit();
-            if (focus || launch) finish(code, report);
+            if (focus || launch || conversation) finish(code, report);
         }
         finish(code, report);
     }

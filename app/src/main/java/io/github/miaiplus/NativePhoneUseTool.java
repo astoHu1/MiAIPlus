@@ -10,7 +10,8 @@ import java.util.Map;
 
 /** Typed native function entry avoids a second layer of CLI query quoting. */
 public final class NativePhoneUseTool {
-    public static final String NAME = "miaiplus_phone_use";
+    public static final String NAME = PhoneUseRouting.FOREGROUND_TOOL;
+    public static final String BACKGROUND_NAME = PhoneUseRouting.BACKGROUND_TOOL;
     private static final String DESCRIPTION = "本机手机控屏。start时传goal取得session和观察；然后每次传session及一个action对象，按新观察继续调用直到finish。无需额外API，由你逐步规划。默认使用截图JPEG像素坐标(image_pixels)，不是0..1000；也可显式选screen_pixels或normalized，必须匹配观察尺寸。不要复述CONTINUE或用自然语言替代action。系统专用工具优先。";
     private static final String SCHEMA = """
         {"type":"object","properties":{
@@ -28,7 +29,11 @@ public final class NativePhoneUseTool {
           },"required":["action"]}
         }}
         """;
-    private static Object definition;
+    private static final java.util.Map<String, Object> definitions = new java.util.LinkedHashMap<>();
+    private static String description(String name) {
+        return (NAME.equals(name) ? "前台控屏：直接操作用户当前主屏。" : "后台控屏：在独立虚拟屏操作应用，尽量不打扰用户主屏。")
+            + "根据用户要求选择此工具；未指定后台时使用前台工具。整个会话继续使用同一个工具，包括后台经用户同意切换前台以后。" + DESCRIPTION;
+    }
     private static volatile boolean registered;
     private static final java.util.Set<Object> registries = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
     private static void register(Object registry, Object tool) {
@@ -39,12 +44,14 @@ public final class NativePhoneUseTool {
     static void dispose() {
         synchronized (registries) {
             for (Object registry : registries) {
-                Reflector.callMethod(registry, "unregister", NAME);
-                ((java.util.Set<?>)Reflector.getObjectField(registry, "systemToolNames")).remove(NAME);
+                for (String name : new String[]{NAME, BACKGROUND_NAME}) {
+                    Reflector.callMethod(registry, "unregister", name);
+                    ((java.util.Set<?>)Reflector.getObjectField(registry, "systemToolNames")).remove(name);
+                }
             }
             registries.clear();
         }
-        registered = false; definition = null;
+        registered = false; definitions.clear();
     }
     static boolean available(Context context) {
         try {
@@ -57,13 +64,17 @@ public final class NativePhoneUseTool {
     }
     public static void install(Context context, ClassLoader loader, List<HookCallback.Unhook> hooks) {
         Object schema = json(loader, SCHEMA);
-        definition = Reflector.newInstance(Reflector.findClass("com.aios.osbot.llm.model.ToolDefinition", loader), NAME, DESCRIPTION, schema);
+        for (String name : new String[]{NAME, BACKGROUND_NAME}) installTool(context, loader, hooks, schema, name);
+    }
+    private static void installTool(Context context, ClassLoader loader, List<HookCallback.Unhook> hooks, Object schema, String name) {
+        String description = description(name);
+        definitions.put(name, Reflector.newInstance(Reflector.findClass("com.aios.osbot.llm.model.ToolDefinition", loader), name, description, schema));
         Class<?> toolType = Reflector.findClass("com.aios.osbot.tools.Tool", loader);
         Object tool = java.lang.reflect.Proxy.newProxyInstance(loader, new Class<?>[]{toolType}, (proxy, method, args) -> {
             return switch (method.getName()) {
-                case "getName" -> NAME;
-                case "getDisplayName" -> "phone use";
-                case "getDescription", "getSummary", "getSearchHint" -> DESCRIPTION;
+                case "getName" -> name;
+                case "getDisplayName" -> NAME.equals(name) ? "前台控屏" : "后台控屏";
+                case "getDescription", "getSummary", "getSearchHint" -> description;
                 case "getParameters" -> schema;
                 case "getCategory" -> "phone";
                 case "getRejects" -> "";
@@ -79,16 +90,19 @@ public final class NativePhoneUseTool {
                     try {
                         if (!available(context)) throw new IllegalStateException("本机逐步控屏未启用");
                         org.json.JSONObject request = new org.json.JSONObject(args[0].toString());
-                        if (request.has("action") && !request.has("coordinate_space")) request.put("coordinate_space", "image_pixels");
-                        String query = request.has("action") ? "MIAIPLUS:" + request : request.getString("goal");
+                        String query = PhoneUseRouting.encode(name, request);
                         Object service = Reflector.newInstance(Reflector.findClass("com.xiaomi.voiceassistant.UIAgentServiceForOSBot", loader));
-                        Object result = Reflector.callMethod(service, "controlApp", query);
-                        text = String.valueOf(Reflector.callMethod(result, "getText"));
+                        try (var origin = ConversationReturn.bind(args[1])) {
+                            Object result = Reflector.callMethod(service, "controlApp", query);
+                            text = String.valueOf(Reflector.callMethod(result, "getText"));
+                        }
                     } catch (Exception e) { text = "控屏停止：" + (e instanceof org.json.JSONException ? "缺少goal或session/action参数" : e.getMessage()); }
-                    yield Reflector.newInstance(Reflector.findClass("com.aios.osbot.tools.ToolResult$Success", loader), text, Map.of(), null, List.of(), false, null, false);
+                    boolean terminal = ForegroundConsent.endsNativeTurn(text);
+                    yield Reflector.newInstance(Reflector.findClass("com.aios.osbot.tools.ToolResult$Success", loader), text,
+                        terminal ? Map.of("cli_internal_direct_answer", true) : Map.of(), null, List.of(), terminal, null, false);
                     } finally { Hooks.leave(); }
                 }
-                case "toString" -> NAME;
+                case "toString" -> name;
                 case "hashCode" -> System.identityHashCode(proxy);
                 case "equals" -> proxy == args[0];
                 default -> throw new UnsupportedOperationException(method.getName());
@@ -102,8 +116,13 @@ public final class NativePhoneUseTool {
         }));
     }
     static void addDefinition(Context context, HookCallback.MethodHookParam p) {
-        if (!registered || !available(context) || definition == null || !(p.args[1] instanceof List<?> old)) return;
-        for (Object value : old) if (NAME.equals(Reflector.callMethod(value, "getName"))) return;
-        var tools = new java.util.ArrayList<Object>(old); tools.add(definition); p.args[1] = tools;
+        if (!registered || !available(context) || definitions.isEmpty() || !(p.args[1] instanceof List<?> old)) return;
+        var tools = new java.util.ArrayList<Object>(old);
+        for (var entry : definitions.entrySet()) {
+            boolean exists = false;
+            for (Object value : old) if (entry.getKey().equals(Reflector.callMethod(value, "getName"))) { exists = true; break; }
+            if (!exists) tools.add(entry.getValue());
+        }
+        p.args[1] = tools;
     }
 }

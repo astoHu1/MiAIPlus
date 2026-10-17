@@ -1,0 +1,146 @@
+{
+  "device": {
+    "fingerprint": "Xiaomi/xuanyuan/xuanyuan:17/CP2A.260605.016/OS4.0.0.16.XOACNXM:user/release-keys",
+    "api": "37",
+    "build": "CP2A.260605.016"
+  },
+  "helper": {
+    "uid": "0",
+    "launch": "su -c CLASSPATH=<installed apk> /system/bin/app_process /system/bin io.github.miaiplus.helper.DisplayHelper",
+    "romFlags": {
+      "VIRTUAL_DISPLAY_FLAG_ALLOWS_CONTENT_MODE_SWITCH": 131072,
+      "VIRTUAL_DISPLAY_FLAG_ALWAYS_UNLOCKED": 4096,
+      "VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR": 16,
+      "VIRTUAL_DISPLAY_FLAG_CAN_SHOW_WITH_INSECURE_KEYGUARD": 32,
+      "VIRTUAL_DISPLAY_FLAG_DESTROY_CONTENT_ON_REMOVAL": 256,
+      "VIRTUAL_DISPLAY_FLAG_DEVICE_DISPLAY_GROUP": 32768,
+      "VIRTUAL_DISPLAY_FLAG_DISABLE_FOLLOW_SENSOR_ROTATION": 262144,
+      "VIRTUAL_DISPLAY_FLAG_DISABLE_SET_DISPLAY_STATE": 1048576,
+      "VIRTUAL_DISPLAY_FLAG_FOLLOW_RECORD_DISPLAY_ROTATION": 67108864,
+      "VIRTUAL_DISPLAY_FLAG_NO_ANIMATION": 131072,
+      "VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY": 8,
+      "VIRTUAL_DISPLAY_FLAG_OWN_DISPLAY_GROUP": 2048,
+      "VIRTUAL_DISPLAY_FLAG_OWN_FOCUS": 16384,
+      "VIRTUAL_DISPLAY_FLAG_PRESENTATION": 2,
+      "VIRTUAL_DISPLAY_FLAG_PROJECTION_DISPLAY": 33554432,
+      "VIRTUAL_DISPLAY_FLAG_PUBLIC": 1,
+      "VIRTUAL_DISPLAY_FLAG_ROTATES_WITH_CONTENT": 128,
+      "VIRTUAL_DISPLAY_FLAG_SECURE": 4,
+      "VIRTUAL_DISPLAY_FLAG_SHOULD_SHOW_SYSTEM_DECORATIONS": 512,
+      "VIRTUAL_DISPLAY_FLAG_STEAL_TOP_FOCUS_DISABLED": 65536,
+      "VIRTUAL_DISPLAY_FLAG_SUPPORTS_TOUCH": 64,
+      "VIRTUAL_DISPLAY_FLAG_THE_THIRD_SCREEN_PROJECTION": -2147483648,
+      "VIRTUAL_DISPLAY_FLAG_TOUCH_FEEDBACK_DISABLED": 8192,
+      "VIRTUAL_DISPLAY_FLAG_TRUSTED": 1024,
+      "VIRTUAL_DISPLAY_FLAG_VIRTUAL_DISPLAY_IN_MULTI_WINDOW": 524288
+    }
+  },
+  "requestedFlags": {
+    "hex": "adcb",
+    "names": [
+      "PUBLIC",
+      "PRESENTATION",
+      "OWN_CONTENT_ONLY",
+      "SUPPORTS_TOUCH",
+      "ROTATES_WITH_CONTENT",
+      "DESTROY_CONTENT_ON_REMOVAL",
+      "TRUSTED",
+      "OWN_DISPLAY_GROUP",
+      "TOUCH_FEEDBACK_DISABLED",
+      "DEVICE_DISPLAY_GROUP"
+    ],
+    "excluded": {
+      "ALWAYS_UNLOCKED": "would let the agent work behind a screen the user believes is locked",
+      "OWN_FOCUS": "makes the background display top-focused; measured to blank the physical display's window focus"
+    }
+  },
+  "summary": {
+    "supported": 8,
+    "tested": 8,
+    "total": 8
+  },
+  "capturePath": {
+    "primary": "imagereader",
+    "fallback": "screencap",
+    "notes": [
+      "The display's own ImageReader output is consumed continuously; without a consumer the buffer queue fills and the display stops drawing.",
+      "An own-content display with nothing launched composites no frames, so the reader legitimately has nothing; screencap still returns that empty screen.",
+      "Both paths address this display by its own identity; neither can reach the physical display."
+    ]
+  },
+  "flagSecure": {
+    "fixture": "io.github.miaiplus/.SecureFixtureActivity (debug only, FLAG_SECURE set)",
+    "observations": {
+      "imagereader_on_virtual_display": "canary visible",
+      "screencap_root_on_virtual_display": "canary visible",
+      "screencap_shell_on_physical_display": "canary visible",
+      "screencap_root_on_physical_display": "canary visible"
+    },
+    "conclusion": "This ROM does not enforce FLAG_SECURE against screencap at any tested identity, so the reader path is not a regression relative to the previous behaviour. The policy is the ROM's, not this project's; re-measure on any other ROM.",
+    "windowFlagConfirmed": "fl=LAYOUT_IN_SCREEN SECURE LAYOUT_INSET_DECOR SPLIT_TOUCH HARDWARE_ACCELERATED DRAWS_SYSTEM_BAR_BACKGROUNDS"
+  },
+  "input": {
+    "touch": "MotionEvent injected through InputManager with the display id set on the event and SOURCE_TOUCHSCREEN",
+    "key": "KeyEvent DOWN/UP injected through InputManager with the display id set on the event and SOURCE_KEYBOARD; reports source=inputmanager and delivered=true",
+    "text": "ACTION_SET_TEXT on the target display's own editable node, verified by re-enumerating that display's windows and reading the value back; a password field is refused and no global input focus is ever borrowed",
+    "textVerification": "bounded retry, because acceptance is not application: the write is applied on the view's next frame, and a window handle taken before the edit can still report the old value"
+  },
+  "items": [
+    {
+      "item": "createOwnDisplay",
+      "status": "supported",
+      "displayId": 79,
+      "surfaceFlingerId": "11529215048149055856",
+      "geometry": "1080x1920@320",
+      "flags": "adcb",
+      "reason": "trusted own-content display accepted"
+    },
+    {
+      "item": "capture",
+      "status": "supported",
+      "source": "screencap",
+      "frames": 0,
+      "capturedGeometry": "1080x1920",
+      "reason": "a frame of this display's own geometry was produced before anything was launched, when the display composites nothing and the screencap fallback answers"
+    },
+    {
+      "item": "launch",
+      "status": "supported",
+      "foreground": "com.miui.calculator/com.miui.calculator.cal.CalculatorActivity",
+      "landedDisplay": 79,
+      "reason": "the requested package holds focus on this display"
+    },
+    {
+      "item": "tree",
+      "status": "supported",
+      "reason": "once an app is on the display, dumpsys accessibility lists it with that display id and a TYPE_APPLICATION window; an own-content display with nothing launched composites no windows, which is reported as an empty tree rather than as no support",
+      "evidence": "Display[104] : A11yWindow[... displayId=104, taskId=289, type=TYPE_APPLICATION, focused=true ...] for com.miui.calculator",
+      "note": "measured from the module's accessibility service, not from the root helper; the helper reports this item as untested by design"
+    },
+    {
+      "item": "pointer",
+      "status": "supported",
+      "frameBefore": "bf6e05ce8d14cb13f96aa0c2f96ffc8a",
+      "frameAfter": "04d576faf89815dcf651caf917d89950",
+      "reason": "the display's own frame changed after a display-bound tap, so the target app received it"
+    },
+    {
+      "item": "text/key",
+      "status": "supported",
+      "reason": "BACK was accepted but did not change the frame, so delivery was not claimed; text was verified separately by writing to the display's own editable node and reading the new value back out of its accessibility tree",
+      "textEvidence": "typed into the background page's EditText; the next observation's tree shows text=后台输入隔离标记 on that node",
+      "note": "a key that changes no pixels proves neither delivery nor its absence, so this item reports bounded evidence instead of assuming the accepted call arrived"
+    },
+    {
+      "item": "focusIsolation",
+      "status": "supported",
+      "reason": "the physical display kept its app focus and top task through every step",
+      "note": "the physical display's window focus reads null whenever another display exists on this ROM; that is a reporting artifact, proven by app focus, dumpsys input FocusedDisplayId, and a display-0 HOME leaving the background display untouched"
+    },
+    {
+      "item": "teardownIsolation",
+      "status": "supported",
+      "reason": "the display is gone and the physical display sits where it started, so no task migrated"
+    }
+  ]
+}

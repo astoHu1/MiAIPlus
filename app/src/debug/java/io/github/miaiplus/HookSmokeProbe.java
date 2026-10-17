@@ -15,6 +15,8 @@ public final class HookSmokeProbe {
     private static volatile java.lang.ref.WeakReference<android.view.View> functionBar = new java.lang.ref.WeakReference<>(null);
     private static BroadcastReceiver receiver;
     private static Context receiverContext;
+    private static volatile CountDownLatch dualToolsReady;
+    static Object chatCallbackForProbe() { return chatCallback.get(); }
     private static final java.util.Set<Thread> workers = java.util.concurrent.ConcurrentHashMap.newKeySet();
     public static void dispose(Context context) {
         if (!workers.isEmpty()) throw new IllegalStateException("Debug probe is running");
@@ -64,6 +66,27 @@ public final class HookSmokeProbe {
         if (!android.app.Application.getProcessName().equals("com.miui.voiceassist")) return;
         receiver = new BroadcastReceiver() {
             @Override public void onReceive(Context ignored, Intent intent) {
+                if ("MIAIPLUS_REPLY_ACTIONS_CANCEL".equals(intent.getStringExtra("frame"))) {
+                    ReplyActionsProbe.signalCancel();
+                    return;
+                }
+                if ("MIAIPLUS_REPLY_ACTIONS_READY".equals(intent.getStringExtra("frame"))) {
+                    ReplyActionsProbe.signalReady();
+                    return;
+                }
+                if ("MIAIPLUS_ROBUST_SCREEN_READY".equals(intent.getStringExtra("frame"))) {
+                    RobustScreenProbe.signalReady();
+                    return;
+                }
+                if ("MIAIPLUS_FOREGROUND_CONSENT_READY".equals(intent.getStringExtra("frame"))) {
+                    ForegroundConsentProbe.signalReady();
+                    return;
+                }
+                if ("MIAIPLUS_DUAL_TOOLS_READY".equals(intent.getStringExtra("frame"))) {
+                    CountDownLatch ready = dualToolsReady;
+                    if (ready != null) ready.countDown();
+                    return;
+                }
                 try { io.github.miaiplus.hook.Hooks.enter(); }
                 catch (IllegalStateException retiring) { return; }
                 // Release the broadcast queue before a long probe sends task-control broadcasts.
@@ -73,6 +96,11 @@ public final class HookSmokeProbe {
                         String token = intent.getStringExtra("frame");
                         report = "MIAIPLUS_LAUNCH_UI".equals(token) ? launchUi(context, loader)
                             : "MIAIPLUS_FOCUS_UI".equals(token) ? focusUi(context, loader)
+                            : "MIAIPLUS_DUAL_TOOLS".equals(token) ? dualTools(context, loader)
+                            : "MIAIPLUS_ROBUST_SCREEN".equals(token) ? RobustScreenProbe.run(context, loader)
+                            : "MIAIPLUS_CONVERSATION_RETURN".equals(token) ? ConversationReturnProbe.run(context, loader)
+                            : "MIAIPLUS_REPLY_ACTIONS".equals(token) ? ReplyActionsProbe.run(context, loader)
+                            : "MIAIPLUS_FOREGROUND_CONSENT".equals(token) ? ForegroundConsentProbe.run(context, loader)
                             : "MIAIPLUS_TRANSPORT_FAILURE".equals(token) ? transportFailures(loader)
                             : "MIAIPLUS_STOCK_REASONING".equals(token) ? reasoningUi(context, loader, true) : run(context, loader, token);
                     }
@@ -94,6 +122,140 @@ public final class HookSmokeProbe {
         for (Object record : records.values())
             if (!Boolean.TRUE.equals(Reflector.getObjectField(record, "paused"))) return (android.app.Activity)Reflector.getObjectField(record, "activity");
         return null;
+    }
+    /** Exercises registered native tools, rather than bypassing their routing through Provider calls. */
+    private static String dualTools(Context context, ClassLoader loader) throws Exception {
+        if (context.getSystemService(android.app.KeyguardManager.class).isKeyguardLocked())
+            throw new AssertionError("unlock device for dual-tool test");
+        Object registry = Reflector.getStaticObjectField(Reflector.findClass("com.aios.osbot.tools.ToolRegistry", loader), "instance");
+        if (registry == null) throw new AssertionError("native tool registry was not initialized");
+        String foregroundName = "miaiplus_phone_use", backgroundName = "miaiplus_background_phone_use";
+        Object foreground = invoke(registry, "get", foregroundName), background = invoke(registry, "get", backgroundName);
+        if (foreground == null || background == null || foreground == background)
+            throw new AssertionError("both distinct native tools must be registered");
+        CompletableFuture<Object> definitionsDone = new CompletableFuture<>();
+        List<?> definitions = (List<?>)await(loader, invoke(registry, "getToolDefinitions", continuation(loader, definitionsDone)), definitionsDone);
+        for (String name : List.of(foregroundName, backgroundName)) {
+            List<?> matches = definitions.stream().filter(d -> name.equals(invoke(d, "getName"))).collect(java.util.stream.Collectors.toList());
+            if (matches.size() != 1) throw new AssertionError("model definition missing or duplicated: " + name);
+            Object tool = invoke(registry, "get", name);
+            if (!String.valueOf(invoke(matches.get(0), "getParameters")).equals(String.valueOf(invoke(tool, "getParameters"))))
+                throw new AssertionError("exported schema differs from executable tool: " + name);
+        }
+        String foregroundSession = null, backgroundSession = null;
+        try {
+            String observed = executePhoneTool(loader, foreground, new org.json.JSONObject().put("goal", "只观察 MiAIPlus 主屏测试页面，不操作其他应用"));
+            foregroundSession = phoneSession(observed);
+            assertPhoneBackend(observed, "foreground", foregroundName);
+            if (!observed.contains("前台=io.github.miaiplus；"))
+                throw new AssertionError("foreground tool did not observe physical fixture: " + TaskProgress.compact(observed));
+            // Hiding a host Activity can rotate the owned fixture. Refresh after that transition before
+            // testing an anchored tap, whose production page-change guard must remain strict.
+            String settled = executePhoneTool(loader, foreground, new org.json.JSONObject().put("session", foregroundSession)
+                .put("action", new org.json.JSONObject().put("action", "wait").put("duration_ms", 800)));
+            if (!foregroundSession.equals(phoneSession(settled))) throw new AssertionError("foreground fixture did not settle");
+            String tapped = executePhoneTool(loader, foreground, new org.json.JSONObject().put("session", foregroundSession)
+                .put("coordinate_space", "normalized").put("action", new org.json.JSONObject().put("action", "tap")
+                    .put("element", new org.json.JSONArray().put(500).put(700))));
+            if (!foregroundSession.equals(phoneSession(tapped))) throw new AssertionError("foreground tap lost session");
+            awaitDualStage(context, "DUAL_TOOLS_FOREGROUND_STARTED");
+            assertWrongPhoneTool(loader, background, foregroundSession);
+            String continued = executePhoneTool(loader, foreground, phoneStep(foregroundSession, "wait").put("action",
+                new org.json.JSONObject().put("action", "wait").put("duration_ms", 100)));
+            if (!foregroundSession.equals(phoneSession(continued)) || !continued.contains("前台=io.github.miaiplus；"))
+                throw new AssertionError("foreground session changed after wrong-tool rejection");
+            assertPhoneBackend(continued, "foreground", foregroundName);
+            String finished = executePhoneTool(loader, foreground, phoneStep(foregroundSession, "finish"));
+            if (!finished.contains("模型报告任务完成")) throw new AssertionError("foreground tool did not finish: " + finished);
+            foregroundSession = null;
+
+            // Let the module-side runner take its main-screen baseline after foreground control has settled.
+            // The acknowledgement comes through the same DUMP-protected debug receiver, never a public IPC.
+            awaitDualStage(context, "DUAL_TOOLS_FOREGROUND_DONE");
+
+            String first = executePhoneTool(loader, background, new org.json.JSONObject().put("goal", "只操作后台独立测试页面，验证后结束"));
+            backgroundSession = phoneSession(first);
+            assertPhoneBackend(first, "background", backgroundName);
+            if (!first.contains("屏幕=1080x1920") || first.contains("前台=io.github.miaiplus；"))
+                throw new AssertionError("background tool observed the physical screen: " + TaskProgress.compact(first));
+            awaitDualStage(context, "DUAL_TOOLS_BACKGROUND_STARTED");
+            assertWrongPhoneTool(loader, foreground, backgroundSession);
+            String launched = executePhoneTool(loader, background, new org.json.JSONObject().put("session", backgroundSession)
+                .put("action", new org.json.JSONObject().put("action", "launch")
+                    .put("app", "io.github.miaiplus.test")));
+            if (!backgroundSession.equals(phoneSession(launched)) || !phonePackage(launched, "io.github.miaiplus.test"))
+                throw new AssertionError("background fixture was not launched on its session: "
+                    + launched.substring(Math.max(0, launched.lastIndexOf("前台="))));
+            String backgroundSettled = executePhoneTool(loader, background, new org.json.JSONObject().put("session", backgroundSession)
+                .put("action", new org.json.JSONObject().put("action", "wait").put("duration_ms", 800)));
+            if (!backgroundSession.equals(phoneSession(backgroundSettled)) || !phonePackage(backgroundSettled, "io.github.miaiplus.test"))
+                throw new AssertionError("background fixture did not settle");
+            // Explicit normalized coordinates avoid guessing the JPEG resize ratio. Both gestures stay inside
+            // our empty test page, and the module-side physical fixture records any accidental input leakage.
+            int touchDowns = 0;
+            for (org.json.JSONObject action : List.of(
+                new org.json.JSONObject().put("action", "tap").put("element", new org.json.JSONArray().put(500).put(700)),
+                new org.json.JSONObject().put("action", "swipe").put("start", new org.json.JSONArray().put(500).put(800))
+                    .put("end", new org.json.JSONArray().put(500).put(500)).put("duration_ms", 300))) {
+                String next = executePhoneTool(loader, background, new org.json.JSONObject().put("session", backgroundSession)
+                    .put("coordinate_space", "normalized").put("action", action));
+                if (!backgroundSession.equals(phoneSession(next)) || !next.contains("屏幕=1080x1920"))
+                    throw new AssertionError("background gesture lost its backend/session");
+                assertPhoneBackend(next, "background", backgroundName);
+                if (!next.contains("touch downs " + ++touchDowns))
+                    throw new AssertionError("background gesture was not delivered to its fixture: " + TaskProgress.compact(next));
+            }
+            String finishedBackground = executePhoneTool(loader, background, phoneStep(backgroundSession, "finish"));
+            if (!finishedBackground.contains("模型报告任务完成"))
+                throw new AssertionError("background tool did not finish: " + finishedBackground);
+            backgroundSession = null;
+            return "PROBE PASS: both exported native tool definitions and registry proxies; foreground and background starts; cross-tool continuations rejected without losing original sessions; background fixture tap/swipe and finish";
+        } finally {
+            dualToolsReady = null;
+            if (foregroundSession != null) executePhoneTool(loader, foreground, phoneStep(foregroundSession, "finish"));
+            if (backgroundSession != null) executePhoneTool(loader, background, phoneStep(backgroundSession, "finish"));
+        }
+    }
+    private static void awaitDualStage(Context context, String name) throws Exception {
+        CountDownLatch ready = new CountDownLatch(1); dualToolsReady = ready;
+        Bundle stage = new Bundle(); stage.putString("report", name);
+        context.getContentResolver().call(BridgeProvider.URI, "hook_report", null, stage);
+        if (!ready.await(20, TimeUnit.SECONDS)) throw new AssertionError("dual-tool stage was not acknowledged: " + name);
+        dualToolsReady = null;
+    }
+    private static org.json.JSONObject phoneStep(String session, String action) throws Exception {
+        return new org.json.JSONObject().put("session", session).put("action", new org.json.JSONObject().put("action", action)
+            .put("message", "双控屏工具测试结束"));
+    }
+    private static String phoneSession(String observation) {
+        var session = java.util.regex.Pattern.compile("会话=([a-f0-9-]{36})").matcher(observation);
+        if (!observation.startsWith("CONTINUE") || !session.find())
+            throw new AssertionError("native tool returned no continuing session: " + TaskProgress.compact(observation));
+        return session.group(1);
+    }
+    private static void assertWrongPhoneTool(ClassLoader loader, Object other, String session) throws Exception {
+        String refused = executePhoneTool(loader, other, phoneStep(session, "wait"));
+        if (refused.startsWith("CONTINUE") || !refused.contains("请继续使用启动此会话的工具"))
+            throw new AssertionError("cross-tool continuation was not rejected: " + TaskProgress.compact(refused));
+    }
+    private static void assertPhoneBackend(String observation, String backend, String tool) {
+        if (!observation.contains("执行屏幕=" + backend + "；会话工具=" + tool))
+            throw new AssertionError("observation has incorrect backend/tool owner: " + TaskProgress.compact(observation));
+    }
+    private static boolean phonePackage(String observation, String packageName) {
+        return observation.contains("前台=" + packageName + "；") || observation.contains("前台=" + packageName + "/");
+    }
+    private static String executePhoneTool(ClassLoader loader, Object tool, org.json.JSONObject request) throws Exception {
+        CompletableFuture<Object> completed = new CompletableFuture<>();
+        Object result = await(loader, invoke(tool, "execute", NativePhoneUseTool.json(loader, request.toString()), null,
+            continuation(loader, completed)), completed);
+        String text = String.valueOf(invoke(result, "getResult"));
+        if (text.startsWith("CONTINUE")) {
+            List<?> images = (List<?>)invoke(result, "getImages");
+            if (images == null || images.isEmpty()) throw new AssertionError("native tool observation has no attached image");
+            if (Boolean.TRUE.equals(invoke(result, "isDirectAnswer"))) throw new AssertionError("native tool ended its continuing turn");
+        }
+        return text;
     }
     private static String focusUi(Context context, ClassLoader loader) throws Exception {
         if (context.getSystemService(android.app.KeyguardManager.class).isKeyguardLocked()) throw new AssertionError("unlock device for focus UI test");
@@ -146,13 +308,34 @@ public final class HookSmokeProbe {
         if (compact) {
             assertFocus(context, "手机操作已结束");
             if (MainThread.call(root::isShown)) throw new AssertionError("shortcut overlay returned over completion island");
-            Thread.sleep(6000); // Capture automatically expanded completion island before exercising its return action.
+            Thread.sleep(3000); // Capture the completion island before exercising its return action.
             for (var notification : context.getSystemService(android.app.NotificationManager.class).getActiveNotifications())
                 if (notification.getId() == 0x4d494149) notification.getNotification().contentIntent.send();
             Thread.sleep(1500);
             if (MainThread.call(HookSmokeProbe::resumedActivity) == null) throw new AssertionError("native conversation entry did not open");
         }
-        else if (MainThread.call(HookSmokeProbe::resumedActivity) != origin) throw new AssertionError("did not restore the same full-screen Activity instance");
+        else {
+            // The task ending must not move the user's screen. Only the focus-island card may appear, and the
+            // return happens when the user taps it — not before.
+            assertFocus(context, "手机操作已结束");
+            if (MainThread.call(HookSmokeProbe::resumedActivity) == origin)
+                throw new AssertionError("finishing the task pulled the assistant back to the front");
+            Thread.sleep(2500);
+            if (MainThread.call(HookSmokeProbe::resumedActivity) == origin)
+                throw new AssertionError("the assistant returned to the front after the task ended");
+            // The card is the only way back, so it must actually carry the return action.
+            boolean offered = false;
+            for (var notification : context.getSystemService(android.app.NotificationManager.class).getActiveNotifications()) {
+                if (notification.getId() != 0x4d494149) continue;
+                if (notification.getNotification().contentIntent == null) throw new AssertionError("completion card has no return action");
+                notification.getNotification().contentIntent.send();
+                offered = true;
+            }
+            if (!offered) throw new AssertionError("completion card was not posted");
+            Thread.sleep(1500);
+            if (MainThread.call(HookSmokeProbe::resumedActivity) == null)
+                throw new AssertionError("the completion card did not return to the conversation");
+        }
         String stopObservation = focusRollover(context, service);
         if (!stopObservation.startsWith("CONTINUE")) throw new AssertionError("stop session failed");
         assertFocus(context, "正在操作手机");
@@ -198,8 +381,9 @@ public final class HookSmokeProbe {
                 || !state.getString("screen_task").equals(task) || watcher == previousWatcher || watcher == null)
                 throw new AssertionError("new task did not replace its UI observer: state=" + state
                     + ", previous=" + previousTask + ", current=" + task + ", sameWatcher=" + (watcher == previousWatcher));
-            if (Reflector.getObjectField(interaction, "returnIntent") != entry)
-                throw new AssertionError("rollover lost the original interaction entry");
+            Object nextEntry = Reflector.getObjectField(interaction, "returnIntent");
+            if (nextEntry == null || nextEntry.equals(entry))
+                throw new AssertionError("rollover did not bind a new task-specific conversation entry");
             return null;
         });
         assertFocus(context, "正在操作手机");
@@ -393,6 +577,7 @@ public final class HookSmokeProbe {
         for (Object transport : clients) {
             List<Object> events = collect(loader, transport, List.of(message(loader, "USER", "MIAIPLUS_NATIVE_STREAM_TEST", null)), List.of(tool), config);
             if (events.stream().noneMatch(e -> e.getClass().getName().equals("sm.b$f"))) throw new AssertionError("no native tool-call event for " + transport.getClass().getName() + ": " + events);
+            assertStreamEnded(events, "TOOL_CALLS");
             Object called = events.stream().filter(e -> e.getClass().getName().equals("sm.b$f")).findFirst().orElseThrow();
             Object nativeCall = Reflector.newInstance(Reflector.findClass("com.aios.osbot.agent.model.ToolCall", loader),
                 invoke(called, "getId"), invoke(called, "getName"), invoke(called, "getArguments"), "probe-result",
@@ -407,9 +592,11 @@ public final class HookSmokeProbe {
                 List.of(message(loader, "USER", "MIAIPLUS_NATIVE_STREAM_TEST", null), assistant, toolResult), List.of(tool), config);
             if (continued.stream().noneMatch(e -> e.getClass().getName().equals("sm.b$d") && String.valueOf(invoke(e, "getText")).contains("native-roundtrip-ok")))
                 throw new AssertionError("native tool result/image roundtrip failed for " + transport.getClass().getName() + ": " + continued);
+            assertStreamEnded(continued, "STOP");
             List<Object> textEvents = collect(loader, transport, List.of(message(loader, "USER", "MIAIPLUS_NATIVE_STREAM_FINAL", null)), List.of(), config);
             if (textEvents.stream().noneMatch(e -> e.getClass().getName().equals("sm.b$d") && String.valueOf(invoke(e, "getText")).contains("native-stream-ok")))
                 throw new AssertionError("no native text event for " + transport.getClass().getName() + ": " + textEvents);
+            assertStreamEnded(textEvents, "STOP");
         }
         @SuppressWarnings({"rawtypes", "unchecked"})
         Object background = Enum.valueOf((Class)Reflector.findClass("gp.e", loader), "BACKGROUND");
@@ -549,6 +736,15 @@ public final class HookSmokeProbe {
         Object result = value == suspended ? completion.get(40, TimeUnit.SECONDS) : value;
         Reflector.callStaticMethod(Reflector.findClass("kotlin.ResultKt", loader), "throwOnFailure", result);
         return result;
+    }
+    private static void assertStreamEnded(List<Object> events, String reason) {
+        long completions = events.stream().filter(e -> e.getClass().getName().equals("sm.b$b")).count();
+        if (completions != 1 || events.isEmpty()
+            || !events.get(events.size() - 1).getClass().getName().equals("sm.b$b")
+            || !reason.equals(String.valueOf(invoke(events.get(events.size() - 1), "getReason"))))
+            throw new AssertionError("native stream did not end with one " + reason + " completion");
+        if (events.stream().anyMatch(e -> e.getClass().getName().equals("sm.b$a")))
+            throw new AssertionError("native stream emitted an error before completion");
     }
     private static List<Object> collect(ClassLoader loader, Object client, List<?> messages, List<?> tools, Object config) throws Exception {
         CompletableFuture<Object> started = new CompletableFuture<>();

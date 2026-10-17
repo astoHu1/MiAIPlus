@@ -20,13 +20,20 @@ public final class DeviceTestRunner extends LiveProbeRunner {
         });
         super.finish(resultCode, results);
     }
-    private boolean hookMode, liveMode, reloadMode, guardMode, guardPreflightMode, profilesMode;
+    private boolean hookMode, liveMode, reloadMode, guardMode, guardPreflightMode, profilesMode, backgroundMode, focusMode, launchMode, scrollMode, dualToolsMode, foregroundConsentMode, conversationMode, robustScreenMode;
     private String transportApi;
-    @Override public void onCreate(Bundle arguments) { profilesMode = "true".equals(arguments.getString("profiles")); guardPreflightMode = "true".equals(arguments.getString("guard_preflight")); guardMode = "true".equals(arguments.getString("guard")); reloadMode = "true".equals(arguments.getString("reload")); transportApi = arguments.getString("api", "chat"); liveMode = "true".equals(arguments.getString("live")); hookMode = "true".equals(arguments.getString("hook")); super.onCreate(arguments); }
+    private boolean replyActionsMode, replyActionsCurrentConfig;
+    private String replyActionsApi;
+    @Override public void onCreate(Bundle arguments) {
+        replyActionsMode = "true".equals(arguments.getString("reply_actions"));
+        replyActionsCurrentConfig = "true".equals(arguments.getString("reply_actions_current_config"));
+        replyActionsApi = arguments.getString("reply_actions_api", "responses");
+        robustScreenMode = "true".equals(arguments.getString("robust_screen")); conversationMode = "true".equals(arguments.getString("conversation_return")); foregroundConsentMode = "true".equals(arguments.getString("foreground_consent")); dualToolsMode = "true".equals(arguments.getString("dual_tools")); backgroundMode = "true".equals(arguments.getString("background")); profilesMode = "true".equals(arguments.getString("profiles")); guardPreflightMode = "true".equals(arguments.getString("guard_preflight")); guardMode = "true".equals(arguments.getString("guard")); reloadMode = "true".equals(arguments.getString("reload")); transportApi = arguments.getString("api", "chat"); liveMode = "true".equals(arguments.getString("live")); hookMode = "true".equals(arguments.getString("hook")); focusMode = "true".equals(arguments.getString("focus")); launchMode = "true".equals(arguments.getString("launch")); scrollMode = "true".equals(arguments.getString("scroll")); super.onCreate(arguments); }
     private void check(boolean ok, String message) { if (!ok) throw new AssertionError(message); }
     private void signal(String text) { Bundle status = new Bundle(); status.putString("stream", text + "\n"); sendStatus(1, status); }
     private void configure(String protocol) {
-        Config.prefs(getTargetContext()).edit().putBoolean("enabled", true).putString("endpoint", "http://127.0.0.1:18765/v1")
+        Config.prefs(getTargetContext()).edit().putBoolean("enabled", true).putBoolean("backgroundDisplay", false)
+            .putString("endpoint", "http://127.0.0.1:18765/v1")
             .putString("api", transportApi).putString("apiKey", "test-key").putString("model", "responses".equals(transportApi) ? "fixture-responses-model" : "fixture-model").putString("planner", "external").putString("protocol", protocol).putInt("maxSteps", 8).commit();
     }
     private Bundle startJob(String mode, String query) {
@@ -60,10 +67,19 @@ public final class DeviceTestRunner extends LiveProbeRunner {
         } catch (java.io.FileNotFoundException expected) { }
     }
     @Override public void onStart() {
+        if (replyActionsMode) { ReplyActionsRunner.run(this, replyActionsApi, replyActionsCurrentConfig); return; }
+        if (robustScreenMode) { RobustScreenRunner.run(this); return; }
+        if (foregroundConsentMode) { ForegroundConsentRunner.run(this); return; }
+        if (dualToolsMode) { DualToolsRunner.run(this); return; }
+        if (scrollMode) { ScrollRunner.run(this); return; }
+        if (backgroundMode) { BackgroundRunner.run(this); return; }
         if (profilesMode) { EndpointProfilesRunner.run(this); return; }
         if (guardPreflightMode) { AccessibilityGuardRunner.runPreflight(this); return; }
         if (guardMode) { AccessibilityGuardRunner.run(this); return; }
         if (reloadMode) { ReloadProbeRunner.run(this, true); return; }
+        // The focus and launch probes live in the parent runner; without this dispatch they fell through to the
+        // default mock-model case and failed on a connection the probe never needed.
+        if (focusMode || launchMode || conversationMode) { super.onStart(); return; }
         if (hookMode || liveMode) { super.onStart(); return; }
         Bundle report = new Bundle();
         int resultCode = Activity.RESULT_CANCELED;

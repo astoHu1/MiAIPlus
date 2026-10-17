@@ -39,6 +39,78 @@ final class EndpointProfilesRunner {
 
     static void runVirtualIdle(Instrumentation test) { new EndpointProfilesRunner(test).runVirtual(true); }
 
+    static void runDirect(Instrumentation test) { new EndpointProfilesRunner(test).runDirect(); }
+
+    /** Exercise the actual Start/Stop UI against the local delayed model fixture on a separate display. */
+    private void runDirect() {
+        var context = test.getTargetContext();
+        var prefs = Config.prefs(context);
+        Map<String, ?> original = prefs.getAll();
+        Bundle result = new Bundle();
+        int code = Activity.RESULT_CANCELED;
+        boolean changed = false;
+        try {
+            Bundle health = context.getContentResolver().call(BridgeProvider.URI, "accessibility_health", null, null);
+            Bundle screen = context.getContentResolver().call(BridgeProvider.URI, "screen_state", null, null);
+            check(health != null && !health.getBoolean("busy") && !health.getBoolean("preparing")
+                && screen != null && !screen.getBoolean("active"), "Stop active work before direct UI test");
+            Bundle connecting = new Bundle(); connecting.putString("stream", "MIAIPLUS_CONNECT_SERVICE\n");
+            test.sendStatus(0, connecting);
+            waitFor(ScreenService::isHealthy, "Accessibility did not reconnect");
+            changed = true;
+            check(prefs.edit().clear().putBoolean("enabled", true).putBoolean("backgroundDisplay", true)
+                .putString("endpoint", "http://127.0.0.1:18765/v1").putString("apiKey", "test-key")
+                .putString("model", "fixture-model").putString("api", "chat").putString("planner", "external")
+                .putString("protocol", "phone_use").putInt("maxSteps", 8).commit(), "Fixture save failed");
+            activity = (MainActivity) test.startActivitySync(new Intent(context, MainActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
+            onMain(() -> state = new ViewModelProvider(activity).get(SettingsState.class));
+            click("运行状态"); click("直接测试");
+            edit("", "MIAIPLUS_CANCEL_TEST");
+            click("开始测试");
+            waitFor(() -> state.getJob() != null && BackgroundDisplay.active() != null
+                && BackgroundDisplay.active().isOpen(), "Direct test did not create its background display");
+            onMain(() -> {
+                check(activity.hasWindowFocus() && activity.getWindow().getDecorView().isShown(),
+                    "Background test hid or unfocused the physical settings page");
+                check((activity.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE) != 0,
+                    "Direct test removed the secure settings flag");
+            });
+            click("停止任务");
+            waitFor(() -> state.getJob() == null && BackgroundDisplay.active() == null,
+                "Stop did not finish the job and release the display");
+            result.putString("stream", "PASS: actual Start/Stop UI created a background display while secure settings "
+                + "remained focused and visible on the physical screen; stop released the display. Local mock only.\n");
+            code = Activity.RESULT_OK;
+        } catch (Throwable failure) {
+            result.putString("stream", "FAIL: " + android.util.Log.getStackTraceString(failure));
+        } finally {
+            if (changed) {
+                BridgeProvider.cancelActive(); BackgroundDisplay.closeActive();
+            }
+            if (activity != null) { onMain(activity::finish); test.waitForIdleSync(); }
+            if (changed) {
+                var editor = prefs.edit().clear();
+                for (var entry : original.entrySet()) {
+                    Object value = entry.getValue(); String key = entry.getKey();
+                    if (value instanceof String v) editor.putString(key, v);
+                    else if (value instanceof Boolean v) editor.putBoolean(key, v);
+                    else if (value instanceof Integer v) editor.putInt(key, v);
+                    else if (value instanceof Long v) editor.putLong(key, v);
+                    else if (value instanceof Float v) editor.putFloat(key, v);
+                    else if (value instanceof Set<?>) {
+                        @SuppressWarnings("unchecked") Set<String> strings = (Set<String>) value;
+                        editor.putStringSet(key, strings);
+                    }
+                }
+                if (!editor.commit() || !original.equals(prefs.getAll())) {
+                    code = Activity.RESULT_CANCELED; result.putString("stream", "FAIL: Could not restore original settings\n");
+                }
+            }
+        }
+        test.finish(code, result);
+    }
+
     private void runVirtual(boolean idleSample) {
         var context = test.getTargetContext();
         var prefs = Config.prefs(context);
@@ -70,9 +142,9 @@ final class EndpointProfilesRunner {
                 test.finish(code, result);
                 return;
             }
-            click("使用虚拟屏");
+            click("兼容入口默认使用虚拟屏");
             waitFor(() -> new Config(context).backgroundDisplay != originalMode, "Virtual mode did not save");
-            click("使用虚拟屏");
+            click("兼容入口默认使用虚拟屏");
             waitFor(() -> new Config(context).backgroundDisplay == originalMode, "Virtual mode did not restore");
             click("检查前置条件");
             waitFor(() -> state.getVirtualScreen().getAvailability() != null && !state.getVirtualScreen().getChecking(),

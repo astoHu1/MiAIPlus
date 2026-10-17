@@ -24,9 +24,13 @@ flowchart TD
 
 ## 默认官方模型控屏
 
-`NativeSession` 在模块 UID 维护四分钟以内的会话、最近观察、最大步数和停止状态。首次请求返回 `CONTINUE`、会话号和观察；官方模型优先使用注册到原生 ToolRegistry 的 `miaiplus_phone_use` 函数提交 `session` 和 `action`；兼容入口接收 `MIAIPLUS:{session,action}`。结构化函数默认按实际 JPEG 像素接收坐标，也支持显式物理屏幕像素与0..1000；统一换算后再交给执行器。旧入口默认归一化坐标。结构化函数只在启用本机原生规划时加入模型工具列表，执行时再次校验配置。每步只执行一个数据动作，之后重新观察。对包含模块 CONTINUE 和截图 token 的 ToolResult.Success，清除直接答案标记与内部 CLI 直接答案 metadata，确保原 Agent 把中间观察回送模型；其他工具结果保持原行为。结束/接管显式关闭会话。
+`NativeSession` 在模块 UID 维护四分钟以内的会话、最近观察、最大步数和停止状态。首次请求返回 `CONTINUE`、会话号和观察；模型可调用注册到原生 ToolRegistry 的两个函数：`miaiplus_phone_use` 前台控屏、`miaiplus_background_phone_use` 虚拟屏控屏。首次通过所选工具提交 `goal`，后续沿用同一工具提交 `session` 和 `action`；两者不受兼容入口默认屏幕开关影响；兼容入口接收 `MIAIPLUS:{session,action}`。结构化函数默认按实际 JPEG 像素接收坐标，也支持显式物理屏幕像素与0..1000；统一换算后再交给执行器。旧入口默认归一化坐标。结构化函数只在启用本机原生规划时加入模型工具列表，执行时再次校验配置。每步只执行一个数据动作，之后重新观察。对包含模块 CONTINUE 和截图 token 的 ToolResult.Success，清除直接答案标记与内部 CLI 直接答案 metadata，确保原 Agent 把中间观察回送模型；其他工具结果保持原行为。结束/接管显式关闭会话。
 
 无外部端点配置也可工作，`AgentEngine` 在该模式下不调用 `ModelClient`。截图由 `FrameStore` 存入短期内存，以随机、一次性、调用 UID 绑定的 token 经 Provider 管道读取。`NativeModelHook` 优先在 ToolResult.Success 中附加 `ImageContent`，使原生 CLI 与消息历史复制保留图片；TOOL Message 构造 Hook 提供兼容读取。图片元数据采用实际 JPEG 尺寸，执行坐标仍以原屏归一化。截图不以 Base64 进入工具返回字符串或 Binder Bundle。
+
+`PageGuard` 按动作目标检查新旧观察：点击、双击和长按比较坐标覆盖的控件、祖先与遮挡节点，输入比较唯一的已聚焦编辑框；同时校验前台应用、显示实例和几何尺寸。目标区域外的动态文字变化不使动作失效。目标改变时不注入输入，原会话返回 `CONTINUE` 和新观察，由模型重新规划；不自动重放旧动作，跳过步骤仍消耗步数预算。无可访问目标的纯图片区域保守要求截图完全一致。前台执行器还在主线程注入前检查一次节点；截图校验和实际输入之间仍存在时间间隔，不保证捕获所有纯像素变化。双击首击后目标改变则明确报告部分执行并停止，避免重试首击。无障碍树输出窗口、资源 ID、启用与焦点状态，并转义文本换行，避免文本伪装成节点。
+
+`ConversationReturn` 在首次工具调用时从宿主 `ExecutionContext.getContextVarIdentity()` 提取 agent/chat，以当前匹配页面或只读持久化查询构造原生 `PageNavigationData` 返回入口；旧入口从当前浮窗/全屏页面获取。定位在启动 IPC 前完成，不挤占界面就绪期限。`InteractionUi` 为每个控屏任务创建独立、不可变的通知 PendingIntent，续调与收尾保持首次对话；结束不自动切换页面，用户点击完成岛后进入对应对话。
 
 原官方模型及其传输链是否支持图片需要单独确认；不支持时有无障碍树可用，但纯图片页面受限。该实现没有内置 AutoGLM 模型权重，不能把模型名称与执行器协议混为一谈。
 
@@ -57,6 +61,8 @@ API Key 仅在显式启用全局替换时经 UID 校验 IPC 交给小爱进程�
 
 `ResponsesStream` 逐帧读取 Responses SSE，文字 delta 即时转为原生流；仅在 response.completed 且完整输出通过检查后释放工具调用及结束事件。failed、incomplete、拒绝和提前 EOF 作为失败，不释放未完成调用。ResponseBody 包装继续使用原网络读取/关闭机制，保留取消与超时。OkHttp/Okio 反射绑定是该精确小爱版本的混淆类名。
 
+上游注释、空帧和未显示的推理／进度事件会转成固定无内容 SSE 心跳，避免持续活跃的 Responses 流被宿主 30 秒逐行空闲计时误判为断流，导致正文出现后操作按钮缺失。心跳不传递推理正文、不代表完成；完全静默、失败和不完整输出仍按原规则停止。空文字 delta 不抑制 completed 中的最终正文。
+
 `TransportBoundary` 在整个自定义拦截器边界展开 Xposed/Java 反射与代理包装，保留原始 IOException。否则取消、断连产生的 IOException 被 Xposed 包装成 InvocationTargetError 后，会逃出 OkHttp 异步线程并杀死小爱进程。其他适配异常转为不附带请求内容的 IOException，虚拟机致命错误仍上抛；响应转换失败会关闭原 body。
 
 独立 `ModelClient` 将原始 Responses output 附到内存历史，下轮连同工具结果回传，以保留加密 reasoning 和 assistant phase。原生历史不支持这些字段，网络适配器按服务地址/模型/完整 call_id+工具名+参数组暂存最近输出（最多 64 组、约 200 万字符），命中时回放；超限或进程重启后仅重建函数调用上下文。缓存只在进程内存在，不写盘。独立请求预留 16384 输出 token；GPT-6 原生请求至少 8192，避免沿用小额纯文本预算导致推理耗尽。未完成时仍停止。
@@ -81,7 +87,7 @@ Hook 仅安装在精确校验的小爱版本：工具入口、描述构造、Pro
 
 原主模型/工具选择、无障碍支持、动态页面、模型图片能力、系统权限及原生 Agent 的回合预算都会影响结果。支付/发送等确认依赖模型标记；不绕过锁屏、安全窗口、密码框、验证码。无应用白名单不等于任意页面都可成功操作。
 
-独立外部循环只保留最新截图与有限历史；默认原生循环的历史与图片生命周期由小爱原消息管理控制。具体通过及待验证项目见 `IMPLEMENTATION-STATUS.md`。
+独立外部循环只保留最新截图与有限历史；默认原生循环的历史与图片生命周期由小爱原消息管理控制。具体通过及待验证项目见 `docs/validation.md`。
 
 ## API 102 和控屏交互
 
@@ -91,9 +97,27 @@ Hook 仅安装在精确校验的小爱版本：工具入口、描述构造、Pro
 
 展开岛通过 `param_v2.actions` / `miui.focus.actions` 提供停止控制，移除常驻无障碍悬浮停止键；确认窗仍由 `ScreenService` 按动作显示。Provider 用独立 `screen_task` 生命周期连接各次工具请求，宿主页面的中间更新在任务结束前保持后台。
 
+通知观察器只接受相同 `screen_task` 的 `completed=true` 且 `active=false` 作为正常收尾确认；单步工具返回、跨步等待和重新规划均保留进行中通知。只有执行器收到明确 `finish` 后的“模型报告任务完成”结果显示完成文案；失败或取消显示“手机操作已停止／任务未完成”，接管继续使用 PAUSE 文案。
+
 `TaskProgress` 将 action.intent 转为有界短文本；没有该字段时按动作生成说明，独立于触发确认的 message。`InteractionUi` 每 700 毫秒读取任务进度，仅在变化时更新岛右侧，使用 JSONObject 构造参数并关闭更新时的重复浮动提醒。执行指纹排除 intent，防止仅修改文案绕过重复动作检测。
 
 可选 `AccessibilityGuard` 只在新控屏任务的准备阶段查询 Binder 连接；失效时执行有界 root helper，只重绑模块组件。后续工具调用、任务中途和空闲时没有自动修复。root 专用健康 IPC 只返回连接、开关、准备阶段、任务票据与忙碌状态，不暴露配置、树或截图；旧 daemon 的取消请求已失效。详见 [任务前检查与边界](accessibility-guard.md)。
+
+## 后台虚拟屏
+
+可选的第二条执行后端：控屏任务在一块独立屏幕运行，用户继续使用主屏。模型通过独立后台控屏工具显式选择此后端；前台工具固定从物理屏开始。模块私有默认屏幕开关只影响旧兼容入口与直接测试的新任务。
+
+屏幕不能由模块进程创建。LSPosed 只把代码注入小爱进程，既不把该进程提到 system/shell 身份，也不授予平台权限；而能承载任意第三方应用的屏幕必须是受信任屏，overlay 显示（`settings put global overlay_display_devices`）产生的是非受信任、不可聚焦的屏，`am start` 会在权限检查处被拒。因此另起一个 `app_process`，以 root 身份持有屏幕，模块通过受控 IPC 使用它。
+
+分工：`helper/DisplayHelper` 是 root 侧、独占持有屏幕的进程，只接受类型化 RPC（`<token> <verb> <args>`），唯一的子进程是固定 argv 的 `am`/`screencap`/`input`/`dumpsys`，任何输入都不会被拼成 shell 字符串。`BackgroundDisplay` 是模块侧会话，启动 helper、收发命令、读回帧。`DisplaySession` 记录一次运行的屏幕身份（逻辑 id、SurfaceFlinger token、几何、generation），generation 用于拒绝旧屏的迟到请求——系统会复用 display id。`BackgroundActions` 只在该屏上执行动作，不做全局动作、不查默认屏。
+
+两处设计取舍来自实机失败，不是推测：一是另一块屏存在时主屏的 `mCurrentFocus` 会读成 `null`（从建屏那一刻起），但它仍在收自己的输入，所以隔离判定以 app 焦点和栈顶任务为准，窗口焦点只作证据；二是多数应用是 `singleTask`，让它在后台屏“启动”会被系统实现为把用户正在看的任务搬走，命令还报成功，所以启动前先查可见任务并拒绝。
+
+2026-10-17 按用户要求调整冲突处理：任务查询读取系统 TaskInfo 的真实组件与 task identity；首次目标就是主屏当前应用时转前台，中途则由 `ForegroundConsent` 经 Provider 暴露绑定 UID/任务/token 的请求，`InteractionUi` 仅以灵动岛按钮收集同意或拒绝。同意后重新验证主屏归属、释放后台屏并作废旧观察，下一步从新的主屏观察规划；拒绝/超时暂停并结束本轮。后台故障仍停止，不触发此交接。完整探针与准备、执行、原生跨步间隔及收尾互斥，状态查询单独持有缓存目录。
+
+取消清理绑定具体 NativeSession/BackgroundDisplay 实例，异步等待执行退出；步骤续期同步更新 deadline 与 watchdog。后台输入定位原焦点节点并精确回读原节点值，helper 拒绝输入或不能验证 LOCAL 输入法策略时停止。帧节流保留最终待复制图像，手势使用同一 downTime 与实际注入时刻。上述当前实现的新增设备验收尚未完成，不继承此前版本的实测通过结论。
+
+`NativeSession` 和 `AgentEngine` 共用同一后端。后台模式下确认弹窗不覆盖物理屏，改为 PAUSE；具体行为、错误码与已验证项见 [后台虚拟屏](background-display.md)。
 
 ## 应用启动
 
