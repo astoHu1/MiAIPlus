@@ -128,12 +128,11 @@ public final class AgentEngine {
                 } else {
                     if (confirmation) {
                         if (background) {
-                            // The confirmation overlay belongs to the physical screen; in background mode the task
-                            // pauses instead of covering what the user is doing, and submits nothing.
+                            // Preserve manual takeover for background sensitive actions.
                             return "PAUSE：后台任务暂停，等待你确认后重新发起。" + action.data.optString("message", "执行 " + action.name);
                         }
                         run.progress = "等待确认：" + intent;
-                        if (!screen.confirm(action.data.optString("message", "执行 " + action.name), run)) return "操作已取消";
+                        if (!screen.confirm(ActionConfirmation.message(action), run)) return "操作已取消";
                         run.progress = intent;
                         // Replan after user confirmation if the underlying screen changed.
                         ScreenService.Frame after = observe(display, screen, run);
@@ -155,9 +154,8 @@ public final class AgentEngine {
         } catch (ForegroundConsent.Paused pause) {
             return pause.getMessage();
         } finally {
-            // Release the root helper's display first; hiding the island controls cannot free a display.
+            // Release the root helper's display before the task's notification is retired.
             if (display != null) display.close();
-            screen.hideControls();
         }
     }
 

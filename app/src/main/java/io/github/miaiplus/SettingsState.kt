@@ -3,10 +3,12 @@ package io.github.miaiplus
 import android.app.Application
 import android.os.Bundle
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.structuralEqualityPolicy
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
@@ -60,7 +62,10 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
         private set
     var result by mutableStateOf("")
         private set
-    val dirty: Boolean get() = draft != profiles?.active()?.let(::ProfileDraft)
+    // Editing an already-dirty draft must not invalidate navigation and the save bar on every key.
+    val dirty: Boolean by derivedStateOf(structuralEqualityPolicy()) {
+        draft != profiles?.active()?.let(::ProfileDraft)
+    }
     val external: Boolean get() = config.globalModel || config.planner == "external"
 
     init {

@@ -7,6 +7,9 @@ import android.graphics.Rect;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.view.Gravity;
+import android.view.Menu;
+import android.view.MenuItem;
+import android.view.SubMenu;
 import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.ListView;
@@ -22,10 +25,18 @@ import java.util.List;
 final class NativeReasoningHook {
     private NativeReasoningHook() {}
     private static final java.util.Map<TextView, CharSequence> stockLabels = new java.util.WeakHashMap<>();
+    private static final java.util.Map<MenuItem, Bundle> floatingSelections = new java.util.WeakHashMap<>();
+    private static java.lang.ref.WeakReference<Object> floatingPopup = new java.lang.ref.WeakReference<>(null);
+    // FloatStateMorePopup resources in the exact supported host version.
+    static final int FLOAT_MODE_ITEM = 0x7f0a0a43;
+    private static final int FLOAT_EFFORT_ITEM = 0x00f10000;
     private static java.lang.ref.WeakReference<PopupWindow> active = new java.lang.ref.WeakReference<>(null);
     static void dispose() throws Exception {
         MainThread.call(() -> {
                 PopupWindow popup = active.get(); if (popup != null) popup.dismiss();
+                Object floating = floatingPopup.get();
+                if (floating != null) Reflector.callMethod(floating, "dismiss");
+                floatingSelections.clear(); floatingPopup.clear();
                 for (TextView chip : new java.util.ArrayList<>(stockLabels.keySet())) restoreLabel(chip);
                 stockLabels.clear(); active.clear(); return null;
         });
@@ -107,6 +118,83 @@ final class NativeReasoningHook {
                     } catch (Exception unavailable) { /* Keep the native label. */ }
                 }
             }));
+        installFloating(context, loader, hooks);
+    }
+    private static void installFloating(Context context, ClassLoader loader, List<HookCallback.Unhook> hooks) throws Exception {
+        Class<?> floating = Reflector.findClass("zd1.b0", loader);
+        // Native preCheckSecondaryItem consumes this array before the menu is inflated.
+        hooks.add(Hooks.hookMethod(floating.getDeclaredMethod("g"), new HookCallback() {
+            @Override protected void beforeHookedMethod(MethodHookParam p) {
+                NativeModelHook.invalidateConfig();
+                try {
+                    Bundle config = NativeModelHook.config(context);
+                    if (config.getBoolean("globalModel")) p.setResult(floatingChecks(config));
+                } catch (Exception unavailable) { /* Keep the native menu. */ }
+            }
+        }));
+        // t() finishes stock visibility setup, before HyperPopupWindow copies the menu.
+        hooks.add(Hooks.hookMethod(floating.getDeclaredMethod("t",
+            Reflector.findClass("miuix.appcompat.internal.view.menu.d", loader)), new HookCallback() {
+            @Override protected void afterHookedMethod(MethodHookParam p) {
+                try {
+                    Bundle config = NativeModelHook.config(context);
+                    replaceFloatingModes((Menu)p.args[0], config);
+                    if (config.getBoolean("globalModel")) floatingPopup = new java.lang.ref.WeakReference<>(p.thisObject);
+                }
+                catch (Exception unavailable) { /* Keep the native menu. */ }
+            }
+        }));
+        hooks.add(Hooks.hookMethod(floating.getDeclaredMethod("o", MenuItem.class, Context.class), new HookCallback() {
+            @Override protected void beforeHookedMethod(MethodHookParam p) {
+                if (!floatingSelections.containsKey((MenuItem)p.args[0])) return;
+                // Never pass external efforts to the native AUTO/QUICK/EXPERT callback.
+                p.setResult(null);
+                Context ui = (Context)p.args[1];
+                try { applyFloatingSelection(ui, (MenuItem)p.args[0]); }
+                catch (Exception failure) {
+                    Toast.makeText(ui, "模型配置已更改或保存失败，请重新打开菜单", Toast.LENGTH_SHORT).show();
+                } finally { Reflector.callMethod(p.thisObject, "dismiss"); }
+            }
+        }));
+    }
+    static boolean applyFloatingSelection(Context context, MenuItem item) {
+        Bundle selection = floatingSelections.get(item);
+        if (selection == null) return false;
+        save(context, selection, selection.getString("reasoning", "default"));
+        return true;
+    }
+    static Boolean[] floatingChecks(Bundle config) {
+        List<String> choices = ReasoningPolicy.choices(config.getString("model", ""), config.getString("api", "chat"));
+        String selected = ReasoningPolicy.normalize(config.getString("model", ""), config.getString("api", "chat"),
+            config.getString("reasoning", "default"));
+        return choices.stream().map(selected::equals).toArray(Boolean[]::new);
+    }
+    static void replaceFloatingModes(Menu menu, Bundle config) {
+        if (!config.getBoolean("globalModel")) return;
+        MenuItem parent = menu.findItem(FLOAT_MODE_ITEM);
+        if (parent == null || !parent.hasSubMenu()) return;
+        SubMenu modes = parent.getSubMenu();
+        modes.clear();
+        List<String> choices = ReasoningPolicy.choices(config.getString("model", ""), config.getString("api", "chat"));
+        Boolean[] checked = floatingChecks(config);
+        for (int i = 0; i < choices.size(); i++) {
+            String effort = choices.get(i);
+            MenuItem item = modes.add(Menu.NONE, FLOAT_EFFORT_ITEM + i, i, ReasoningPolicy.label(effort));
+            item.setCheckable(true).setChecked(checked[i]);
+            floatingSelections.put(item, selection(config, effort));
+        }
+    }
+    private static Bundle selection(Bundle config, String effort) {
+        Bundle extras = new Bundle();
+        for (String key : List.of("endpoint", "model", "api")) extras.putString(key, config.getString(key, ""));
+        extras.putString("reasoning", effort);
+        return extras;
+    }
+    private static Bundle save(Context context, Bundle config, String effort) {
+        Bundle result = context.getContentResolver().call(BridgeProvider.URI, "set_reasoning", null, selection(config, effort));
+        if (result == null) throw new IllegalStateException("未保存");
+        NativeModelHook.invalidateConfig();
+        return result;
     }
     private static TextView chip(Object input) {
         return (TextView)Reflector.getObjectField(Reflector.getObjectField(input, "I"), "c");
@@ -169,12 +257,7 @@ final class NativeReasoningHook {
         list.setPadding(0, dp(context, 6), 0, dp(context, 6));
         list.setOnItemClickListener((parent, row, position, id) -> {
             try {
-                Bundle extras = new Bundle();
-                for (String key : List.of("endpoint", "model", "api")) extras.putString(key, config.getString(key, ""));
-                extras.putString("reasoning", choices.get(position));
-                Bundle result = context.getContentResolver().call(BridgeProvider.URI, "set_reasoning", null, extras);
-                if (result == null) throw new IllegalStateException("未保存");
-                NativeModelHook.invalidateConfig();
+                Bundle result = save(context, config, choices.get(position));
                 TextView text = labelView(anchor);
                 if (text != null) text.setText(ReasoningPolicy.label(result.getString("reasoning", "default")));
                 popup.dismiss();

@@ -1,0 +1,144 @@
+name: Signed Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag (must match versionName, e.g. v0.3.3)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: signed-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate release tag
+        id: version
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]
+          git checkout --detach "refs/tags/$RELEASE_TAG"
+          git merge-base --is-ancestor HEAD origin/main
+          python3 - <<'PY'
+          import os, re
+          from pathlib import Path
+          version = re.search(r"versionName '([^']+)'", Path('app/build.gradle').read_text()).group(1)
+          if os.environ['RELEASE_TAG'] != 'v' + version:
+              raise SystemExit('Tag must match app versionName')
+          PY
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Test, lint, and build
+        run: >-
+          ./gradlew --no-daemon :app:testDebugUnitTest
+          :app:lintDebug :app:lintRelease :app:assembleRelease :app:assembleDebugAndroidTest
+      - name: Package unsigned inputs
+        run: python3 scripts/package_release.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-inputs
+          path: |
+            dist/*-unsigned.apk
+            dist/*-source.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-reports
+          path: |
+            app/build/reports/tests/
+            app/build/test-results/
+            app/build/reports/lint-results-*
+          if-no-files-found: ignore
+
+  sign:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-inputs
+          path: inputs
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager 'build-tools;37.0.0'
+      - name: Sign and verify APK
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          set -euo pipefail
+          : "${ANDROID_KEYSTORE_BASE64:?Missing keystore}" "${ANDROID_KEYSTORE_PASSWORD:?Missing store password}"
+          : "${ANDROID_KEY_ALIAS:?Missing alias}" "${ANDROID_KEY_PASSWORD:?Missing key password}"
+          umask 077
+          keyfile="$RUNNER_TEMP/release.jks"
+          trap 'rm -f "$keyfile"' EXIT
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$keyfile"
+          mkdir -p release
+          version="${RELEASE_TAG#v}"
+          tools="$ANDROID_HOME/build-tools/37.0.0"
+          "$tools/zipalign" -P 16 -f 4 "inputs/MiAIPlus-$version-unsigned.apk" "$RUNNER_TEMP/aligned.apk"
+          "$tools/apksigner" sign --ks "$keyfile" --ks-key-alias "$ANDROID_KEY_ALIAS" \
+            --ks-pass env:ANDROID_KEYSTORE_PASSWORD --key-pass env:ANDROID_KEY_PASSWORD \
+            --out "release/MiAIPlus-$version.apk" "$RUNNER_TEMP/aligned.apk"
+          "$tools/apksigner" verify --verbose --print-certs "release/MiAIPlus-$version.apk" > release/signing-certificate.txt
+          cp "inputs/MiAIPlus-$version-source.zip" release/
+          cd release
+          sha256sum *.apk *.zip signing-certificate.txt > SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-release
+          path: release/
+          if-no-files-found: error
+      - name: Create draft GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft > "$RUNNER_TEMP/release-state"; then
+            [[ "$(cat "$RUNNER_TEMP/release-state")" == true ]] || { echo 'Refusing to replace a published release'; exit 1; }
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "MiAIPlus $RELEASE_TAG" --generate-notes
+          fi
+          gh release upload "$RELEASE_TAG" release/* --clobber

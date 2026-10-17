@@ -18,7 +18,7 @@ import org.robolectric.Shadows;
 @RunWith(RobolectricTestRunner.class)
 @org.robolectric.annotation.Config(sdk = 33, application = Application.class)
 public final class ForegroundConsentBroadcastTest {
-    @Test public void bothConsentActionsReachTheirRegisteredReceiverWithoutOpeningAnActivity() {
+    @Test public void bothForegroundAndSensitiveActionDecisionsReachReceiverWithoutOpeningAnActivity() {
         Application app = RuntimeEnvironment.getApplication();
         List<Intent> received = new ArrayList<>();
         BroadcastReceiver receiver = new BroadcastReceiver() {
@@ -26,15 +26,21 @@ public final class ForegroundConsentBroadcastTest {
         };
         app.registerReceiver(receiver, InteractionUi.consentFilter(), Context.RECEIVER_NOT_EXPORTED);
         try {
-            for (boolean allow : new boolean[]{true, false}) {
-                Intent answer = InteractionUi.consentIntent(app.getPackageName(), "task-a", "token-a", allow);
-                assertTrue(InteractionUi.consentFilter().matchData(null, answer.getScheme(), answer.getData()) >= 0);
-                app.sendBroadcast(answer);
+            for (boolean confirmAction : new boolean[]{false, true}) {
+                for (boolean allow : new boolean[]{true, false}) {
+                    Intent answer = InteractionUi.consentIntent(app.getPackageName(), "task-a", "token-a", allow, confirmAction);
+                    assertTrue(InteractionUi.consentFilter().hasAction(answer.getAction()));
+                    assertTrue(InteractionUi.consentFilter().matchData(null, answer.getScheme(), answer.getData()) >= 0);
+                    app.sendBroadcast(answer);
+                }
             }
             Shadows.shadowOf(Looper.getMainLooper()).idle();
-            assertEquals(2, received.size());
-            assertEquals("task-a", received.get(0).getStringExtra("screen_task"));
-            assertEquals("token-a", received.get(1).getStringExtra("token"));
+            assertEquals(4, received.size());
+            for (Intent answer : received) {
+                assertEquals("task-a", answer.getStringExtra("screen_task"));
+                assertEquals("token-a", answer.getStringExtra("token"));
+                assertEquals(app.getPackageName(), answer.getPackage());
+            }
             assertNull(Shadows.shadowOf(app).getNextStartedActivity());
         } finally { app.unregisterReceiver(receiver); }
     }
@@ -45,6 +51,15 @@ public final class ForegroundConsentBroadcastTest {
         Intent later = InteractionUi.consentIntent("com.miui.voiceassist", "task-b", "token-b", true);
         assertFalse(allow.filterEquals(deny));
         assertFalse(allow.filterEquals(later));
+        Intent confirm = InteractionUi.consentIntent("com.miui.voiceassist", "task-a", "token-a", true, true);
+        Intent reject = InteractionUi.consentIntent("com.miui.voiceassist", "task-a", "token-a", false, true);
+        Intent nextAction = InteractionUi.consentIntent("com.miui.voiceassist", "task-a", "token-b", true, true);
+        Intent[] identities = {allow, deny, later, confirm, reject, nextAction};
+        for (int first = 0; first < identities.length; first++) {
+            for (int second = first + 1; second < identities.length; second++) {
+                assertFalse("PendingIntent must not alias another confirmation", identities[first].filterEquals(identities[second]));
+            }
+        }
         // Stop controls have no URI and must keep their own filter instead of inheriting the consent scheme.
         Intent stop = new Intent("com.miui.voiceassist.MIAIPLUS_STOP");
         IntentFilter stopFilter = new IntentFilter(stop.getAction());

@@ -12,14 +12,9 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Base64;
-import android.view.Gravity;
-import android.view.View;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
-import android.widget.Button;
-import android.widget.LinearLayout;
-import android.widget.TextView;
 import java.io.ByteArrayOutputStream;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
@@ -28,7 +23,6 @@ import java.util.concurrent.TimeUnit;
 public final class ScreenService extends AccessibilityService {
     public static volatile ScreenService instance;
     private final Handler main = new Handler(Looper.getMainLooper());
-    private View overlay;
     volatile int launchConfirmationCount;
 
     /**
@@ -75,7 +69,6 @@ public final class ScreenService extends AccessibilityService {
             instance = null;
             BridgeProvider.onScreenDisconnected();
         }
-        hideControls();
     }
     private <T> T onMain(Callable<T> callable) throws Exception {
         return MainThread.call(callable);
@@ -562,27 +555,13 @@ public final class ScreenService extends AccessibilityService {
     private static float pixel(double n, int size) { return (float)Math.min(size - 1, n * size / 1000); }
 
     public boolean confirm(String message, RunState run) throws Exception {
-        CompletableFuture<Boolean> decision = new CompletableFuture<>();
-        onMain(() -> {
-            removeOverlay();
-            LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(16,16,16,16); box.setBackgroundColor(0xffeeeeee);
-            TextView text = new TextView(this); text.setText("MiAIPlus 等待确认\n" + message); text.setMaxWidth(700); box.addView(text);
-            Button yes = new Button(this); yes.setText("确认本次操作"); yes.setOnClickListener(v -> decision.complete(true)); box.addView(yes);
-            Button no = new Button(this); no.setText("停止任务"); no.setOnClickListener(v -> { run.cancel(); decision.complete(false); }); box.addView(no);
-            addOverlay(box); return null;
-        });
-        try {
-            while (!decision.isDone()) run.pause(100);
-            return decision.get();
-        } finally { onMain(() -> { removeOverlay(); return null; }); }
+        // Settings' standalone executor has no host-UID island observer or action receiver.
+        // Stop explicitly instead of waiting for a confirmation that cannot be presented.
+        if (run.owner == android.os.Process.myUid())
+            throw new IllegalStateException("PAUSE：此操作需要灵动岛确认，请从小爱对话发起任务");
+        unlocked(run);
+        boolean accepted = ActionConfirmation.await(message, run);
+        if (accepted) unlocked(run);
+        return accepted;
     }
-    private void addOverlay(View v) {
-        WindowManager.LayoutParams p = new WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, android.graphics.PixelFormat.TRANSLUCENT);
-        p.gravity = Gravity.TOP | Gravity.END;
-        p.y = (int)(120 * getResources().getDisplayMetrics().density);
-        getSystemService(WindowManager.class).addView(v, p); overlay = v;
-    }
-    private void removeOverlay() { if (overlay != null) { getSystemService(WindowManager.class).removeView(overlay); overlay = null; } }
-    public void hideControls() { main.post(this::removeOverlay); }
 }

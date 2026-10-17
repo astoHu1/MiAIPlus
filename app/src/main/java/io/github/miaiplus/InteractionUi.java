@@ -30,6 +30,8 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
     private static final String STOP = "com.miui.voiceassist.MIAIPLUS_STOP";
     private static final String FOREGROUND_ALLOW = "com.miui.voiceassist.MIAIPLUS_FOREGROUND_ALLOW";
     private static final String FOREGROUND_DENY = "com.miui.voiceassist.MIAIPLUS_FOREGROUND_DENY";
+    private static final String CONFIRM_ACTION = "com.miui.voiceassist.MIAIPLUS_CONFIRM_ACTION";
+    private static final String DENY_ACTION = "com.miui.voiceassist.MIAIPLUS_DENY_ACTION";
     private static final String RETURN_TOKEN = "io.github.miaiplus.RETURN_CONVERSATION";
     private final Application app;
     private final Context receiverContext;
@@ -44,6 +46,7 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
     private String screenTask;
     private String shownProgress = "";
     private String consentToken, shownConsentToken;
+    private boolean actionConfirmation;
     private boolean compact;
     private Object overlayManager;
     private View overlayRoot;
@@ -71,13 +74,25 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
     private java.util.concurrent.ScheduledExecutorService watcher;
     private final BroadcastReceiver stop = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
-            if (running && (FOREGROUND_ALLOW.equals(intent.getAction()) || FOREGROUND_DENY.equals(intent.getAction()))
+            String allow = actionConfirmation ? CONFIRM_ACTION : FOREGROUND_ALLOW;
+            String deny = actionConfirmation ? DENY_ACTION : FOREGROUND_DENY;
+            if (running && (allow.equals(intent.getAction()) || deny.equals(intent.getAction()))
                 && consentToken != null && consentToken.equals(intent.getStringExtra("token"))
                 && java.util.Objects.equals(screenTask, intent.getStringExtra("screen_task"))) {
                 Bundle answer = new Bundle();
                 answer.putString("token", consentToken);
-                answer.putBoolean("allow", FOREGROUND_ALLOW.equals(intent.getAction()));
-                app.getContentResolver().call(BridgeProvider.URI, "foreground_consent", screenTask, answer);
+                boolean accepted = allow.equals(intent.getAction());
+                if (accepted && app.getSystemService(KeyguardManager.class).isKeyguardLocked()) {
+                    // A ROM may deliver the one-shot broadcast during a relock race. Reissue the
+                    // notification on the next poll so unlocking does not leave a consumed button.
+                    if (consentAllow != null) consentAllow.cancel();
+                    consentAllow = null;
+                    shownProgress = "";
+                    return;
+                }
+                answer.putBoolean("allow", accepted);
+                app.getContentResolver().call(BridgeProvider.URI,
+                    actionConfirmation ? "action_confirmation" : "foreground_consent", screenTask, answer);
                 return;
             }
             if (running && STOP.equals(intent.getAction()) && controlToken != null
@@ -281,17 +296,22 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
                     Bundle state = app.getContentResolver().call(BridgeProvider.URI, "screen_state", watchedTask, null);
                     if (state != null && state.getBoolean("active")) {
                         String progress = TaskProgress.compact(state.getString("progress", ""));
-                        String requestToken = state.getString("foreground_consent");
+                        String confirmationToken = state.getString("action_confirmation");
+                        boolean confirmAction = confirmationToken != null;
+                        String requestToken = confirmAction ? confirmationToken : state.getString("foreground_consent");
                         String requestLabel = state.getString("foreground_label", "当前应用");
+                        String confirmationMessage = state.getString("confirmation_message", "");
                         main.post(() -> {
                             if (!running || !java.util.Objects.equals(screenTask, watchedTask)
                                 || progress.isEmpty() || (progress.equals(shownProgress)
                                     && java.util.Objects.equals(consentToken, requestToken))) return;
                             if (!java.util.Objects.equals(consentToken, requestToken)) clearConsentActions();
                             consentToken = requestToken;
+                            actionConfirmation = confirmAction;
                             try {
-                                publish(requestToken == null ? "正在操作手机" : "小爱请求使用当前应用",
-                                    requestToken == null ? progress : "使用“" + requestLabel + "”并转为前台控屏，是否同意？", true);
+                                publish(requestToken == null ? "正在操作手机" : confirmAction ? "小爱请求确认操作" : "小爱请求使用当前应用",
+                                    requestToken == null ? progress : confirmAction ? confirmationMessage
+                                        : "使用“" + requestLabel + "”并转为前台控屏，是否同意？", true);
                                 shownProgress = progress;
                             }
                             catch (Exception failure) { android.util.Log.w("MiAIPlus", "Unable to update task intent"); }
@@ -357,8 +377,10 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
             pictures.putAll((Bundle)Reflector.callMethod(controls, "getIconResource", app));
             org.json.JSONArray focusActions = new org.json.JSONArray();
             if (allowAction != null) {
-                focusActions.put(new JSONObject().put("action", "miaiplus_foreground_allow").put("actionTitle", "同意使用"));
-                focusActions.put(new JSONObject().put("action", "miaiplus_foreground_deny").put("actionTitle", "拒绝并暂停"));
+                focusActions.put(new JSONObject().put("action", actionConfirmation ? "miaiplus_action_allow" : "miaiplus_foreground_allow")
+                    .put("actionTitle", actionConfirmation ? "确认本次操作" : "同意使用"));
+                focusActions.put(new JSONObject().put("action", actionConfirmation ? "miaiplus_action_deny" : "miaiplus_foreground_deny")
+                    .put("actionTitle", actionConfirmation ? "停止任务" : "拒绝并暂停"));
             } else focusActions.put(new JSONObject()
                 .put("action", "miaiplus_stop").put("actionTitle", "停止操作").put("actionIcon", "miui.focus.pic_action_close")
                 .put("actionIconDark", "miui.focus.pic_action_close_dark"));
@@ -370,14 +392,16 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
         if (ongoing) {
             Bundle actions = new Bundle(); actions.putParcelable("miaiplus_stop", stopAction);
             if (allowAction != null) {
-                actions.putParcelable("miaiplus_foreground_allow", allowAction);
-                actions.putParcelable("miaiplus_foreground_deny", denyAction);
+                actions.putParcelable(actionConfirmation ? "miaiplus_action_allow" : "miaiplus_foreground_allow", allowAction);
+                actions.putParcelable(actionConfirmation ? "miaiplus_action_deny" : "miaiplus_foreground_deny", denyAction);
             }
             extras.putBundle("miui.focus.actions", actions);
         }
         Notification.Builder builder = new Notification.Builder(app, CHANNEL).setSmallIcon(app.getApplicationInfo().icon)
             .setContentTitle(title).setContentText(text).setContentIntent(consentToken == null ? returnIntent : null).setOngoing(ongoing)
             .setCategory(Notification.CATEGORY_PROGRESS).setOnlyAlertOnce(updating).setAutoCancel(!ongoing).addExtras(extras);
+        if (ongoing && actionConfirmation) builder.setStyle(new Notification.BigTextStyle().bigText(text))
+            .setVisibility(Notification.VISIBILITY_PRIVATE);
         if (allowAction != null) builder.addAction(allowAction).addAction(denyAction).addAction(stopAction);
         else if (ongoing) builder.addAction(stopAction);
         else builder.setTimeoutAfter(30_000);
@@ -385,27 +409,33 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
         shownConsentToken = consentToken;
     }
     private Notification.Action consentAction(boolean allow) {
-        Intent answer = consentIntent(app.getPackageName(), screenTask, consentToken, allow);
+        Intent answer = consentIntent(app.getPackageName(), screenTask, consentToken, allow, actionConfirmation);
         PendingIntent pending = PendingIntent.getBroadcast(app, allow ? NOTIFICATION + 1 : NOTIFICATION + 2, answer,
             PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE);
         if (allow) consentAllow = pending; else consentDeny = pending;
         return new Notification.Action.Builder((android.graphics.drawable.Icon)null,
-            allow ? "同意使用当前应用" : "拒绝并暂停任务", pending).build();
+            actionConfirmation ? allow ? "确认本次操作" : "停止任务" : allow ? "同意使用当前应用" : "拒绝并暂停任务", pending)
+            .setAuthenticationRequired(allow).build();
     }
     static IntentFilter consentFilter() {
         IntentFilter filter = new IntentFilter(FOREGROUND_ALLOW);
-        filter.addAction(FOREGROUND_DENY); filter.addDataScheme("miaiplus");
+        filter.addAction(FOREGROUND_DENY); filter.addAction(CONFIRM_ACTION); filter.addAction(DENY_ACTION);
+        filter.addDataScheme("miaiplus");
         return filter;
     }
     static Intent consentIntent(String hostPackage, String task, String token, boolean allow) {
-        return new Intent(allow ? FOREGROUND_ALLOW : FOREGROUND_DENY).setPackage(hostPackage)
-            .setData(android.net.Uri.parse("miaiplus://foreground/" + token + "/" + (allow ? "allow" : "deny")))
+        return consentIntent(hostPackage, task, token, allow, false);
+    }
+    static Intent consentIntent(String hostPackage, String task, String token, boolean allow, boolean confirmAction) {
+        return new Intent(confirmAction ? allow ? CONFIRM_ACTION : DENY_ACTION : allow ? FOREGROUND_ALLOW : FOREGROUND_DENY).setPackage(hostPackage)
+            .setData(android.net.Uri.parse("miaiplus://" + (confirmAction ? "confirmation/" : "foreground/") + token + "/" + (allow ? "allow" : "deny")))
             .putExtra("token", token).putExtra("screen_task", task);
     }
     private void clearConsentActions() {
         if (consentAllow != null) consentAllow.cancel();
         if (consentDeny != null) consentDeny.cancel();
         consentAllow = null; consentDeny = null;
+        actionConfirmation = false;
     }
     /**
      * Refuses one host bring-to-front entry point while a control task owns the phone.

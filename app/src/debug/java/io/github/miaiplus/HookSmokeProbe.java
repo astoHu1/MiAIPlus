@@ -74,6 +74,14 @@ public final class HookSmokeProbe {
                     ReplyActionsProbe.signalReady();
                     return;
                 }
+                if ("MIAIPLUS_ACTION_CONFIRMATION_CANCEL".equals(intent.getStringExtra("frame"))) {
+                    ActionConfirmationProbe.signalCancel();
+                    return;
+                }
+                if ("MIAIPLUS_ACTION_CONFIRMATION_READY".equals(intent.getStringExtra("frame"))) {
+                    ActionConfirmationProbe.signalReady();
+                    return;
+                }
                 if ("MIAIPLUS_ROBUST_SCREEN_READY".equals(intent.getStringExtra("frame"))) {
                     RobustScreenProbe.signalReady();
                     return;
@@ -97,6 +105,7 @@ public final class HookSmokeProbe {
                         report = "MIAIPLUS_LAUNCH_UI".equals(token) ? launchUi(context, loader)
                             : "MIAIPLUS_FOCUS_UI".equals(token) ? focusUi(context, loader)
                             : "MIAIPLUS_DUAL_TOOLS".equals(token) ? dualTools(context, loader)
+                            : "MIAIPLUS_ACTION_CONFIRMATION".equals(token) ? ActionConfirmationProbe.run(context, loader)
                             : "MIAIPLUS_ROBUST_SCREEN".equals(token) ? RobustScreenProbe.run(context, loader)
                             : "MIAIPLUS_CONVERSATION_RETURN".equals(token) ? ConversationReturnProbe.run(context, loader)
                             : "MIAIPLUS_REPLY_ACTIONS".equals(token) ? ReplyActionsProbe.run(context, loader)

@@ -47,11 +47,11 @@ apksigner verify --verbose --print-certs MiAIPlus-signed.apk
 
 首次记录证书 SHA-256 指纹，后续发布核对一致。保留签名后的 APK；修改 APK 内容会使签名失效。
 
-## GitHub Actions 与后续签名自动化
+## GitHub Actions 与正式签名
 
 `.github/workflows/ci.yml` 在 main push、PR 和手动触发时执行 JVM/Robolectric 测试、完整 Debug/Release Lint、Debug/Release/Preview/AndroidTest 构建。成功上传 `dist/`，检查报告失败时也尽可能上传；保留 14 天。它不访问真机、不使用正式密钥、不创建 GitHub Release。Preview 使用 runner 的临时开发签名，不能依赖跨运行覆盖安装。
 
-当前 workflow 不需要 Secrets。要以后启用正式签名，先在 GitHub Settings → Environments 新建 `release` 环境，限制 main 或发布标签并按需开启人工审批，再在该环境配置：
+普通 CI 不需要 Secrets。正式签名 workflow 使用 `release` 环境；在 GitHub Settings → Environments 新建 `release` 环境，限制 main 或发布标签并按需开启人工审批，再在该环境配置：
 
 | Secret | 内容 |
 | --- | --- |
@@ -62,4 +62,13 @@ apksigner verify --verbose --print-certs MiAIPlus-signed.apk
 
 macOS 可用 `base64 -i "$HOME/.android-signing/miaiplus-release.jks" | pbcopy` 复制编码后直接粘贴到 Secret；Base64 不是加密，勿提交编码文件或贴到聊天。密钥无需提供给开发 agent。
 
-签名应放进单独的受保护 release job/workflow，只允许可信提交或手动发布；不要让 PR（尤其 `pull_request_target` 检出 PR 代码）接触密钥。后续接入时从 Secret 解码到 runner 临时目录，用 `apksigner` 的 `env:` 密码参数签名、验证并清理临时密钥；仅在签名完成后生成最终校验值。上述 Secrets 目前仅为预留配置，现有 CI 不会读取它们。
+`.github/workflows/release.yml` 在推送 `v*` 标签或手动指定已有标签时触发。标签必须等于 `v` + `versionName`，且指向已合入 main 的提交。
+
+发布步骤：
+
+1. 将待发布源码和 workflow 提交、推送到 main；更新 `versionName` 和 `versionCode`，完成实机回归。
+2. 创建版本标签并推送，例如 `git tag v0.3.3`、`git push origin v0.3.3`。手动重跑可在 Actions → Signed Release → Run workflow 填同一标签。
+3. workflow 先运行单元测试、完整两套 Lint、Release/AndroidTest 构建，再进入 `release` 环境签名任务。该环境应允许发布标签 `v*`，建议配置审批人；不要仅允许 main 分支而阻塞标签运行。
+4. 下载并检查 `signed-release` artifact，或打开自动创建的 GitHub Release 草稿。核对 APK、证书 SHA-256、源码包及 SHA256SUMS，补充支持版本与未验证限制，然后手动发布。
+
+签名任务不检出或执行项目源码，只签署上一步产物。密钥解码到 runner 临时目录，密码通过环境变量传给 apksigner，退出时删除密钥。正式产物不包含开发签名 Preview 或 unsigned APK。已发布 Release 不会被覆盖；重跑仅更新草稿。CI 不访问设备，构建成功不能代替实机回归。

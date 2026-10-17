@@ -17,6 +17,9 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.runtime.snapshots.Snapshot
+import androidx.compose.runtime.snapshots.SnapshotStateObserver
+import androidx.compose.ui.semantics.SemanticsActions
 import org.junit.Rule
 import org.junit.Test
 import org.junit.After
@@ -131,6 +134,56 @@ class SettingsUiTest {
         compose.mainClock.autoAdvance = true
     }
 
+    @Test fun switchingTabsDuringSecondaryNavigationReleasesThePreviousPagesImmediately() {
+        compose.mainClock.autoAdvance = false
+        try {
+            compose.onNodeWithText("运行状态").performClick()
+            compose.mainClock.advanceTimeBy(80)
+            compose.onNodeWithTag("page-Home").assertExists()
+            compose.onNodeWithTag("page-Status").assertExists()
+            compose.onNodeWithTag("tab-Model").performClick()
+            compose.mainClock.advanceTimeByFrame()
+            compose.onNodeWithTag("page-Model").assertExists()
+            compose.onNodeWithTag("page-Home").assertDoesNotExist()
+            compose.onNodeWithTag("page-Status").assertDoesNotExist()
+            compose.onNodeWithTag("tab-Control").performSemanticsAction(SemanticsActions.OnClick) { it() }
+            compose.mainClock.advanceTimeByFrame()
+            compose.onNodeWithTag("tab-Control").assertIsSelected()
+            compose.onNodeWithTag("page-Control").assertExists()
+            compose.onNodeWithTag("page-Model").assertDoesNotExist()
+        } finally {
+            compose.mainClock.autoAdvance = true
+        }
+    }
+
+    @Test fun editingAnAlreadyDirtyDraftDoesNotInvalidateDirtyObservers() {
+        val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
+        val observer = SnapshotStateObserver { it() }
+        val scope = Any()
+        var invalidations = 0
+        val onChanged: (Any) -> Unit = { invalidations++ }
+        observer.start()
+        try {
+            compose.runOnIdle {
+                observer.observeReads(scope, onChanged) { assertEquals(false, state.dirty) }
+                state.updateProfile(name = "草稿")
+                Snapshot.sendApplyNotifications()
+                assertEquals(1, invalidations)
+                observer.observeReads(scope, onChanged) { assertEquals(true, state.dirty) }
+                state.updateProfile(name = "继续编辑草稿")
+                Snapshot.sendApplyNotifications()
+                assertEquals(1, invalidations)
+                state.discard()
+                Snapshot.sendApplyNotifications()
+                assertEquals(2, invalidations)
+                assertEquals(false, state.dirty)
+            }
+        } finally {
+            observer.stop()
+            observer.clear()
+        }
+    }
+
     @Test fun savingBeforeSwitchingTabsUsesTheRequestedDestination() {
         compose.onNodeWithTag("tab-Model").performClick()
         compose.onNodeWithText("配置名称").performTextReplacement("我的 API")
@@ -147,6 +200,19 @@ class SettingsUiTest {
         compose.onNodeWithTag("tab-Model").performClick()
         compose.onNode(hasSetTextAction() and hasText("我的 API")).assertExists()
         compose.onNodeWithText("保存配置").assertDoesNotExist()
+    }
+
+    @Test fun modelSectionsKeepTheirScrollPositionAcrossTabsAndRecreation() {
+        compose.onNodeWithTag("tab-Model").performClick()
+        compose.onNodeWithTag("model-settings").performScrollToNode(hasText("另存为新配置"))
+        compose.onNodeWithText("另存为新配置").assertIsDisplayed()
+        compose.onNodeWithTag("tab-Control").performClick()
+        compose.onNodeWithTag("tab-Model").performClick()
+        compose.onNodeWithText("另存为新配置").assertIsDisplayed()
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithText("另存为新配置").assertIsDisplayed()
+        compose.onNodeWithTag("model-settings").performScrollToNode(hasText("配置名称"))
+        compose.onNode(hasSetTextAction() and hasText("默认配置")).assertExists()
     }
 
     @Test fun dashboardLabelsSavedReportsWithoutClaimingALiveConnection() {

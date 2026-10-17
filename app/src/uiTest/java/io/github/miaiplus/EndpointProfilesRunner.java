@@ -33,7 +33,9 @@ final class EndpointProfilesRunner {
         ui = test.getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES);
     }
 
-    static void run(Instrumentation test) { new EndpointProfilesRunner(test).run(); }
+    static void run(Instrumentation test) { new EndpointProfilesRunner(test).run(false); }
+
+    static void runPerformance(Instrumentation test) { new EndpointProfilesRunner(test).run(true); }
 
     static void runVirtual(Instrumentation test) { new EndpointProfilesRunner(test).runVirtual(false); }
 
@@ -193,7 +195,7 @@ final class EndpointProfilesRunner {
         test.finish(code, result);
     }
 
-    private void run() {
+    private void run(boolean performance) {
         var context = test.getTargetContext();
         var prefs = Config.prefs(context);
         Map<String, ?> original = prefs.getAll();
@@ -212,79 +214,88 @@ final class EndpointProfilesRunner {
             activity = (MainActivity) test.startActivitySync(new Intent(context, MainActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
             onMain(() -> state = new ViewModelProvider(activity).get(SettingsState.class));
-            check("phone_use".equals(state.getConfig().protocol), "Legacy protocol migration failed");
-            click("模型 API");
-            edit("默认配置", "服务 A");
-            waitFor(state::getDirty, "Profile edit did not reach draft");
-            check(!"服务 A".equals(new EndpointProfiles(prefs).active().name), "Draft saved without confirmation");
-            checkKeyboard();
-            recreate();
-            check("服务 A".equals(state.getDraft().getName()), "Draft lost on activity recreation");
-            click("保存配置");
-            waitFor(() -> "服务 A".equals(new EndpointProfiles(prefs).active().name), "Profile save failed");
-            check("fixture-a-key".equals(new Config(context).apiKey), "Saved key changed");
-            capture("model");
+            settle();
+            if (performance) {
+                runPerformancePages();
+                result.putString("stream", "PASS: settings performance samples completed. No model requests or display probes.\n");
+            } else {
+                check("phone_use".equals(state.getConfig().protocol), "Legacy protocol migration failed");
+                click("模型 API");
+                edit("默认配置", "服务 A");
+                waitFor(state::getDirty, "Profile edit did not reach draft");
+                check(!"服务 A".equals(new EndpointProfiles(prefs).active().name), "Draft saved without confirmation");
+                checkKeyboard();
+                recreate();
+                check("服务 A".equals(state.getDraft().getName()), "Draft lost on activity recreation");
+                click("保存配置");
+                waitFor(() -> "服务 A".equals(new EndpointProfiles(prefs).active().name), "Profile save failed");
+                check("fixture-a-key".equals(new Config(context).apiKey), "Saved key changed");
+                capture("model");
 
-            edit("服务 A", "未保存");
-            click("首页");
-            click("放弃修改");
-            click("模型 API");
-            waitFor(() -> "服务 A".equals(state.getDraft().getName()) && !state.getDirty(), "Discard failed");
-            click("另存为新配置");
-            edit("", "服务 B");
-            click("保存并切换");
-            waitFor(() -> new EndpointProfiles(prefs).profiles.size() == 2, "New profile missing");
-            check("服务 B".equals(new EndpointProfiles(prefs).active().name), "New profile not selected");
-            click("API 协议");
-            click("Chat Completions");
-            click("保存配置");
-            waitFor(() -> "chat".equals(new Config(context).api), "API protocol not saved");
-            click("当前配置");
-            click("服务 A");
-            waitFor(() -> "responses".equals(new Config(context).api), "Profile switch did not restore API");
-            click("当前配置");
-            click("服务 B");
-            waitFor(() -> "chat".equals(new Config(context).api), "Second profile not restored");
-            click("删除当前配置");
-            click("删除");
-            waitFor(() -> new EndpointProfiles(prefs).profiles.size() == 1, "Delete failed");
-            check("服务 A".equals(new EndpointProfiles(prefs).active().name), "Delete did not switch profile");
-            click("首页");
-            capture("home");
-            click("控屏");
-            check(!new Config(context).backgroundDisplay, "Background display default changed");
-            click("最大步数");
-            edit("30", "0"); click("保存");
-            waitFor(() -> "步数需在 1–80 之间".equals(state.getError()), "Lower bound accepted");
-            edit("0", "81"); click("保存");
-            check(new Config(context).maxSteps == 30, "Invalid steps persisted");
-            edit("81", "1"); click("保存");
-            waitFor(() -> new Config(context).maxSteps == 1, "Minimum step not saved");
-            click("最大步数"); edit("1", "80"); click("保存");
-            waitFor(() -> new Config(context).maxSteps == 80, "Maximum step not saved");
-            capture("control");
-            click("首页");
-            click("运行状态");
-            click("虚拟屏");
-            check(state.getVirtualScreen().getAvailability() == null, "Background check ran automatically");
-            click("检查前置条件");
-            waitFor(() -> state.getVirtualScreen().getAvailability() != null && !state.getVirtualScreen().getChecking(), "Background check did not finish");
-            // Older backends can report unavailable; the UI must still finish the check and remain usable.
-            capture("virtual-screen");
-            click("返回");
-            click("首页");
-            click("运行状态");
-            capture("status");
-            click("直接测试");
-            waitFor(() -> find(node -> "想在手机上做什么？".contentEquals(node.getHintText() == null ? "" : node.getHintText())
-                || text(node).contains("想在手机上做什么")) != null, "Direct test page missing");
-            capture("test");
-            click("返回");
-            click("返回");
-            check(state.getJob() == null, "UI checks started a model job");
-            result.putString("stream", "PASS: physical-device Compose navigation, legacy migration, draft/recreation/discard, keyboard/save visibility, save/create/switch/delete, API persistence, step limits 0/81/1/80, background status result, direct-test navigation. No model requests.\n");
+                edit("服务 A", "未保存");
+                click("首页");
+                click("放弃修改");
+                click("模型 API");
+                waitFor(() -> "服务 A".equals(state.getDraft().getName()) && !state.getDirty(), "Discard failed");
+                click("另存为新配置");
+                edit("", "服务 B");
+                click("保存并切换");
+                waitFor(() -> new EndpointProfiles(prefs).profiles.size() == 2, "New profile missing");
+                check("服务 B".equals(new EndpointProfiles(prefs).active().name), "New profile not selected");
+                click("API 协议");
+                click("Chat Completions");
+                click("保存配置");
+                waitFor(() -> "chat".equals(new Config(context).api), "API protocol not saved");
+                click("当前配置");
+                click("服务 A");
+                waitFor(() -> "responses".equals(new Config(context).api), "Profile switch did not restore API");
+                click("当前配置");
+                click("服务 B");
+                waitFor(() -> "chat".equals(new Config(context).api), "Second profile not restored");
+                click("删除当前配置");
+                click("删除");
+                waitFor(() -> new EndpointProfiles(prefs).profiles.size() == 1, "Delete failed");
+                check("服务 A".equals(new EndpointProfiles(prefs).active().name), "Delete did not switch profile");
+                click("首页");
+                capture("home");
+                click("控屏");
+                check(!new Config(context).backgroundDisplay, "Background display default changed");
+                click("最大步数");
+                edit("30", "0"); click("保存");
+                waitFor(() -> "步数需在 1–80 之间".equals(state.getError()), "Lower bound accepted");
+                edit("0", "81"); click("保存");
+                check(new Config(context).maxSteps == 30, "Invalid steps persisted");
+                edit("81", "1"); click("保存");
+                waitFor(() -> new Config(context).maxSteps == 1, "Minimum step not saved");
+                click("最大步数"); edit("1", "80"); click("保存");
+                waitFor(() -> new Config(context).maxSteps == 80, "Maximum step not saved");
+                capture("control");
+                click("首页");
+                click("运行状态");
+                click("虚拟屏");
+                check(state.getVirtualScreen().getAvailability() == null, "Background check ran automatically");
+                click("检查前置条件");
+                waitFor(() -> state.getVirtualScreen().getAvailability() != null && !state.getVirtualScreen().getChecking(), "Background check did not finish");
+                // Older backends can report unavailable; the UI must still finish the check and remain usable.
+                capture("virtual-screen");
+                click("返回");
+                click("首页");
+                click("运行状态");
+                capture("status");
+                click("直接测试");
+                waitFor(() -> find(node -> "想在手机上做什么？".contentEquals(node.getHintText() == null ? "" : node.getHintText())
+                    || text(node).contains("想在手机上做什么")) != null, "Direct test page missing");
+                capture("test");
+                click("返回");
+                click("返回");
+                check(state.getJob() == null, "UI checks started a model job");
+                result.putString("stream", "PASS: physical-device Compose navigation, legacy migration, draft/recreation/discard, keyboard/save visibility, save/create/switch/delete, API persistence, step limits 0/81/1/80, background status result, direct-test navigation. No model requests.\n");
+            }
             code = Activity.RESULT_OK;
         } catch (Throwable failure) {
+            if (activity != null && changed) {
+                try { capture("failure"); } catch (Exception ignored) { }
+            }
             result.putString("stream", "FAIL: " + failure.getClass().getSimpleName() + "\n"
                 + android.util.Log.getStackTraceString(failure));
         } finally {
@@ -313,6 +324,96 @@ final class EndpointProfilesRunner {
             }
         }
         test.finish(code, result);
+    }
+
+    /** Same fixture and gesture stream for Debug/Preview; keep accessibility services connected. */
+    private void runPerformancePages() throws Exception {
+        settle();
+        SystemClock.sleep(1500);
+        sample("home-idle", () -> SystemClock.sleep(5000));
+        sample("tabs", () -> {
+            for (int i = 0; i < 4; i++) {
+                click("模型 API"); click("控屏"); click("首页");
+            }
+        });
+        click("模型 API");
+        sample("model-scroll", this::performanceScroll);
+        // ACTION_SET_TEXT exercises Compose state/layout without involving a network or real credentials.
+        scroll(false); scroll(false);
+        sample("model-edit", () -> {
+            for (int i = 0; i < 12; i++) {
+                edit(i == 0 ? "默认配置" : "草稿 " + (i - 1), "草稿 " + i);
+            }
+        });
+        click("还原");
+        click("控屏");
+        sample("control-scroll", this::performanceScroll);
+        click("虚拟屏");
+        sample("virtual-idle", () -> SystemClock.sleep(5000));
+        sample("virtual-scroll", this::performanceScroll);
+        check(state.getVirtualScreen().getAvailability() == null && state.getVirtualScreen().getReport() == null,
+            "Performance sample started a display probe");
+        click("首页");
+        sample("secondary-navigation", () -> {
+            for (int i = 0; i < 4; i++) {
+                click("运行状态"); click("直接测试"); click("返回"); click("返回");
+            }
+        });
+        check(state.getJob() == null, "Performance sample started a model job");
+    }
+
+    private void sample(String label, Runnable action) throws Exception {
+        shell("dumpsys gfxinfo " + test.getTargetContext().getPackageName() + " reset");
+        long started = SystemClock.elapsedRealtime();
+        long cpu = android.os.Process.getElapsedCpuTime();
+        action.run();
+        SystemClock.sleep(500); // Include the final fling/transition frames in the same sample.
+        test.waitForIdleSync();
+        long cpuMs = android.os.Process.getElapsedCpuTime() - cpu;
+        long elapsedMs = SystemClock.elapsedRealtime() - started;
+        StringBuilder summary = new StringBuilder("SAMPLE ").append(label)
+            .append(" elapsedMs=").append(elapsedMs).append(" cpuMs=").append(cpuMs)
+            .append(" cpuPercent=").append(String.format(java.util.Locale.ROOT, "%.2f", 100.0 * cpuMs / elapsedMs))
+            .append('\n');
+        for (String line : shell("dumpsys gfxinfo " + test.getTargetContext().getPackageName()).split("\\n")) {
+            String trimmed = line.trim();
+            if (trimmed.startsWith("Total frames rendered:") || trimmed.startsWith("Janky frames:")
+                || trimmed.startsWith("95th percentile:") || trimmed.startsWith("99th percentile:"))
+                summary.append(trimmed).append('\n');
+        }
+        Bundle status = new Bundle(); status.putString("stream", summary.toString()); test.sendStatus(0, status);
+    }
+
+    private String shell(String command) throws Exception {
+        try (var input = new android.os.ParcelFileDescriptor.AutoCloseInputStream(ui.executeShellCommand(command))) {
+            return new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        }
+    }
+
+    private void performanceScroll() {
+        int[] size = new int[2];
+        onMain(() -> {
+            size[0] = activity.getWindow().getDecorView().getWidth();
+            size[1] = activity.getWindow().getDecorView().getHeight();
+        });
+        float x = size[0] * 0.5f;
+        for (int gesture = 0; gesture < 12; gesture++) {
+            float from = size[1] * (gesture % 2 == 0 ? 0.72f : 0.30f);
+            float to = size[1] * (gesture % 2 == 0 ? 0.30f : 0.72f);
+            long down = SystemClock.uptimeMillis();
+            for (int step = 0; step <= 20; step++) {
+                long due = down + step * 15L;
+                long remaining = due - SystemClock.uptimeMillis();
+                if (remaining > 0) SystemClock.sleep(remaining);
+                int action = step == 0 ? MotionEvent.ACTION_DOWN : step == 20 ? MotionEvent.ACTION_UP : MotionEvent.ACTION_MOVE;
+                MotionEvent event = MotionEvent.obtain(down, SystemClock.uptimeMillis(), action,
+                    x, from + (to - from) * step / 20f, 0);
+                event.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
+                try { check(ui.injectInputEvent(event, step == 20), "Performance gesture injection failed"); }
+                finally { event.recycle(); }
+            }
+            SystemClock.sleep(60);
+        }
     }
 
     private void checkKeyboard() throws Exception {
@@ -400,7 +501,7 @@ final class EndpointProfilesRunner {
             }
             if (attempt < 9) scroll(true); else scroll(false);
         }
-        throw new AssertionError("Editable field unavailable");
+        throw new AssertionError("Editable fixture field unavailable: " + current);
     }
 
     private void scroll(boolean forward) {

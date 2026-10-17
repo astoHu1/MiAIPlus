@@ -2,6 +2,7 @@
 """Run deterministic device tests without UiAutomation suppressing/intercepting services."""
 import subprocess
 import sys
+from pathlib import Path
 
 
 def adb(*args):
@@ -19,6 +20,7 @@ process = subprocess.Popen(['adb', 'shell', 'am', 'instrument', '--user', '0', '
     '-e', 'launch', str('--launch' in sys.argv).lower(),
     '-e', 'scroll', str('--scroll' in sys.argv).lower(),
     '-e', 'robust_screen', str('--robust-screen' in sys.argv).lower(),
+    '-e', 'action_confirmation', str('--action-confirmation' in sys.argv).lower(),
     '-e', 'conversation_return', str('--conversation-return' in sys.argv).lower(),
     '-e', 'dual_tools', str('--dual-tools' in sys.argv).lower(),
     '-e', 'foreground_consent', str('--foreground-consent' in sys.argv).lower(),
@@ -43,7 +45,7 @@ try:
             adb('shell', 'settings', 'put', 'secure', 'enabled_accessibility_services', ':'.join(services))
             if '--no-restart' not in sys.argv:
                 adb('shell', 'am', 'force-stop', 'com.miui.voiceassist')
-            fixture = 'RobustFixtureActivity' if '--robust-screen' in sys.argv else 'FixtureActivity'
+            fixture = 'RobustFixtureActivity' if '--robust-screen' in sys.argv or '--action-confirmation' in sys.argv else 'FixtureActivity'
             adb('shell', 'am', 'start', '-W', '-n', 'io.github.miaiplus/.' + fixture)
             adb('shell', 'am', 'start', '-W', '-n', 'com.miui.voiceassist/com.xiaomi.voiceassistant.LaunchHomeRouterActivity')
             if '--popup' in sys.argv:
@@ -60,6 +62,11 @@ try:
             adb('shell', 'am', 'broadcast', '-a', 'io.github.miaiplus.DEBUG_PROBE', '-p', 'com.miui.voiceassist', '--es', 'frame', line.strip().split()[-1])
         if 'MIAIPLUS_LAUNCH_FIXTURE' in line:
             adb('shell', 'am', 'start', '-W', '-n', 'io.github.miaiplus/.FixtureActivity')
+        if '--action-confirmation' in sys.argv and 'MIAIPLUS_CONFIRMATION_SCREENSHOT' in line:
+            # Issued only while the owned fixture and fixed harmless confirmation are visible.
+            image_path = Path('work/action-confirmation-island.png')
+            image_path.parent.mkdir(parents=True, exist_ok=True)
+            image_path.write_bytes(subprocess.check_output(['adb', 'exec-out', 'screencap', '-p'], timeout=10))
         if 'PASS:' in line or 'PROBE PASS' in line:
             passed = True
         if 'FAIL:' in line or 'INSTRUMENTATION_FAILED' in line:

@@ -1,5 +1,53 @@
 # 配置界面性能
 
+## 本轮实机优化（2026-10-17）
+
+用户反馈所有页面卡顿后，在已连接的 Xiaomi 25019PNF3C / xuanyuan、API 37 上复测。手机原安装包带 `DEBUGGABLE`，先用原包采样，再安装当前完整源码构建的优化 Preview；保留工作区已有后端改动。屏幕为竖屏 1440 × 3200、560 dpi，系统浮层与原无障碍启用列表保留，UiAutomation 使用 `FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES`。
+
+本轮前端修改：
+
+- 底栏跨标签切换立即替换内容，不再同时绘制两整页；二级页保留 240 ms 绘制层过渡。
+- 模型配置表单按可见分组懒加载，滚动位置在切页与重建后保留；模型选择列表继续懒加载。
+- 未保存标记使用带结构相等策略的派生状态。已修改草稿继续输入时，不再逐键通知导航和保存栏。
+- 完整诊断仅返回前台时刷新；运行状态页进入时立即做轻量刷新，此后每 3.5 秒刷新。普通切页不重复读取诊断。
+
+`SettingsUiRunner -e performance true` 使用临时配置，先等待首屏稳定，再执行四轮底栏切换、各页 12 次 300 ms 往返手势、12 次草稿文本修改及四轮二级页进退。每项结束留 500 ms 收尾，进程 CPU 来自 `Process.getElapsedCpuTime()`，100% 表示一个核心；每项重置并读取 `dumpsys gfxinfo` 的现代截止时间统计。输入项通过无障碍设置文本，不等于逐键输入法延迟测试。
+
+| 操作 | P95：原 Debug → 最终 Preview | 错过截止时间 / 总帧：Debug → Preview | CPU：Debug → Preview |
+| --- | --- | --- | --- |
+| 底栏切换 | 350 → 150 ms | 50/246 → 13/40 | 159.72% → 56.53% |
+| 模型页滚动 | 109 → 21 ms | 37/472 → 2/820 | 182.36% → 119.02% |
+| 控屏页滚动 | 77 → 10 ms | 14/588 → 1/1146 | 168.77% → 78.96% |
+| 修改配置名称 | 150 → 40 ms | 24/58 → 8/48 | 73.36% → 22.77% |
+| 二级页进退 | 93 → 31 ms | 41/620 → 1/908 | 180.59% → 106.47% |
+
+最终 Preview 的首页、虚拟屏各 5.5 秒空闲窗口均无新绘制帧，CPU 分别为 1.24%、0.33%。虚拟屏在本次竖屏、无检测结果的状态下内容未超出视口，手势没有产生滚动帧，因此不报告它的滚动 P95；零帧时 gfxinfo 的 4950 ms 占位值不构成耗时证据。
+
+这是同设备短时对比，包含构建模式变化，不能将全部收益归因于源码修改，也不能宣称已消除卡顿。最终包底栏切换仍有 150 ms 长帧，模型页滚动仍约占一个核心。中间 Preview 采样与最终懒加载版本有波动，未证明懒加载单独带来的性能增幅。另一次短时界面线程跟踪中，首屏和模型页首次布局所在帧仍分别约 63、54 ms，说明首次布局开销仍需继续优化。
+
+当前源码的 209 项 JVM/Robolectric 测试通过，包含过渡中跨标签切换释放旧页、派生未保存标记，以及懒加载表单切页/重建后恢复滚动位置。Debug/Release 完整 Lint（0 errors）、Debug/Release/Preview APK 和 Debug/Preview AndroidTest 构建通过。最终 Preview 实机设置回归通过配置保存/新增/切换/删除、草稿重建/放弃、真实键盘与保存按钮、0/81 拒绝与 1/80 保存、前置检查结果及直接测试页导航；测试器在操作前等待首屏就绪。原配置由 runner 恢复并逐项比较一致。
+
+性能采样不启动虚拟屏检查、helper 或模型。功能回归仅手动运行前置检查，不运行能力探针或模型任务；未重启小爱。采样没有逐项记录本模块 Binder 连接健康；最终检查发现本模块服务需重连，已仅重连其自身并验证绑定成功、无崩溃标记，原启用列表保持一致。这些空闲设置页数据不代表控屏会话运行时开销。手机保留最终不可调试 Preview。原始日志、跟踪与构建输出留在本地忽略目录 `.tools/settings-perf-20261017/`。
+
+复测时，Debug 与 Preview 必须使用各自配套的测试 APK，避免 R8 映射不匹配：
+
+```sh
+# Debug 对照使用同一源码的主包与设置专项 runner。
+./gradlew -PsettingsUiTests=true :app:assembleDebug :app:assembleDebugAndroidTest
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+adb shell am instrument --user 0 -w -e performance true \
+  io.github.miaiplus.test/io.github.miaiplus.SettingsUiRunner
+# Preview 使用优化后、同一构建映射的主包与测试包。
+./gradlew -PuiTestBuildType=preview :app:assemblePreview :app:assemblePreviewAndroidTest
+adb install -r app/build/outputs/apk/preview/app-preview.apk
+adb install -r app/build/outputs/apk/androidTest/preview/app-preview-androidTest.apk
+adb shell am instrument --user 0 -w -e performance true \
+  io.github.miaiplus.test/io.github.miaiplus.SettingsUiRunner
+```
+
+以下保留此前的历史性能记录。
+
 2026-10-16，前端分支先快进合并远程 main `095156c`。本次生产代码仅修改 `MainActivity.kt`、`SettingsState.kt` 及前端构建配置，不写入 Claude 的 main 工作区。
 
 ## 本次导航调整

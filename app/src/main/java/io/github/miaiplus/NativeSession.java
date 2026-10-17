@@ -119,14 +119,13 @@ public final class NativeSession {
                 } else {
                     if (action.data.optBoolean("requires_confirmation") || !action.data.optString("message").isBlank()) {
                         if (s.background) {
-                            // The physical-path confirmation is an accessibility overlay on the user's own screen. In
-                            // background mode that would cover whatever they are doing, so a sensitive action pauses
-                            // the task instead and the user decides; nothing is submitted on their behalf.
+                            // Background sensitive actions still require manual takeover; notification approval
+                            // authorizes only the existing foreground confirmation path.
                             close();
                             return "PAUSE：后台任务暂停，等待你确认后重新发起。" + action.data.optString("message", "执行 " + action.name);
                         }
                         s.run.progress = "等待确认：" + intent;
-                        if (!s.screen.confirm(action.data.optString("message", "执行 " + action.name), s.run)) throw new IllegalStateException("操作已取消");
+                        if (!s.screen.confirm(ActionConfirmation.message(action), s.run)) throw new IllegalStateException("操作已取消");
                         s.run.progress = intent;
                     }
                     boolean ready = true;
@@ -277,7 +276,6 @@ public final class NativeSession {
                 }
                 // Release the display before anything else so no screen outlives its run.
                 if (s.display != null) s.display.close();
-                else s.screen.hideControls();
             }
         } finally { closing = false; }
         // Frames can still be in transit to a native Message constructor; expire independently.

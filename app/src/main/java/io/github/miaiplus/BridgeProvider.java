@@ -65,11 +65,13 @@ public final class BridgeProvider extends ContentProvider {
             return b;
         }
         if (method.equals("stop_screen")) { cancelActive(); return b; }
-        if (method.equals("foreground_consent")) {
+        if (method.equals("foreground_consent") || method.equals("action_confirmation")) {
             synchronized (JOBS) {
                 boolean current = screenTaskActive && java.util.Objects.equals(arg, screenTaskId)
                     && active != null && active.owner == Binder.getCallingUid() && !active.cancelled.get();
-                b.putBoolean("accepted", current && ForegroundConsent.respond(arg, Binder.getCallingUid(), extras));
+                b.putBoolean("accepted", current && (method.equals("action_confirmation")
+                    ? ActionConfirmation.respond(arg, Binder.getCallingUid(), extras)
+                    : ForegroundConsent.respond(arg, Binder.getCallingUid(), extras)));
             }
             return b;
         }
@@ -85,7 +87,10 @@ public final class BridgeProvider extends ContentProvider {
                 RunState current = active;
                 if (progress.isEmpty() && current != null && current.screen) progress = current.progress;
                 b.putString("progress", matches ? TaskProgress.compact(progress) : "");
-                if (matches && screenTaskActive) ForegroundConsent.describe(b, screenTaskId, Binder.getCallingUid());
+                if (matches && screenTaskActive) {
+                    ForegroundConsent.describe(b, screenTaskId, Binder.getCallingUid());
+                    ActionConfirmation.describe(b, screenTaskId, Binder.getCallingUid());
+                }
             }
             return b;
         }

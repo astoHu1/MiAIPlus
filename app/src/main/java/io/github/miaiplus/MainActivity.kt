@@ -39,7 +39,6 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -95,12 +94,15 @@ private fun SettingsApp(state: SettingsState, openSettings: (Boolean) -> Unit, o
     val savedPages = rememberSaveableStateHolder()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val context = androidx.compose.ui.platform.LocalContext.current
-    LaunchedEffect(lifecycle, page) {
+    LaunchedEffect(lifecycle) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             state.refresh()
-            if (page == SettingsPage.Status) {
-                while (true) { delay(3500); state.refreshLight() }
-            }
+        }
+    }
+    LaunchedEffect(lifecycle, page == SettingsPage.Status) {
+        if (page == SettingsPage.Status) lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            state.refreshLight()
+            while (true) { delay(3500); state.refreshLight() }
         }
     }
     LaunchedEffect(state.notice) {
@@ -158,10 +160,11 @@ private fun SettingsApp(state: SettingsState, openSettings: (Boolean) -> Unit, o
                 val scroll = rememberScrollState()
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
                     Column(
-                        Modifier.widthIn(max = 680.dp).fillMaxWidth().verticalScroll(scroll).imePadding()
+                        Modifier.widthIn(max = 680.dp).fillMaxWidth()
+                            .then(if (destination == SettingsPage.Model) Modifier else Modifier.verticalScroll(scroll)).imePadding()
                             .padding(top = 8.dp, bottom = 24.dp),
                     ) {
-                        state.error?.let { message ->
+                        state.error?.takeIf { destination != SettingsPage.Model }?.let { message ->
                             Group { BasicComponent(title = "未能完成", summary = message) }
                             Spacer(Modifier.height(12.dp))
                         }
@@ -186,25 +189,27 @@ private fun SettingsApp(state: SettingsState, openSettings: (Boolean) -> Unit, o
     }
 }
 
-/** Lightweight page transition: opacity crossfade + minimal slide. */
+/** Tabs replace their content immediately; only secondary navigation keeps an outgoing page. */
 @Composable
 private fun PageTransition(page: SettingsPage, modifier: Modifier, content: @Composable (SettingsPage) -> Unit) {
     val transition = updateTransition(page, label = "page")
     val tabSwitch = transition.targetState.tab != transition.currentState.tab
     val forward = transition.targetState.depth >= transition.currentState.depth
-    val distance = with(LocalDensity.current) { if (tabSwitch) 24.dp.toPx() else 40.dp.toPx() }
+    val distance = with(LocalDensity.current) { 40.dp.toPx() }
+    val destinations = if (tabSwitch) listOf(page)
+        else listOf(transition.currentState, transition.targetState).distinct()
     Box(modifier.clipToBounds()) {
-        listOf(transition.currentState, transition.targetState).distinct().forEach { destination ->
+        destinations.forEach { destination ->
             key(destination) {
                 val visibility = transition.animateFloat(transitionSpec = {
-                    if (tabSwitch) tween(200, easing = FastOutSlowInEasing)
+                    if (tabSwitch) snap()
                     else tween(240, easing = FastOutSlowInEasing)
                 }, label = "page-${destination.name}") { if (it == destination) 1f else 0f }
                 val incoming = destination == transition.targetState
                 Box(Modifier.fillMaxSize().testTag("page-${destination.name}")
                     .graphicsLayer {
-                        alpha = visibility.value
-                        translationX = (1f - visibility.value) * distance *
+                        alpha = if (tabSwitch) 1f else visibility.value
+                        translationX = (1f - alpha) * distance *
                             (if (incoming) { if (forward) 1f else -0.3f } else { if (forward) -0.3f else 1f })
                     }
                     .then(if (!incoming) Modifier.clearAndSetSemantics { hideFromAccessibility() }
@@ -279,53 +284,71 @@ private fun ModelPage(state: SettingsState) {
     var newName by remember { mutableStateOf("") }
     var showDelete by remember { mutableStateOf(false) }
     var revealKey by remember(draft.id) { mutableStateOf(false) }
-    Group {
-        OverlayDropdownPreference(
-            title = "当前配置", items = profiles.profiles.map { it.name },
-            selectedIndex = profiles.profiles.indexOfFirst { it.id == profiles.activeId }.coerceAtLeast(0),
-            onSelectedIndexChange = { index ->
-                val id = profiles.profiles[index].id
-                if (id != profiles.activeId) {
-                    if (state.dirty) switchTo = id else state.switchProfile(id)
-                }
-            },
-        )
-    }
+    LazyColumn(Modifier.testTag("model-settings")) {
+        state.error?.let { message ->
+            item(key = "error") {
+                Group { BasicComponent(title = "未能完成", summary = message) }
+                Spacer(Modifier.height(12.dp))
+            }
+        }
+        item(key = "profile") {
+            Group {
+                OverlayDropdownPreference(
+                    title = "当前配置", items = profiles.profiles.map { it.name },
+                    selectedIndex = profiles.profiles.indexOfFirst { it.id == profiles.activeId }.coerceAtLeast(0),
+                    onSelectedIndexChange = { index ->
+                        val id = profiles.profiles[index].id
+                        if (id != profiles.activeId) {
+                            if (state.dirty) switchTo = id else state.switchProfile(id)
+                        }
+                    },
+                )
+            }
+        }
 
-    Section("连接信息") {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Input("配置名称", draft.name, { state.updateProfile(name = it) })
-            Input("服务地址", draft.endpoint, { state.updateProfile(endpoint = it) }, type = KeyboardType.Uri)
-            Text("Base URL，如 https://api.example.com/v1", style = MiuixTheme.textStyles.footnote1,
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary, modifier = Modifier.padding(horizontal = 4.dp))
-            TextField(value = draft.apiKey, onValueChange = { state.updateProfile(key = it) }, label = "API 密钥（可留空）",
-                singleLine = true, modifier = Modifier.fillMaxWidth(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                visualTransformation = if (revealKey) VisualTransformation.None else PasswordVisualTransformation())
+        item(key = "connection") {
+            Section("连接信息") {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Input("配置名称", draft.name, { state.updateProfile(name = it) })
+                    Input("服务地址", draft.endpoint, { state.updateProfile(endpoint = it) }, type = KeyboardType.Uri)
+                    Text("Base URL，如 https://api.example.com/v1", style = MiuixTheme.textStyles.footnote1,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary, modifier = Modifier.padding(horizontal = 4.dp))
+                    TextField(value = draft.apiKey, onValueChange = { state.updateProfile(key = it) }, label = "API 密钥（可留空）",
+                        singleLine = true, modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        visualTransformation = if (revealKey) VisualTransformation.None else PasswordVisualTransformation())
+                }
+                SwitchPreference(title = "显示密钥", checked = revealKey, onCheckedChange = { revealKey = it })
+            }
         }
-        SwitchPreference(title = "显示密钥", checked = revealKey, onCheckedChange = { revealKey = it })
-    }
-    Section("模型") {
-        Column(Modifier.padding(16.dp)) {
-            Input("模型名称", draft.model, { state.updateProfile(model = it) })
+        item(key = "model") {
+            Section("模型") {
+                Column(Modifier.padding(16.dp)) {
+                    Input("模型名称", draft.model, { state.updateProfile(model = it) })
+                }
+                ArrowPreference(title = if (state.fetching) "正在获取…" else "从服务选择",
+                    enabled = !state.fetching && draft.endpoint.isNotBlank(),
+                    onClick = { state.fetchModels() })
+                OverlayDropdownPreference(title = "API 协议", items = listOf("自动", "Responses", "Chat Completions"),
+                    selectedIndex = listOf("auto", "responses", "chat").indexOf(draft.api).coerceAtLeast(0),
+                    onSelectedIndexChange = { state.updateProfile(api = listOf("auto", "responses", "chat")[it]) })
+            }
         }
-        ArrowPreference(title = if (state.fetching) "正在获取…" else "从服务选择",
-            enabled = !state.fetching && draft.endpoint.isNotBlank(),
-            onClick = { state.fetchModels() })
-        OverlayDropdownPreference(title = "API 协议", items = listOf("自动", "Responses", "Chat Completions"),
-            selectedIndex = listOf("auto", "responses", "chat").indexOf(draft.api).coerceAtLeast(0),
-            onSelectedIndexChange = { state.updateProfile(api = listOf("auto", "responses", "chat")[it]) })
-    }
-    Section("小爱对话") {
-        SwitchPreference(title = "使用外部模型", checked = state.config.globalModel,
-            enabled = !state.dirty, summary = if (state.dirty) "保存后可更改" else "更改后重启小爱",
-            onCheckedChange = { if (it) confirmGlobal = true else state.setOption("globalModel", false) })
-    }
-    Section("管理配置") {
-        ArrowPreference(title = "另存为新配置", onClick = { newName = ""; showNew = true })
-        ArrowPreference(title = "删除当前配置", enabled = profiles.profiles.size > 1,
-            summary = if (profiles.profiles.size == 1) "至少保留一份配置" else null,
-            onClick = { showDelete = true })
+        item(key = "conversation") {
+            Section("小爱对话") {
+                SwitchPreference(title = "使用外部模型", checked = state.config.globalModel,
+                    enabled = !state.dirty, summary = if (state.dirty) "保存后可更改" else "更改后重启小爱",
+                    onCheckedChange = { if (it) confirmGlobal = true else state.setOption("globalModel", false) })
+            }
+        }
+        item(key = "management") {
+            Section("管理配置") {
+                ArrowPreference(title = "另存为新配置", onClick = { newName = ""; showNew = true })
+                ArrowPreference(title = "删除当前配置", enabled = profiles.profiles.size > 1,
+                    summary = if (profiles.profiles.size == 1) "至少保留一份配置" else null,
+                    onClick = { showDelete = true })
+            }
+        }
     }
     ConfirmDialog(show = confirmGlobal, title = "使用外部模型对话？",
         summary = "聊天记录和工具上下文将发送至当前 API 服务。更改后重启小爱。",

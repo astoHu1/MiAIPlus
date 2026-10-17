@@ -1,5 +1,27 @@
 # MiAIPlus 0.3.3 实现与验证状态
 
+## 非全屏浮窗思考强度菜单修复（2026-10-17）
+
+用户截图中的“＋ → 回答模式”来自独立的 `FloatStateMorePopup`，此前输入栏／全屏功能栏的 Hook 没有覆盖这条路径。现补充该精确版本入口：全局外部模型开启时，将子菜单替换为当前模型支持的思考档位，同步 Miuix 二级菜单选中状态；选择经现有 `set_reasoning` IPC 按 endpoint/model/api 保存并校验过期配置，不调用原生模式切换。官方模式保留原菜单，其他输入／附件菜单继续使用原处理，重载时清理浮窗与菜单快照。
+
+新增 JVM/Robolectric 回归覆盖 GPT‑6.1 Sol／Qwen／未知模型菜单、选中状态与重新打开、经真实 BridgeProvider 保存、切换模型／关闭外接后拒绝旧菜单写入，以及官方模式菜单保持。
+
+本地联合验证：214 项 JVM/Robolectric 测试通过（新增 5 项，0 failures/errors/skipped）；Debug、Release、AndroidTest 构建及 Debug／Release 完整 Lint 通过（0 errors，31／24 warnings）。随后收紧保存范围断言，新增 5 项再次通过。`git diff --check` 通过。
+
+用户连接 ADB 后，已在 Xiaomi 25019PNF3C / xuanyuan、API 37、小爱 8.2.65.4714（508002065）安装修复版 Debug 与 AndroidTest。通过原生 VoiceService 唤醒非全屏“我在听”浮窗，实际点击右侧星形按钮 → 回答模式：当前 `deepseek-flash` 显示模型默认／关闭思考／low／high／max；high 切到 low 后，重新打开仍选中 low，模块私有配置也确认为 low。关闭外部模型后重新打开，恢复自动／快速／专家原生菜单；最终恢复外部开关与原 high 档，重新打开核对选中 high。菜单截图保存在 `work/reasoning-popup-fix/menu-verified.png`。无障碍服务列表保持一致，无新增 reverse，小爱进程存活。
+
+此项实测验证原生浮窗菜单与 IPC 保存；唤醒使用系统服务动作，未按实体电源键，也未发送模型推理请求，不代表服务端参数／回复验证。未提交、推送或发布。
+
+## 敏感操作灵动岛确认（2026-10-17）
+
+前台控屏的敏感操作确认已从旧 Android 无障碍悬浮窗迁移到小爱灵动岛：显示操作说明，提供“确认本次操作／停止任务”，等待时不打开小爱页面。确认绑定当前 UID、控屏任务和一次性 token，仅批准当前动作；拒绝、取消或 60 秒超时停止任务。批准要求解锁，之后保留页面／目标复核；空白确认说明回退到已有操作意图，完整非空说明不截断。后台敏感动作继续 PAUSE／手动接管。设置页独立模型测试没有宿主灵动岛观察器，遇到确认会立即 PAUSE 并提示从小爱对话发起。
+
+本地联合验证：206 项 JVM/Robolectric 测试通过（0 failures/errors/skipped），覆盖确认、拒绝、取消、模拟单调时钟推进后的超时、过期／重放 token、任务与 UID 隔离、完整说明及空白说明回退；Debug、Release、AndroidTest 构建及两套完整 Lint 通过（0 errors，Debug 31 / Release 24 warnings）。`git diff --check` 与设备脚本 Python 编译检查通过。
+
+首次安装时 ADB 断开；用户重新连接后，已在 Xiaomi 25019PNF3C / xuanyuan、API 37、小爱 8.2.65.4714（508002065）安装最新 Debug 与 AndroidTest。`--action-confirmation` 实机专项通过：经实际注册的前台工具及通知 PendingIntent 验证同意、拒绝、停止与真实 60 秒超时。同意后自有测试按钮恰好一次触摸／点击，其他三种情况均为零；等待期间主屏 Activity／焦点不变，无旧无障碍确认悬浮窗，结束后会话与确认卡清理，旧按钮失效。截图 `work/action-confirmation-island.png` 已人工核对灵动岛摘要正常弹出；完整说明与展开岛按钮映射由通知载荷断言覆盖，未人工点击展开岛按钮或实测重新锁屏竞态。测试使用固定自有页面，不请求模型，配置由 runner 恢复。
+
+同包 `--foreground-consent` 实机回归通过，覆盖首次当前应用自动切前台、中途同意／拒绝、重新观察、拒绝后的 direct answer／原生 STOP gate，以及等待期间主屏焦点和输入保持。测试后无活动 instrumentation、无 DisplayHelper，仅 display 0，无新增 reverse；无障碍服务已重新连接，健康查询 `connected=true,busy=false`，原服务列表逐字保持一致。未提交、推送或发布。
+
 ## Responses 回复操作按钮修复（2026-10-17）
 
 已复现一条导致“正文已显示但复制／重试按钮缺失”的 Responses 路径：首段文字后，上游每 5 秒发送推理进度或注释心跳，35 秒后发送 completed；旧转换器吞掉这些活动，触发宿主 30 秒逐行 SSE 空闲超时。旧包实机无正常 Done、出现原生 Error，界面停留在停止按钮。短回复的 mock Responses 原本正常，不能用它排除该故障。

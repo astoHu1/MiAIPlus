@@ -37,7 +37,7 @@ android {
     buildFeatures { compose true; buildConfig true }
     lint { abortOnError true }
     testBuildType = providers.gradleProperty("uiTestBuildType").getOrElse("debug")
-    if (testBuildType == 'preview') {
+    if (testBuildType == 'preview' || providers.gradleProperty('settingsUiTests').getOrElse('false').toBoolean()) {
         defaultConfig.testInstrumentationRunner 'io.github.miaiplus.SettingsUiRunner'
         sourceSets.androidTest {
             manifest.srcFile 'src/uiTest/AndroidManifest.xml'

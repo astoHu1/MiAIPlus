@@ -107,14 +107,14 @@ public final class NativeSessionReplanTest {
         assertEquals(0, ScreenShadow.executions);
     }
 
-    @Test public void cancellationAfterReplanStillClosesSessionAndHidesControls() throws Exception {
+    @Test public void cancellationAfterReplanStillClosesSession() throws Exception {
         ScreenShadow.current = frame(BUTTON.replace("提交", "新目标"));
         assertSkipped(step(200, 200));
         NativeSession.cancel();
         ((ExecutorService) field(NativeSession.class, "CLEANUP").get(null)).submit(() -> { }).get(5, TimeUnit.SECONDS);
         assertTrue(sessionRun.cancelled.get());
         assertNull(field(NativeSession.class, "active").get(null));
-        assertEquals(1, ScreenShadow.hidden);
+        assertFalse(NativeSession.hasActiveSession());
         assertEquals(0, ScreenShadow.executions);
     }
 
@@ -135,7 +135,6 @@ public final class NativeSessionReplanTest {
         assertSame(session, field(NativeSession.class, "active").get(null));
         assertTrue(NativeSession.hasActiveSession());
         assertFalse(sessionRun.cancelled.get());
-        assertEquals(0, ScreenShadow.hidden);
     }
     private ScreenService.Frame frame(String nodes) {
         return new ScreenService.Frame(image, ROOT + nodes, 1000, 1000, "example.app", 8, 8, 0, "");
@@ -153,9 +152,9 @@ public final class NativeSessionReplanTest {
     public static final class ScreenShadow {
         static ScreenService.Frame current;
         static boolean rejectInjection;
-        static int attempts, executions, hidden;
+        static int attempts, executions;
         static double[] lastPoint;
-        static void reset() { current = null; rejectInjection = false; attempts = executions = hidden = 0; lastPoint = null; }
+        static void reset() { current = null; rejectInjection = false; attempts = executions = 0; lastPoint = null; }
         @Implementation protected ScreenService.Frame capture(RunState run) { run.check(); return current; }
         @Implementation protected void execute(Action action, ScreenService.Frame frame, RunState run) throws Exception {
             run.check();
@@ -164,7 +163,6 @@ public final class NativeSessionReplanTest {
             executions++;
             lastPoint = action.point("element");
         }
-        @Implementation protected void hideControls() { hidden++; }
     }
 
     /** Advance only the test clock while retaining the real cancellation/deadline checks. */

@@ -36,7 +36,7 @@ flowchart TD
 
 ## 原聊天入口的外部模型推理档位
 
-`NativeReasoningHook` 只在 `globalModel` 开启时接管两套原生入口：`StandardEditInputView` 的模式 popup，以及全屏 `FunctionBarView` 的模式 popup。原生 AUTO/QUICK/EXPERT 枚举、回调和持久化保持原状；外部选择经 UID 校验的 `set_reasoning` IPC 写入模块私有配置，以 endpoint/model/api 的摘要分别存储。写入前校验当前模型身份与有效档位，拒绝过期菜单写入。关闭外部模式时原菜单照常执行。
+`NativeReasoningHook` 只在 `globalModel` 开启时接管三套原生入口：`StandardEditInputView` 的模式 popup、全屏 `FunctionBarView` 的模式 popup，以及电源键唤醒等非全屏界面 `FloatStateMorePopup`（`zd1.b0`）的“＋ → 回答模式”子菜单。浮窗在原菜单可见性处理后、Miuix 复制菜单前替换子项，并按模型档位生成 `preCheckSecondaryItem` 的选中数组；其他附件／输入切换入口沿用原逻辑。原生 AUTO/QUICK/EXPERT 枚举、回调和持久化保持原状；外部选择经 UID 校验的 `set_reasoning` IPC 写入模块私有配置，以 endpoint/model/api 的摘要分别存储。写入前校验当前模型身份与有效档位，拒绝过期菜单写入。关闭外部模式时原菜单照常执行；热重载清理浮窗和弱引用的菜单配置快照。
 
 `ReasoningPolicy` 为已确认模型提供不同档位，未知名称只允许默认，不推测任意网关能力。独立 `ModelClient` 与原生隔离客户端均在最终线上请求阶段注入参数；Responses 用 `reasoning.effort`，Chat 使用已确认的标准或服务扩展字段。隔离客户端按协议及档位缓存，每次新建请求按当时选择取得客户端，不在协程异步发送期间读取共享线程局部状态。清除原生 enableThinking 布尔值的影响；模型默认不继承小爱原模式所产生的关闭思考参数。原 Responses 适配器同时承担 Chat 请求的思考参数注入；Chat 响应保持原样解析。
 
@@ -95,7 +95,9 @@ Hook 仅安装在精确校验的小爱版本：工具入口、描述构造、Pro
 
 `InteractionUi` 在小爱 UID 发布 HyperOS 原生焦点模板；`screen_ready` 握手成功之前执行器不触摸屏幕。保存交互入口只发生于整个控屏会话开始；多步 CONTINUE 不重置入口。全屏移动原任务到后台，快捷键系统浮窗隐藏并关闭触摸/焦点；独立观察线程确认执行已经退出才恢复全屏或发布展开的完成岛。停止请求等待实际执行退出，避免恢复页面与末尾动作竞争。详见 [迁移与专项验证](api102-migration.md)。
 
-展开岛通过 `param_v2.actions` / `miui.focus.actions` 提供停止控制，移除常驻无障碍悬浮停止键；确认窗仍由 `ScreenService` 按动作显示。Provider 用独立 `screen_task` 生命周期连接各次工具请求，宿主页面的中间更新在任务结束前保持后台。
+展开岛通过 `param_v2.actions` / `miui.focus.actions` 提供停止控制。前台敏感操作也通过该模板展示完整操作说明及“确认本次操作／停止任务”，不创建无障碍悬浮确认窗，不拉起小爱界面；普通通知展开区保留完整说明。`ActionConfirmation` 经 Provider 传递绑定 UID、screen_task 与一次性 token 的请求，60 秒未确认则停止；取消、超时、旧任务或旧按钮均不能授权后续动作，确认前后继续检查锁屏与页面目标。确认卡隐藏锁屏敏感内容，批准按钮要求解锁；若 ROM 在重新锁屏时仍递送批准广播，则拒绝此次批准并刷新按钮。模型显式要求确认但说明为空时，使用已有操作意图，仍须用户确认。该确认独立于当前应用使用授权。Provider 用独立 `screen_task` 生命周期连接各次工具请求，宿主页面的中间更新在任务结束前保持后台。
+
+设置页独立模型测试没有小爱 UID 的灵动岛观察器与动作接收器，因此遇到敏感提交会立即 PAUSE，提示从小爱对话发起；不会等待一张无法显示的确认卡，也不放宽跨 UID 授权。
 
 通知观察器只接受相同 `screen_task` 的 `completed=true` 且 `active=false` 作为正常收尾确认；单步工具返回、跨步等待和重新规划均保留进行中通知。只有执行器收到明确 `finish` 后的“模型报告任务完成”结果显示完成文案；失败或取消显示“手机操作已停止／任务未完成”，接管继续使用 PAUSE 文案。
 
@@ -117,7 +119,7 @@ Hook 仅安装在精确校验的小爱版本：工具入口、描述构造、Pro
 
 取消清理绑定具体 NativeSession/BackgroundDisplay 实例，异步等待执行退出；步骤续期同步更新 deadline 与 watchdog。后台输入定位原焦点节点并精确回读原节点值，helper 拒绝输入或不能验证 LOCAL 输入法策略时停止。帧节流保留最终待复制图像，手势使用同一 downTime 与实际注入时刻。上述当前实现的新增设备验收尚未完成，不继承此前版本的实测通过结论。
 
-`NativeSession` 和 `AgentEngine` 共用同一后端。后台模式下确认弹窗不覆盖物理屏，改为 PAUSE；具体行为、错误码与已验证项见 [后台虚拟屏](background-display.md)。
+`NativeSession` 和 `AgentEngine` 共用同一后端。后台敏感操作仍返回 PAUSE，交给用户手动接管；具体行为、错误码与已验证项见 [后台虚拟屏](background-display.md)。
 
 ## 应用启动
 
