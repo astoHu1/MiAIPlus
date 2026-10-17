@@ -31,8 +31,7 @@
 
 - 默认模式也会向官方小爱模型发送屏幕观察，并非离线运行；外部模式会向所选服务发送相应聊天、工具上下文及屏幕观察。
 - 自动化仍可能选错位置或无法完成复杂任务，请关注执行过程。锁屏、密码、验证码、安全窗口及其他授权可能要求接管。
-- 后台虚拟屏不是应用分身，不能保证同一应用在两块屏幕独立运行；设备实测不代表所有 ROM 兼容。
-- 停用时先停止任务，再关闭模块功能或在 LSPosed 停用并重启小爱。
+- 后台虚拟屏不是应用分身，不能保证同一应用在两块屏幕独立运行；理论兼容Android13+。
 
 ## 构建与下载
 
@@ -42,13 +41,13 @@
 ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assemblePreview
 ```
 
-试用 APK：`app/build/outputs/apk/preview/app-preview.apk`。Preview 为优化后的开发签名版本；正式分发需使用长期私有签名，签名不同不能直接覆盖安装。
+试用 APK：`app/build/outputs/apk/preview/app-preview.apk`。Preview 为优化开销后的开发签名版本。Debug请勿使用。
 
-GitHub Actions 在 main 推送、PR 和手动触发时执行测试、Lint 与构建；成功后在该次运行的 **Artifacts** 下载 APK、源码包和校验文件。CI 的 Release APK 未签名，Preview 仅供测试，跨运行不保证开发签名一致。CI 不执行实机测试，也不自动发布 Release。
+GitHub Actions 在 main 推送、PR 和手动触发时执行测试、Lint 与构建；成功后在该次运行的 **Artifacts** 下载 APK、源码包和校验文件。
 
 ## 更多说明
 
 - [后台虚拟屏与限制](docs/background-display.md) · [应用启动](docs/app-launch.md) · [无障碍前置检查](docs/accessibility-guard.md)
 - [配置界面](docs/settings-ui.md) · [API 102 与热重载](docs/api102-migration.md)
 - [开发指南](AGENTS.md) · [架构与验证](docs/architecture.md)
-- [发布与正式签名](docs/releasing.md) · [第三方许可](NOTICE)
+- [第三方许可](NOTICE)
