@@ -68,6 +68,22 @@ public class BackgroundDisplayTest {
         }
     }
 
+    @Test public void launchDistinguishesAnOpenedTargetFromAPendingSystemPrompt() throws Exception {
+        try (BackgroundDisplay opened = display(new JSONObject().put("status", "launched"), frameDirectory())) {
+            assertTrue(opened.launch(null, "example.target/.Main"));
+        }
+        try (BackgroundDisplay pending = display(new JSONObject().put("status", "awaiting_confirmation"), frameDirectory())) {
+            assertFalse(pending.launch(null, "example.target/.Main"));
+        }
+        try (BackgroundDisplay unknown = display(new JSONObject(), frameDirectory())) {
+            assertThrows(IllegalStateException.class, () -> unknown.launch(null, "example.target/.Main"));
+        }
+        try (BackgroundDisplay stolen = display(new JSONObject().put("status", "error").put("code", "TASK_STOLEN")
+                .put("message", "target moved to physical display"), frameDirectory())) {
+            assertThrows(IllegalStateException.class, () -> stolen.launch(null, "example.target/.Main"));
+        }
+    }
+
     private static File frameDirectory() throws Exception {
         Method method = BackgroundDisplay.class.getDeclaredMethod("createFrameDirectory", Context.class);
         method.setAccessible(true);
@@ -105,7 +121,7 @@ public class BackgroundDisplayTest {
                 try {
                     JSONObject reply = new JSONObject(response.toString());
                     reply.put("token", Long.parseLong(command.substring(0, command.indexOf(' '))));
-                    reply.put("status", "ok");
+                    if (!reply.has("status")) reply.put("status", "ok");
                     replies.write((reply + "\n").getBytes(StandardCharsets.UTF_8));
                     replies.flush();
                 } catch (Exception failure) {

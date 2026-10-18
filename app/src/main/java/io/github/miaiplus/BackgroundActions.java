@@ -52,29 +52,20 @@ final class BackgroundActions {
             throw new ForegroundConsent.Paused("PAUSE：切换时当前应用已改变，任务已暂停，本轮已结束");
     }
 
-    /**
-     * Packages that host a system confirmation dialog rather than the app the model believes it is driving.
-     *
-     * <p>The launch confirmation can arrive on the background display after the target already reported focus, so
-     * the next swipe lands on a permission dialog: the list does not move, and every retry looks like the app is
-     * stuck. These are never acted on automatically — the task pauses and the user decides.
-     */
-    private static final Set<String> SYSTEM_DIALOGS = Set.of(
-        "com.miui.securitycenter", "com.android.permissioncontroller", "com.lbe.security.miui");
-
     static void execute(BackgroundDisplay display, Action action, RunState run, Config config) throws Exception {
+        execute(display, action, run, config, null, false);
+    }
+
+    static void execute(BackgroundDisplay display, Action action, RunState run, Config config,
+        ScreenService.Frame planned, boolean systemDialogApproved) throws Exception {
         DisplaySession session = display.session();
         if (session == null) throw new IllegalStateException(BackgroundDisplay.ERROR_DISPLAY_LOST + "：后台显示已关闭");
         // Cheap generation check before any input so a recreated display cannot receive stale coordinates.
         display.verify(run);
-        // A dialog that appeared after the last observation is not the page this action was planned for.
-        if (!action.name.equals("launch") && !action.name.equals("wait")) {
-            String foreground = display.foregroundPackage(run);
-            String owner = foreground.contains("/") ? foreground.substring(0, foreground.indexOf('/')) : foreground;
-            if (SYSTEM_DIALOGS.contains(owner))
-                throw new IllegalStateException("PAUSE：后台屏上出现了系统确认窗口（" + owner
-                    + "），任务已暂停，请查看手机后再继续");
-        }
+        // A system dialog is a normal observation, not a reason to end the task. Review privilege grants and
+        // bind that review to the exact prompt; a newly appeared/changed prompt must be observed and planned.
+        if (!action.name.equals("launch") && !action.name.equals("wait"))
+            verifyTarget(display, action, run, session, planned, systemDialogApproved);
         switch (action.name) {
             case "tap", "long_press", "double_tap" -> {
                 double[] point = action.point("element");
@@ -87,6 +78,10 @@ final class BackgroundActions {
                     if (action.name.equals("double_tap")) {
                         run.pause(120);
                         display.verify(run);
+                        try { verifyTarget(display, action, run, session, planned, systemDialogApproved); }
+                        catch (ScreenService.ObservationChanged changed) {
+                            throw new IllegalStateException("双击首击已执行，后台页面随后变化，未执行第二击；请检查当前页面");
+                        }
                         display.tap(run, point[0], point[1]);
                     }
                 }
@@ -110,12 +105,26 @@ final class BackgroundActions {
                 AppLaunchTarget target = ScreenService.resolveLaunchTarget(requested);
                 if (target == null) throw new IllegalStateException("找不到应用：" + TaskProgress.compact(requested));
                 run.progress = "正在后台打开：" + TaskProgress.compact(target.label());
-                display.launch(run, target.packageName() + "/" + target.activityName());
+                boolean opened = display.launch(run, target.packageName() + "/" + target.activityName());
+                run.progress = (opened ? "已在后台打开：" : "等待后台选择或确认打开：")
+                    + TaskProgress.compact(target.label());
             }
             case "wait" -> run.pause(Math.max(100, Math.min(3000, action.data.optInt("duration_ms", 1000))));
             default -> throw new IllegalArgumentException("后台模式不支持的动作: " + action.name);
         }
         run.check();
+    }
+
+    private static void verifyTarget(BackgroundDisplay display, Action action, RunState run, DisplaySession session,
+        ScreenService.Frame planned, boolean approved) throws Exception {
+        String foreground = display.foregroundPackage(run);
+        String tree = ScreenService.treeOnDisplay(session.displayId, foreground);
+        ScreenService.Frame current = new ScreenService.Frame(planned == null ? "" : planned.image(), tree,
+            session.width, session.height, foreground, planned == null ? session.width : planned.imageWidth(),
+            planned == null ? session.height : planned.imageHeight(), session.displayId, session.generation);
+        if (planned != null && !PageGuard.canExecute(action, planned, current))
+            throw new ScreenService.ObservationChanged();
+        SystemDialogPolicy.verify(action, planned, current, approved);
     }
 
     /** The package currently on the background display, used to bound which window may receive text. */

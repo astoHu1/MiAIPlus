@@ -24,6 +24,8 @@ public final class ScreenService extends AccessibilityService {
     public static volatile ScreenService instance;
     private final Handler main = new Handler(Looper.getMainLooper());
     volatile int launchConfirmationCount;
+    private long lastCaptureAt = -1;
+    static final long CAPTURE_INTERVAL_MS = 350;
 
     /**
      * One observation.
@@ -130,12 +132,12 @@ public final class ScreenService extends AccessibilityService {
                         || window.getType() == android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) continue;
                     AccessibilityNodeInfo root = window.getRoot();
                     if (root == null || !root.refresh()) continue;
-                    if (matchesPackage(expectedPackage, root)) {
+                    if (window.isFocused()) {
                         StringBuilder builder = new StringBuilder();
                         dump(root, builder, new int[]{0});
                         return builder.toString();
                     }
-                    if (fallback == null && window.isFocused()) fallback = root;
+                    if (fallback == null && matchesPackage(expectedPackage, root)) fallback = root;
                 }
                 if (fallback == null) return "";
                 StringBuilder builder = new StringBuilder();
@@ -297,8 +299,13 @@ public final class ScreenService extends AccessibilityService {
         return null;
     }
 
-    public Frame capture(RunState run) throws Exception {
+    public synchronized Frame capture(RunState run) throws Exception {
         unlocked(run);
+        awaitCaptureInterval(lastCaptureAt, new CaptureTiming() {
+            @Override public long now() { return android.os.SystemClock.elapsedRealtime(); }
+            @Override public void pause(long millis) throws Exception { run.pause(millis); }
+            @Override public void check() { unlocked(run); }
+        });
         String[] tree = onMain(() -> {
             AccessibilityNodeInfo root = currentRoot();
             StringBuilder b = new StringBuilder();
@@ -307,6 +314,8 @@ public final class ScreenService extends AccessibilityService {
             return new String[]{b.toString(), foreground};
         });
         CompletableFuture<Frame> f = new CompletableFuture<>();
+        unlocked(run);
+        lastCaptureAt = android.os.SystemClock.elapsedRealtime();
         takeScreenshot(android.view.Display.DEFAULT_DISPLAY, getMainExecutor(), new TakeScreenshotCallback() {
             @Override public void onSuccess(ScreenshotResult result) {
                 try (HardwareBuffer buffer = result.getHardwareBuffer()) {
@@ -314,20 +323,48 @@ public final class ScreenService extends AccessibilityService {
                     if (hardware == null) throw new IllegalStateException("截图为空");
                     Bitmap bitmap = hardware.copy(Bitmap.Config.ARGB_8888, false);
                     hardware.recycle();
-                    int width = bitmap.getWidth(), height = bitmap.getHeight();
-                    double scale = Math.min(1, 1280.0 / Math.max(width, height));
-                    Bitmap small = Bitmap.createScaledBitmap(bitmap, Math.max(1, (int)(width * scale)), Math.max(1, (int)(height * scale)), true);
-                    ByteArrayOutputStream out = new ByteArrayOutputStream();
-                    small.compress(Bitmap.CompressFormat.JPEG, 80, out);
-                    if (small != bitmap) small.recycle(); bitmap.recycle();
-                    f.complete(Frame.physical(Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP), tree[0],
-                        width, height, tree[1]));
+                    try { f.complete(encodePhysical(bitmap, tree[0], tree[1])); }
+                    finally { bitmap.recycle(); }
                 } catch (Throwable e) { f.completeExceptionally(e); }
             }
             @Override public void onFailure(int code) { f.completeExceptionally(new IllegalStateException("无法截图（安全窗口/服务权限），错误码 " + code)); }
         });
         Frame frame = f.get(5, TimeUnit.SECONDS);
         run.check(); return frame;
+    }
+
+    interface CaptureTiming {
+        long now();
+        void pause(long millis) throws Exception;
+        void check();
+    }
+
+    /** Each observation takes a new screenshot; only the request cadence is shared across tasks. */
+    static long awaitCaptureInterval(long previous, CaptureTiming timing) throws Exception {
+        while (true) {
+            timing.check();
+            long now = timing.now();
+            long remaining = previous < 0 ? 0 : CAPTURE_INTERVAL_MS - (now - previous);
+            if (remaining <= 0) return now;
+            timing.pause(remaining);
+        }
+    }
+
+    /** Keep encoded image coordinates distinct from the display geometry used to dispatch input. */
+    static Frame encodePhysical(Bitmap bitmap, String tree, String foreground) {
+        int width = bitmap.getWidth(), height = bitmap.getHeight();
+        double scale = Math.min(1, 1280.0 / Math.max(width, height));
+        Bitmap small = Bitmap.createScaledBitmap(bitmap, Math.max(1, (int)(width * scale)),
+            Math.max(1, (int)(height * scale)), true);
+        try {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            if (!small.compress(Bitmap.CompressFormat.JPEG, 80, out))
+                throw new IllegalStateException("截图编码失败");
+            return new Frame(Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP), tree, width, height,
+                foreground, small.getWidth(), small.getHeight(), android.view.Display.DEFAULT_DISPLAY, "");
+        } finally {
+            if (small != bitmap) small.recycle();
+        }
     }
     static void dump(AccessibilityNodeInfo root, StringBuilder out, int[] count) {
         if (root == null) return;
@@ -458,7 +495,7 @@ public final class ScreenService extends AccessibilityService {
     private void launch(String requested, RunState run) throws Exception {
         AppLaunchTarget target = onMain(() -> { unlocked(run); return AppLaunchTarget.resolve(requested, launchTargets()); });
         run.progress = "正在打开：" + TaskProgress.compact(target.label());
-        LaunchVerifier.launch(target.packageName(), new LaunchVerifier.Driver() {
+        boolean opened = LaunchVerifier.launch(target.packageName(), new LaunchVerifier.Driver() {
             @Override public String foreground() throws Exception {
                 return onMain(() -> {
                     unlocked(run);
@@ -467,6 +504,11 @@ public final class ScreenService extends AccessibilityService {
                     catch (IllegalStateException transientWindow) { return ""; }
                     if (root == null || root.getPackageName() == null) return "";
                     String pkg = root.getPackageName().toString();
+                    StringBuilder tree = new StringBuilder();
+                    dump(root, tree, new int[]{0});
+                    if (SystemDialogPolicy.isAppSelection(pkg, tree.toString())
+                        && !"启动应用".equals(launchPromptText(root, "permission_group_title")))
+                        return LaunchVerifier.APP_SELECTION;
                     // Security also owns ordinary launcher pages; only permission UI is a blocker.
                     return LaunchVerifier.classifyForeground(pkg, pkg.equals("com.miui.securitycenter")
                         ? launchPromptText(root, "permission_group_title") : "");
@@ -494,34 +536,39 @@ public final class ScreenService extends AccessibilityService {
             @Override public long now() { return android.os.SystemClock.elapsedRealtime(); }
             @Override public void pause(long millis) throws Exception { run.pause(millis); }
         });
-        run.progress = "已打开：" + TaskProgress.compact(target.label());
+        run.progress = (opened ? "已打开：" : "等待选择或确认打开：") + TaskProgress.compact(target.label());
     }
     public void execute(Action action, Frame frame, RunState run) throws Exception {
+        execute(action, frame, run, false);
+    }
+    public void execute(Action action, Frame frame, RunState run, boolean systemDialogApproved) throws Exception {
         unlocked(run);
         if (!action.name.equals("launch") && !action.name.equals("wait")) onMain(() -> {
             unlocked(run);
             AccessibilityNodeInfo root = currentRoot();
             if (root == null || !String.valueOf(root.getPackageName()).equals(frame.foreground()))
                 throw new ObservationChanged();
+            verifySystemDialog(action, frame, root, systemDialogApproved);
             return null;
         });
         switch (action.name) {
             case "tap", "long_press", "double_tap" -> {
                 double[] p = action.point("element");
-                gesture(p, p, action.name.equals("long_press") ? 800 : 60, frame, run, action);
+                gesture(p, p, action.name.equals("long_press") ? 800 : 60, frame, run, action, systemDialogApproved);
                 if (action.name.equals("double_tap")) {
                     run.pause(100);
-                    try { gesture(p, p, 60, frame, run, action); }
+                    try { gesture(p, p, 60, frame, run, action, systemDialogApproved); }
                     catch (ObservationChanged changed) {
                         throw new IllegalStateException("双击首击已执行，页面随后变化，未执行第二击；请检查当前页面");
                     }
                 }
             }
-            case "swipe" -> gesture(action.point("start"), action.point("end"), 450, frame, run, null);
+            case "swipe" -> gesture(action.point("start"), action.point("end"), 450, frame, run, action, systemDialogApproved);
             case "type" -> {
                 boolean ok = onMain(() -> {
                     unlocked(run);
                     AccessibilityNodeInfo root = currentRoot();
+                    verifySystemDialog(action, frame, root, systemDialogApproved);
                     verifyActionTarget(action, frame, root);
                     AccessibilityNodeInfo focused = root == null ? null : root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
                     if (focused == null || !focused.isEditable() || focused.isPassword()) return false;
@@ -540,13 +587,24 @@ public final class ScreenService extends AccessibilityService {
         }
         run.check();
     }
-    private void gesture(double[] from, double[] to, long duration, Frame frame, RunState run, Action action) throws Exception {
+    private void verifySystemDialog(Action action, Frame planned, AccessibilityNodeInfo root, boolean approved)
+        throws ObservationChanged {
+        StringBuilder tree = new StringBuilder();
+        if (root != null) dump(root, tree, new int[]{0});
+        Frame current = new Frame(planned.image(), tree.toString(), planned.width(), planned.height(),
+            root == null ? "" : String.valueOf(root.getPackageName()), planned.imageWidth(), planned.imageHeight(),
+            planned.displayId(), planned.generation());
+        SystemDialogPolicy.verify(action, planned, current, approved);
+    }
+    private void gesture(double[] from, double[] to, long duration, Frame frame, RunState run, Action action,
+        boolean systemDialogApproved) throws Exception {
         CompletableFuture<Boolean> done = new CompletableFuture<>();
         onMain(() -> {
             unlocked(run);
             AccessibilityNodeInfo root = currentRoot();
             if (root == null || !String.valueOf(root.getPackageName()).equals(frame.foreground()))
                 throw new ObservationChanged();
+            verifySystemDialog(action, frame, root, systemDialogApproved);
             // Reject stale coordinates after rotation rather than tapping the wrong UI.
             Rect current = getSystemService(WindowManager.class).getMaximumWindowMetrics().getBounds();
             if (current.width() != frame.width() || current.height() != frame.height())

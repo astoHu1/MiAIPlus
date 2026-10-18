@@ -6,6 +6,10 @@ import java.util.Map;
 
 /** Credentials persist only in module-private storage; global mode shares them with the scoped native client in memory. */
 public final class Config {
+    public static final String PHONE_USE_PERMISSION_MODE_KEY = "phoneUsePermissionMode";
+    public static final String PHONE_USE_PERMISSION_MANUAL = "manual";
+    public static final String PHONE_USE_PERMISSION_AUTO = "auto";
+    public static final String PHONE_USE_PERMISSION_YOLO = "yolo";
     public static final int MAX_PHONE_USE_STEPS = 200;
     public static final int DEFAULT_CONVERSATION_TIMEOUT_MINUTES = 15;
     public static final int MAX_CONVERSATION_TIMEOUT_MINUTES = 1440;
@@ -18,6 +22,7 @@ public final class Config {
     public static final int DEFAULT_DISPLAY_DENSITY = 320;
     public final boolean enabled, globalModel, backgroundDisplay;
     public final String endpoint, apiKey, model, protocol, planner, api, reasoning;
+    public final String phoneUsePermissionMode;
     public final int maxSteps;
     public final int conversationTimeoutMinutes;
     public final int displayWidth, displayHeight, displayDensity;
@@ -27,6 +32,9 @@ public final class Config {
         enabled = Boolean.TRUE.equals(p.get("enabled"));
         // Default off: an existing installation keeps sending every task to the physical screen.
         backgroundDisplay = Boolean.TRUE.equals(p.get("backgroundDisplay"));
+        Object permissionMode = p.get(PHONE_USE_PERMISSION_MODE_KEY);
+        phoneUsePermissionMode = PHONE_USE_PERMISSION_AUTO.equals(permissionMode) ? PHONE_USE_PERMISSION_AUTO
+            : PHONE_USE_PERMISSION_YOLO.equals(permissionMode) ? PHONE_USE_PERMISSION_YOLO : PHONE_USE_PERMISSION_MANUAL;
         endpoint = string(p, "endpoint", "").trim();
         apiKey = string(p, "apiKey", "");
         model = string(p, "model", "").trim();

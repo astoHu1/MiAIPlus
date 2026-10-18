@@ -39,6 +39,44 @@ import java.util.concurrent.atomic.AtomicInteger
 class SettingsUiTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
+    @Test fun permissionPresetsSaveAllModesSurviveRecreationAndRejectInvalidValues() {
+        var state = ViewModelProvider(compose.activity)[SettingsState::class.java]
+        compose.onNodeWithTag("tab-Control").performClick()
+        compose.onNodeWithText("Phone Use 权限预设").performScrollTo()
+        compose.onNodeWithText("Manual").assertExists()
+        compose.runOnIdle { assertEquals("manual", state.config.phoneUsePermissionMode) }
+        for ((label, mode) in listOf("Auto" to "auto", "YOLO" to "yolo", "Manual" to "manual")) {
+            compose.onNodeWithText("Phone Use 权限预设").performScrollTo().performClick()
+            compose.onNodeWithText(label).performClick()
+            compose.runOnIdle {
+                assertEquals(mode, state.config.phoneUsePermissionMode)
+                // Read the same Application-owned store used by SettingsState. AndroidViewModel's
+                // cached factory can retain an Application from another Robolectric sandbox.
+                val owner = state.getApplication<Application>()
+                assertEquals(mode, io.github.miaiplus.Config.prefs(owner)
+                    .getString(io.github.miaiplus.Config.PHONE_USE_PERMISSION_MODE_KEY, null))
+                assertEquals(mode, io.github.miaiplus.Config(owner).phoneUsePermissionMode)
+            }
+        }
+        compose.runOnIdle {
+            assertEquals(false, state.setPhoneUsePermissionMode("unknown"))
+            assertEquals(false, state.setOption(io.github.miaiplus.Config.PHONE_USE_PERMISSION_MODE_KEY, true))
+            assertEquals("manual", io.github.miaiplus.Config(state.getApplication<Application>()).phoneUsePermissionMode)
+            check(state.setPhoneUsePermissionMode("auto"))
+        }
+        compose.activityRule.scenario.recreate()
+        state = ViewModelProvider(compose.activity)[SettingsState::class.java]
+        compose.onNodeWithTag("tab-Control").performClick()
+        compose.onNodeWithText("Phone Use 权限预设").performScrollTo()
+        compose.onNodeWithText("Auto").assertExists()
+        compose.onNodeWithText("模型自动审计，无法确定时请求你确认").assertExists()
+        compose.runOnIdle {
+            assertEquals("auto", state.config.phoneUsePermissionMode)
+            assertEquals("auto", io.github.miaiplus.Config(state.getApplication<Application>()).phoneUsePermissionMode)
+        }
+        capture("control-phone-use-permission")
+    }
+
     @Test fun globalExternalModelForcesAndLocksNativePlanner() {
         val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
         compose.runOnIdle {

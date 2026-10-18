@@ -6,6 +6,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.os.Bundle;
 import android.os.Looper;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -21,6 +22,42 @@ import org.robolectric.shadows.ShadowSystemClock;
 @org.robolectric.annotation.Config(sdk = 33, application = Application.class)
 public final class InteractionUiTest {
     private static final String RETURN_TOKEN = "io.github.miaiplus.RETURN_CONVERSATION";
+
+    @Test public void pendingActionPublishesFullConfirmationDespiteEmptyOrUnchangedPlannerProgress() {
+        String message = "确认发送给指定收件人：\n" + "完整操作说明".repeat(50);
+        for (String progress : new String[]{"", "点击目标控件"}) {
+            Bundle state = new Bundle();
+            state.putString("progress", progress);
+            state.putString("action_confirmation", "action-token");
+            state.putString("confirmation_message", message);
+            InteractionUi.TaskNotice notice = new InteractionUi.TaskNotice(state);
+            assertEquals("小爱请求确认操作", notice.title);
+            assertEquals(message, notice.text);
+            assertTrue(notice.confirmation);
+            assertTrue("A newly pending decision must bypass unchanged progress", notice.changed(notice.progress, null));
+            assertFalse("A delivered decision need not float again on every poll", notice.changed(notice.progress, "action-token"));
+        }
+    }
+
+    @Test public void notificationRetriesUnpublishedDecisionAndClearsControlsAfterItEnds() {
+        Bundle state = new Bundle();
+        state.putString("progress", "等待确认");
+        state.putString("action_confirmation", "new-token");
+        state.putString("confirmation_message", "提交本次操作");
+        // Until notify succeeds, both later polls must still see a change from the delivered card.
+        for (int poll = 0; poll < 2; poll++) {
+            InteractionUi.TaskNotice retry = new InteractionUi.TaskNotice(state);
+            assertTrue(retry.changed("等待确认", "previous-token"));
+        }
+        state.remove("action_confirmation");
+        state.remove("confirmation_message");
+        InteractionUi.TaskNotice resolved = new InteractionUi.TaskNotice(state);
+        assertTrue(resolved.changed("等待确认", "new-token"));
+        assertNull(resolved.token);
+        assertFalse(resolved.confirmation);
+        assertEquals("正在操作手机", resolved.title);
+        assertEquals("等待确认", resolved.text);
+    }
 
     @Test public void bothForegroundAndSensitiveActionDecisionsReachReceiverWithoutOpeningAnActivity() {
         Application app = RuntimeEnvironment.getApplication();

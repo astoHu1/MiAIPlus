@@ -70,6 +70,24 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
      * immediate new request can open the assistant without letting old tool-result updates reopen it on their own.
      */
     private static final long HOST_QUIET_AFTER_FINISH_MS = 10_000;
+    /** A confirmation is actionable even when a planner has not supplied progress text yet. */
+    static final class TaskNotice {
+        final String progress, token, title, text;
+        final boolean confirmation;
+        TaskNotice(Bundle state) {
+            String compactProgress = TaskProgress.compact(state.getString("progress", ""));
+            progress = compactProgress.isEmpty() ? "正在操作手机" : compactProgress;
+            String confirmationToken = state.getString("action_confirmation");
+            confirmation = confirmationToken != null;
+            token = confirmation ? confirmationToken : state.getString("foreground_consent");
+            title = token == null ? "正在操作手机" : confirmation ? "小爱请求确认操作" : "小爱请求使用当前应用";
+            text = token == null ? progress : confirmation ? state.getString("confirmation_message", "")
+                : "使用“" + state.getString("foreground_label", "当前应用") + "”并转为前台控屏，是否同意？";
+        }
+        boolean changed(String shownProgress, String shownToken) {
+            return !progress.equals(shownProgress) || !java.util.Objects.equals(token, shownToken);
+        }
+    }
     static final class HostQuietWindow {
         private volatile long until;
         boolean active(boolean running) {
@@ -333,26 +351,22 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
                 try {
                     Bundle state = app.getContentResolver().call(BridgeProvider.URI, "screen_state", watchedTask, null);
                     if (state != null && state.getBoolean("active")) {
-                        String progress = TaskProgress.compact(state.getString("progress", ""));
-                        String confirmationToken = state.getString("action_confirmation");
-                        boolean confirmAction = confirmationToken != null;
-                        String requestToken = confirmAction ? confirmationToken : state.getString("foreground_consent");
-                        String requestLabel = state.getString("foreground_label", "当前应用");
-                        String confirmationMessage = state.getString("confirmation_message", "");
+                        TaskNotice notice = new TaskNotice(state);
                         main.post(() -> {
                             if (!running || !java.util.Objects.equals(screenTask, watchedTask)
-                                || progress.isEmpty() || (progress.equals(shownProgress)
-                                    && java.util.Objects.equals(consentToken, requestToken))) return;
-                            if (!java.util.Objects.equals(consentToken, requestToken)) clearConsentActions();
-                            consentToken = requestToken;
-                            actionConfirmation = confirmAction;
+                                || !notice.changed(shownProgress, shownConsentToken)) return;
+                            if (!java.util.Objects.equals(consentToken, notice.token)) clearConsentActions();
+                            consentToken = notice.token;
+                            actionConfirmation = notice.confirmation;
                             try {
-                                publish(requestToken == null ? "正在操作手机" : confirmAction ? "小爱请求确认操作" : "小爱请求使用当前应用",
-                                    requestToken == null ? progress : confirmAction ? confirmationMessage
-                                        : "使用“" + requestLabel + "”并转为前台控屏，是否同意？", true);
-                                shownProgress = progress;
+                                publish(notice.title, notice.text, true);
+                                shownProgress = notice.progress;
                             }
-                            catch (Exception failure) { android.util.Log.w("MiAIPlus", "Unable to update task intent"); }
+                            catch (Exception failure) {
+                                // Deduplicate against published state, never the unshown request token.
+                                // A transient native template/notification error must retry on the next poll.
+                                android.util.Log.w("MiAIPlus", "Unable to update task intent", failure);
+                            }
                         });
                         return;
                     }

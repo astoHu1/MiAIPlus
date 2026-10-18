@@ -425,6 +425,16 @@ private fun ControlPage(state: SettingsState, openSettings: (Boolean) -> Unit, o
             onClick = openVirtual)
     }
     Section("权限") {
+        val permissionModes = listOf(Config.PHONE_USE_PERMISSION_MANUAL,
+            Config.PHONE_USE_PERMISSION_AUTO, Config.PHONE_USE_PERMISSION_YOLO)
+        OverlayDropdownPreference(title = "Phone Use 权限预设", items = listOf("Manual", "Auto", "YOLO"),
+            selectedIndex = permissionModes.indexOf(state.config.phoneUsePermissionMode).coerceAtLeast(0),
+            summary = when (state.config.phoneUsePermissionMode) {
+                Config.PHONE_USE_PERMISSION_AUTO -> "模型自动审计，无法确定时请求你确认"
+                Config.PHONE_USE_PERMISSION_YOLO -> "除严重安全问题外自动同意，安全限制始终生效"
+                else -> "敏感操作由你逐次确认"
+            },
+            onSelectedIndexChange = { state.setPhoneUsePermissionMode(permissionModes[it]) })
         ArrowPreference(title = "无障碍服务", summary = if (state.accessible) "已连接" else "前往开启",
             onClick = { openSettings(false) })
         SwitchPreference(title = "任务前检查无障碍", summary = if (state.guardChanging) "正在应用…" else "失效时用 root 恢复",

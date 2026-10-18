@@ -849,16 +849,18 @@ public final class DisplayHelper {
             return;
         }
         String output = amStart(packageName, activity);
-        String placement = awaitFocus(packageName);
-        if (placement.isEmpty()) {
-            int landed = visibleTaskDisplay(packageName);
-            boolean moved = landed >= 0 && landed != displayId;
-            error(token, moved ? "TASK_STOLEN" : "LAUNCH_FAILED", moved
-                ? "the package's task is on display " + landed + " instead of the background display"
+        String placement = awaitFocus(packageName, true);
+        // A system prompt is pending work, never evidence that moving a task to another screen was safe.
+        // Recheck ownership after amStart even when a valid prompt or target window has appeared here.
+        int conflictAfterStart = visibleTaskDisplay(packageName);
+        String outcome = launchOutcome(packageName, placement, conflictAfterStart);
+        if (outcome.equals("TASK_STOLEN") || outcome.equals("LAUNCH_FAILED")) {
+            error(token, outcome, outcome.equals("TASK_STOLEN")
+                ? "the package's task is on display " + conflictAfterStart + " instead of the background display"
                 : "the package never became visible on the background display");
             return;
         }
-        reply(token, "launched", "displayId", String.valueOf(displayId), "output", output, "display", placement);
+        reply(token, outcome, "displayId", String.valueOf(displayId), "output", output, "display", placement);
     }
 
     /** Starts exactly one explicit component; the helper cannot be asked to start an arbitrary intent. */
@@ -870,12 +872,39 @@ public final class DisplayHelper {
 
     /** Waits for the package to hold focus on the background display, or returns empty if it never does. */
     private static String awaitFocus(String packageName) {
+        return awaitFocus(packageName, false);
+    }
+
+    private static String awaitFocus(String packageName, boolean allowSystemPrompt) {
         for (int attempt = 0; attempt < 20; attempt++) {
             String focused = focusPackage(displayId);
-            if (focused.startsWith(packageName + "/")) return focused;
+            if (focused.startsWith(packageName + "/") || (allowSystemPrompt && pendingLaunchPrompt(focused)))
+                return focused;
             try { Thread.sleep(250); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); return ""; }
         }
         return "";
+    }
+
+    /**
+     * Focus must come from our display. conflictingDisplay is from visibleTaskDisplay(..., displayId),
+     * which excludes our own tasks and returns -1 when no other display owns a visible target task.
+     */
+    static String launchOutcome(String packageName, String focused, int conflictingDisplay) {
+        if (conflictingDisplay >= 0) return "TASK_STOLEN";
+        if (focused.startsWith(packageName + "/")) return "launched";
+        return pendingLaunchPrompt(focused) ? "awaiting_confirmation" : "LAUNCH_FAILED";
+    }
+
+    private static boolean pendingLaunchPrompt(String focused) {
+        int slash = focused.indexOf('/');
+        if (slash <= 0) return false;
+        String owner = focused.substring(0, slash);
+        if (java.util.Set.of("com.miui.securitycenter", "com.android.permissioncontroller",
+            "com.google.android.permissioncontroller", "com.android.packageinstaller",
+            "com.google.android.packageinstaller", "com.miui.packageinstaller", "com.miui.securitycore",
+            "com.lbe.security.miui", "com.android.intentresolver").contains(owner)) return true;
+        return owner.equals("android")
+            && (focused.contains("ResolverActivity") || focused.contains("ChooserActivity"));
     }
 
     /**

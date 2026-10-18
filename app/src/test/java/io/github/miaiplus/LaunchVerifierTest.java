@@ -25,7 +25,7 @@ public class LaunchVerifierTest {
             Fake f = new Fake();
             f.windows = t -> t >= readyAt ? TARGET : readyAt == 1000
                 ? LaunchVerifier.classifyForeground("com.miui.securitycenter", "") : "fixture.origin";
-            LaunchVerifier.launch(TARGET, f);
+            assertTrue(LaunchVerifier.launch(TARGET, f));
             assertEquals("starts when target ready at " + readyAt, readyAt == 0 ? 0 : 1, f.starts);
             assertEquals("stable window when target ready at " + readyAt, readyAt + 500, f.time);
             assertEquals("ordinary window must not approve consent", 0, f.consentClicks);
@@ -37,14 +37,13 @@ public class LaunchVerifierTest {
         catch (IllegalStateException expected) { assertTrue(expected.getMessage().startsWith("PAUSE：")); }
         assertEquals(1, f.starts); assertEquals(10000, f.time);
     }
-    @Test public void blockedLaunchAndPermissionPromptPauseWithoutRetry() throws Exception {
-        for (String blocker : new String[]{"fixture.origin", "com.lbe.security.miui", LaunchVerifier.XIAOMI_CONFIRMATION,
-            LaunchVerifier.XIAOMI_AUTHORIZATION, "com.android.permissioncontroller"}) {
+    @Test public void systemPromptsReturnForPlanningWithoutClaimingTheTargetOpened() throws Exception {
+        for (String blocker : new String[]{"com.lbe.security.miui", LaunchVerifier.XIAOMI_CONFIRMATION,
+            LaunchVerifier.XIAOMI_AUTHORIZATION, "com.android.permissioncontroller", LaunchVerifier.APP_SELECTION}) {
             Fake f = new Fake(); f.windows = t -> t >= 250 ? blocker : "fixture.origin";
-            try { LaunchVerifier.launch(TARGET, f); fail(); }
-            catch (IllegalStateException expected) { assertTrue(expected.getMessage().startsWith("PAUSE：")); }
+            assertFalse(blocker, LaunchVerifier.launch(TARGET, f));
             assertEquals(1, f.starts);
-            if (!blocker.equals("fixture.origin")) assertEquals(250, f.time);
+            assertEquals(250, f.time);
         }
     }
     @Test public void launchConsentIsAllowedOnceThenTargetIsVerified() throws Exception {
@@ -54,7 +53,7 @@ public class LaunchVerifierTest {
                 Fake f = new Fake(); f.consent = true;
                 f.windows = t -> t < 250 && !existingPrompt ? "fixture.origin"
                     : t < (existingPrompt ? 250 : 1000) ? LaunchVerifier.XIAOMI_CONFIRMATION : target;
-                LaunchVerifier.launch(target, f);
+                assertTrue(LaunchVerifier.launch(target, f));
                 assertEquals(scenario, existingPrompt ? 0 : 1, f.starts);
                 assertEquals(scenario, 1, f.consentClicks);
                 assertEquals(scenario, existingPrompt ? 750 : 1500, f.time);
@@ -68,22 +67,20 @@ public class LaunchVerifierTest {
             .getMessage().startsWith("PAUSE："));
         assertEquals(1, f.starts); assertEquals(1, f.consentClicks); assertEquals(10000, f.time);
     }
-    @Test public void existingPermissionPromptsBlockBeforeAnotherLaunch() throws Exception {
+    @Test public void existingPermissionPromptsReturnForPlanningBeforeAnotherLaunch() throws Exception {
         for (String blocker : new String[]{"com.lbe.security.miui",
             LaunchVerifier.classifyForeground("com.miui.securitycenter", "相机")}) {
             Fake f = new Fake(); f.consent = true; f.windows = t -> blocker;
-            assertTrue(blocker, assertThrows(IllegalStateException.class, () -> LaunchVerifier.launch(TARGET, f))
-                .getMessage().startsWith("PAUSE："));
+            assertFalse(blocker, LaunchVerifier.launch(TARGET, f));
             assertEquals(blocker, 0, f.starts);
             assertEquals(blocker, 0, f.consentClicks);
         }
     }
-    @Test public void anotherSecurityPermissionAfterLaunchConsentStillPauses() throws Exception {
+    @Test public void anotherSecurityPermissionAfterLaunchConsentRequiresANewDecision() throws Exception {
         Fake f = new Fake(); f.consent = true;
         f.windows = t -> t < 250 ? "fixture.origin" : LaunchVerifier.classifyForeground("com.miui.securitycenter",
             t < 1000 ? "启动应用" : "相机");
-        try { LaunchVerifier.launch(TARGET, f); fail(); }
-        catch (IllegalStateException expected) { assertTrue(expected.getMessage().startsWith("PAUSE：")); }
+        assertFalse(LaunchVerifier.launch(TARGET, f));
         assertEquals(1, f.starts); assertEquals(1, f.consentClicks); assertEquals(1000, f.time);
     }
     @Test public void cancellationStopsBeforeLaunch() throws Exception {

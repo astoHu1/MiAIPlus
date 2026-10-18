@@ -25,7 +25,12 @@ public final class NativePhoneUseTool {
             "end":{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2},
             "intent":{"type":"string","description":"每步用简短中文说明当前操作意图，例如点击搜索框、查找订单，显示在灵动岛；不含隐私内容、坐标或推理过程。不要用message填写普通意图。"},
             "text":{"type":"string"},"app":{"type":"string","description":"launch使用首次观察可启动应用列表中的包名，不猜测包名或Intent"},
-            "message":{"type":"string"},"requires_confirmation":{"type":"boolean"},"duration_ms":{"type":"integer"}
+            "message":{"type":"string"},"requires_confirmation":{"type":"boolean"},
+            "risk_level":{"type":"string","enum":["normal","sensitive","critical"],"description":"付款转账、账号安全、泄露凭证、关闭安全防护或永久授权标记critical；普通敏感提交标记sensitive"},
+            "permission_review":{"type":"object","properties":{
+              "token":{"type":"string"},"decision":{"type":"string","enum":["allow","ask_user","deny"]},"reason":{"type":"string"}
+            },"required":["token","decision","reason"],"additionalProperties":false},
+            "duration_ms":{"type":"integer"}
           },"required":["action"]}
         }}
         """;

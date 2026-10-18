@@ -34,61 +34,110 @@ final class ActionConfirmationProbe {
         Thread worker = null;
         PendingIntent priorAllow = null, priorDeny = null;
         try {
-            for (String scenario : new String[]{"ALLOW", "DENY", "CANCEL", "TIMEOUT"}) {
+            for (String scenario : new String[]{"ALLOW", "DENY", "CANCEL", "TIMEOUT", "YOLO_ALLOW", "YOLO_CRITICAL",
+                "AUTO_ALLOW", "AUTO_ASK_USER", "AUTO_INVALID", "BACKGROUND_ALLOW"}) {
                 check(!cancelled, "device runner cancelled confirmation probe");
-                String observed = text(execute(loader, tool, new JSONObject().put("goal", "仅验证自有测试按钮的灵动岛确认，不操作其他应用")));
+                stage(context, "ACTION_CONFIRMATION_" + scenario + "_START");
+                boolean background = scenario.equals("BACKGROUND_ALLOW");
+                Object selectedTool = background
+                    ? call(registry, HostCompatibility.choose("get", "peek"), PhoneUseRouting.BACKGROUND_TOOL) : tool;
+                check(selectedTool != null, "registered background native tool unavailable");
+                String observed = text(execute(loader, selectedTool, new JSONObject()
+                    .put("goal", "仅验证 MiAIPlus 自有测试页面一次无害触摸的权限流程，不发送、不付款、不删除、不操作其他应用")));
                 String session = session(observed);
-                check(observed.contains("执行屏幕=foreground") && observed.contains("前台=io.github.miaiplus；"),
+                check(observed.contains("执行屏幕=" + (background ? "background" : "foreground")),
+                    "confirmation observed the wrong execution screen");
+                String preset = scenario.startsWith("YOLO_") ? "YOLO" : scenario.startsWith("AUTO_") ? "Auto" : "Manual";
+                check(observed.contains(preset + "："), "new native session did not load its permission preset");
+                if (background) {
+                    observed = text(execute(loader, selectedTool, step(session,
+                        new JSONObject().put("action", "launch").put("app", "io.github.miaiplus.test"))));
+                    check(observed.contains("执行屏幕=background")
+                        && observed.contains("前台=io.github.miaiplus.test/")
+                        && observed.contains("touch downs 0"), "background launch did not observe the untouched owned fixture");
+                } else check(observed.contains("前台=io.github.miaiplus；"),
                     "confirmation did not observe the self-owned physical fixture");
-                observed = text(execute(loader, tool, step(session,
+                observed = text(execute(loader, selectedTool, step(session,
                     new JSONObject().put("action", "wait").put("duration_ms", 800))));
-                JSONObject request = tap(session, observed);
-                CompletableFuture<Object> completion = new CompletableFuture<>();
-                worker = new Thread(() -> {
-                    try { completion.complete(execute(loader, tool, request)); }
-                    catch (Throwable failure) { completion.completeExceptionally(failure); }
-                }, "miaiplus-confirmation-probe-action");
-                worker.start();
-                Notification notification = null;
-                long postedDeadline = SystemClock.elapsedRealtime() + 15_000;
-                while (notification == null && SystemClock.elapsedRealtime() < postedDeadline) {
-                    check(!cancelled, "device runner cancelled confirmation probe");
-                    notification = pendingNotification(context);
-                    check(!completion.isDone(), "action completed before user confirmation");
-                    if (notification == null) Thread.sleep(70);
+                JSONObject request = tap(session, observed, background);
+                if (scenario.equals("YOLO_CRITICAL")) request.getJSONObject("action").put("risk_level", "critical");
+                boolean automatic = scenario.equals("YOLO_ALLOW") || scenario.equals("AUTO_ALLOW");
+                if (scenario.startsWith("AUTO_")) {
+                    // Enter via real JPEG pixels; the returned challenge has already been normalized once.
+                    toImagePixels(request, observed);
+                    int priorSteps = steps(observed);
+                    String challengeObservation = text(execute(loader, selectedTool, request));
+                    check(session.equals(session(challengeObservation)), "review challenge changed the native session");
+                    check(steps(challengeObservation) == priorSteps, "review challenge consumed an action step");
+                    check(pendingNotification(context) == null, "Auto initial candidate unexpectedly asked the user");
+                    String prefix = "审计挑战=";
+                    int challengeAt = challengeObservation.indexOf(prefix);
+                    check(challengeAt >= 0, "Auto candidate did not return an independent review challenge");
+                    String challengeText = challengeObservation.substring(challengeAt + prefix.length()).split("\n", 2)[0];
+                    JSONObject challenge = new JSONObject(challengeText);
+                    check(challenge.getString("coordinate_space").equals("normalized"), "review coordinates are not normalized");
+                    stage(context, "ACTION_CONFIRMATION_" + scenario + "_REVIEW_READY");
+                    JSONObject reviewed = challenge.getJSONObject("action");
+                    reviewed.put("permission_review", new JSONObject()
+                        .put("token", scenario.equals("AUTO_INVALID") ? "invalid-fixture-token" : challenge.getString("token"))
+                        .put("decision", scenario.equals("AUTO_ASK_USER") ? "ask_user" : "allow")
+                        .put("reason", "仅涉及用户授权范围内自有测试页的一次无害触摸；不执行任何真实敏感行为"));
+                    request = step(session, reviewed).put("coordinate_space", "normalized");
                 }
-                check(notification != null, "confirmation focus notification was not posted");
-                Bundle actions = validateNotification(notification);
-                PendingIntent allow = action(actions, "miaiplus_action_allow");
-                PendingIntent deny = action(actions, "miaiplus_action_deny");
-                PendingIntent stop = action(actions, "miaiplus_stop");
-                if (priorAllow != null) {
-                    check(!priorAllow.equals(allow) && !priorDeny.equals(deny), "new session reused a confirmation PendingIntent");
-                    cancelled(priorAllow); cancelled(priorDeny);
-                    check(!completion.isDone(), "old session's answer affected the new pending action");
-                }
-                long pendingAt = SystemClock.elapsedRealtime();
-                stage(context, "ACTION_CONFIRMATION_" + scenario + "_READY");
-                check(!completion.isDone(), "confirmation completed while the runner verified waiting UI");
-                switch (scenario) {
-                    case "ALLOW" -> allow.send();
-                    case "DENY" -> deny.send();
-                    case "CANCEL" -> stop.send();
-                    case "TIMEOUT" -> { /* Real deadline: never shorten the production consent timeout. */ }
-                    default -> throw new AssertionError("unknown confirmation scenario");
-                }
-                Object completed = completion.get(75, TimeUnit.SECONDS);
-                worker.join(1000);
-                check(!worker.isAlive(), "confirmation worker did not unwind");
-                String result = text(completed);
-                if (scenario.equals("ALLOW")) {
-                    check(session.equals(session(result)) && !result.contains("本步未执行"), "approved harmless tap did not continue");
-                    execute(loader, tool, step(session, new JSONObject().put("action", "finish").put("message", "自有确认验证完成")));
+                String result;
+                PendingIntent allow = null, deny = null;
+                if (automatic) {
+                    result = text(execute(loader, selectedTool, request));
+                    check(pendingNotification(context) == null, "automatic ordinary action unexpectedly posted a confirmation");
                 } else {
-                    check(!result.startsWith("CONTINUE"), "rejected/cancelled/expired confirmation kept its session alive");
+                    CompletableFuture<Object> completion = new CompletableFuture<>();
+                    JSONObject submitted = request;
+                    worker = new Thread(() -> {
+                        try { completion.complete(execute(loader, selectedTool, submitted)); }
+                        catch (Throwable failure) { completion.completeExceptionally(failure); }
+                    }, "miaiplus-confirmation-probe-action");
+                    worker.start();
+                    Notification notification = null;
+                    long postedDeadline = SystemClock.elapsedRealtime() + 15_000;
+                    while (notification == null && SystemClock.elapsedRealtime() < postedDeadline) {
+                        check(!cancelled, "device runner cancelled confirmation probe");
+                        notification = pendingNotification(context);
+                        check(!completion.isDone(), "action completed before user confirmation");
+                        if (notification == null) Thread.sleep(70);
+                    }
+                    check(notification != null, "confirmation focus notification was not posted");
+                    Bundle actions = validateNotification(notification);
+                    allow = action(actions, "miaiplus_action_allow");
+                    deny = action(actions, "miaiplus_action_deny");
+                    PendingIntent stop = action(actions, "miaiplus_stop");
+                    if (priorAllow != null) {
+                        check(!priorAllow.equals(allow) && !priorDeny.equals(deny), "new session reused a confirmation PendingIntent");
+                        cancelled(priorAllow); cancelled(priorDeny);
+                        check(!completion.isDone(), "old session's answer affected the new pending action");
+                    }
+                    long pendingAt = SystemClock.elapsedRealtime();
+                    stage(context, "ACTION_CONFIRMATION_" + scenario + "_READY");
+                    check(!completion.isDone(), "confirmation completed while the runner verified waiting UI");
+                    switch (scenario) {
+                        case "DENY" -> deny.send();
+                        case "CANCEL" -> stop.send();
+                        case "TIMEOUT" -> { /* Exercise the real production consent timeout. */ }
+                        default -> allow.send();
+                    }
+                    result = text(completion.get(75, TimeUnit.SECONDS));
+                    worker.join(1000);
+                    check(!worker.isAlive(), "confirmation worker did not unwind");
                     if (scenario.equals("TIMEOUT")) check(SystemClock.elapsedRealtime() - pendingAt >= 55_000,
                         "confirmation expired without exercising the real timeout");
                 }
+                boolean succeeded = !scenario.equals("DENY") && !scenario.equals("CANCEL") && !scenario.equals("TIMEOUT");
+                if (succeeded) {
+                    check(session.equals(session(result)) && !result.contains("本步未执行"), "approved harmless tap did not continue");
+                    if (background) check(result.contains("执行屏幕=background") && result.contains("touch downs 1"),
+                        "approved background touch was not delivered exactly once to the background fixture");
+                    execute(loader, selectedTool, step(session,
+                        new JSONObject().put("action", "finish").put("message", "自有确认验证完成")));
+                } else check(!result.startsWith("CONTINUE"), "rejected/cancelled/expired confirmation kept its session alive");
                 long cleanup = SystemClock.elapsedRealtime() + 5000;
                 Bundle state;
                 do {
@@ -98,11 +147,13 @@ final class ActionConfirmationProbe {
                 } while (SystemClock.elapsedRealtime() < cleanup);
                 check(state != null && !state.getBoolean("active"), "confirmation session remained active after completion");
                 check(pendingNotification(context) == null, "completed confirmation notification remained actionable");
-                cancelled(allow); cancelled(deny);
-                priorAllow = allow; priorDeny = deny;
+                if (allow != null) {
+                    cancelled(allow); cancelled(deny);
+                    priorAllow = allow; priorDeny = deny;
+                }
                 stage(context, "ACTION_CONFIRMATION_" + scenario + "_DONE");
             }
-            return "PROBE PASS: registered foreground tool sensitive-action confirmation; actual focus allow/deny/stop PendingIntents; real 60s timeout; full explanation and native island actions; one-use retired answer intents; harmless owned fixture only; no model request";
+            return "PROBE PASS: registered native tools; Manual allow/deny/stop/real 60s timeout; YOLO ordinary auto-allow and critical island confirmation; Auto zero-input non-budget challenge, JPEG-to-normalized allow once, ask_user/invalid-token island fallback; background Manual island allow followed by one observed owned-fixture touch; full focus explanation/actions and retired one-use PendingIntents; deterministic audit responses only, no model request";
         } finally {
             ready = null;
             context.getContentResolver().call(BridgeProvider.URI, "stop_screen", null, null);
@@ -163,10 +214,11 @@ final class ActionConfirmationProbe {
         try { pending.send(); throw new AssertionError("retired confirmation PendingIntent remained usable"); }
         catch (PendingIntent.CanceledException expected) { }
     }
-    private static JSONObject tap(String session, String observation) throws Exception {
+    private static JSONObject tap(String session, String observation, boolean background) throws Exception {
         var bounds = Pattern.compile("\\[\\s*(-?\\d+)\\s*,\\s*(-?\\d+)\\s*]\\s*\\[\\s*(-?\\d+)\\s*,\\s*(-?\\d+)\\s*]");
         for (String line : observation.split("\\n")) {
-            if (!line.contains("稳健点击目标") || !line.contains("clickable")) continue;
+            if (background ? !line.contains("MiAIPlus launch fixture,")
+                : !line.contains("稳健点击目标") || !line.contains("clickable")) continue;
             var match = bounds.matcher(line);
             check(match.find(), "self-owned confirmation target has no bounds");
             double x = (Double.parseDouble(match.group(1)) + Double.parseDouble(match.group(3))) / 2;
@@ -176,6 +228,21 @@ final class ActionConfirmationProbe {
                 .put("coordinate_space", "screen_pixels");
         }
         throw new AssertionError("self-owned confirmation target absent from observation");
+    }
+    private static int steps(String observation) {
+        var count = Pattern.compile("步数=(\\d+)/").matcher(observation);
+        check(count.find(), "native observation has no action budget");
+        return Integer.parseInt(count.group(1));
+    }
+    private static void toImagePixels(JSONObject request, String observation) throws Exception {
+        var screen = Pattern.compile("；屏幕=(\\d+)x(\\d+)").matcher(observation);
+        var image = Pattern.compile("附图JPEG=(\\d+)x(\\d+)").matcher(observation);
+        check(screen.find() && image.find(), "observation has no real screen/JPEG geometry");
+        JSONArray point = request.getJSONObject("action").getJSONArray("element");
+        request.getJSONObject("action").put("element", new JSONArray()
+            .put(point.getDouble(0) * Integer.parseInt(image.group(1)) / Integer.parseInt(screen.group(1)))
+            .put(point.getDouble(1) * Integer.parseInt(image.group(2)) / Integer.parseInt(screen.group(2))));
+        request.put("coordinate_space", "image_pixels");
     }
     private static Object execute(ClassLoader loader, Object tool, JSONObject request) throws Exception {
         CompletableFuture<Object> completion = new CompletableFuture<>();

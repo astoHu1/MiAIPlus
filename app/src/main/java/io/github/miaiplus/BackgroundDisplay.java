@@ -281,8 +281,12 @@ public final class BackgroundDisplay implements AutoCloseable {
         return request(run, "task_state", packageName);
     }
 
-    public void launch(RunState run, String component) throws Exception {
-        request(run, "launch", component);
+    public boolean launch(RunState run, String component) throws Exception {
+        JSONObject reply = request(run, "launch", component);
+        String status = reply.optString("status");
+        if (status.equals("launched")) return true;
+        if (status.equals("awaiting_confirmation")) return false;
+        throw new IllegalStateException("后台启动返回了无法识别的状态，未确认应用已打开");
     }
 
     public void tap(RunState run, double normalizedX, double normalizedY) throws Exception {

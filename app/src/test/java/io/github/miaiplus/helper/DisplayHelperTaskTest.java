@@ -114,6 +114,33 @@ public class DisplayHelperTaskTest {
         assertEquals(12, DisplayHelper.visibleTaskDisplay(tasks, "example.target", 9));
     }
 
+    @Test public void launchCanWaitForLocalSystemPromptsWithoutClaimingTheTargetOpened() {
+        for (String prompt : new String[]{"com.miui.securitycenter/.ConfirmStartActivity",
+            "com.android.permissioncontroller/.GrantPermissionsActivity",
+            "com.lbe.security.miui/.PermissionDialog", "android/com.android.internal.app.ResolverActivity",
+            "com.android.intentresolver/.ChooserActivity", "com.miui.packageinstaller/.InstallActivity"}) {
+            assertEquals(prompt, "awaiting_confirmation", DisplayHelper.launchOutcome("example.target", prompt, -1));
+        }
+        for (String unknown : new String[]{"", "untrusted.app/.ChooserActivity", "android/.OtherActivity"})
+            assertEquals(unknown, "LAUNCH_FAILED", DisplayHelper.launchOutcome("example.target", unknown, -1));
+    }
+
+    @Test public void launchAndPromptResultsNeverHideATargetTaskOnAnotherDisplay() throws Exception {
+        String target = "example.target";
+        var ownTask = DisplayHelper.queryTasks(new TaskServiceFixture(List.of(task(7, 9, true, target, ""))));
+        int ownConflict = DisplayHelper.visibleTaskDisplay(ownTask, target, 9);
+        assertEquals(-1, ownConflict);
+        assertEquals("launched", DisplayHelper.launchOutcome(target, target + "/.Main", ownConflict));
+        for (int other : new int[]{0, 12}) {
+            var stolen = DisplayHelper.queryTasks(new TaskServiceFixture(List.of(task(7, other, true, target, ""))));
+            int conflict = DisplayHelper.visibleTaskDisplay(stolen, target, 9);
+            assertEquals(other, conflict);
+            assertEquals("TASK_STOLEN", DisplayHelper.launchOutcome(target, target + "/.Main", conflict));
+            assertEquals("TASK_STOLEN", DisplayHelper.launchOutcome(target,
+                "com.miui.securitycenter/.ConfirmStartActivity", conflict));
+        }
+    }
+
     @Test public void failedIncompleteOrUnownedTaskSnapshotsCannotBecomeNoConflict() throws Exception {
         assertThrows(Exception.class, () -> DisplayHelper.queryTasks(new FailedTaskService()));
         assertThrows(Exception.class, () -> DisplayHelper.queryTasks(new TaskServiceFixture(List.of())));

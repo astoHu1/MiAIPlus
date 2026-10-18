@@ -73,6 +73,116 @@ public final class NativeSessionReplanTest {
         assertArrayEquals(new double[]{500, 200}, ScreenShadow.lastPoint, 0);
     }
 
+    @Test public void manualConfirmationAndCriticalYoloUseConfirmationBeforeOneInput() throws Exception {
+        for (String mode : new String[]{"manual", "yolo"}) {
+            field(session.getClass(), "permissionMode").set(session, mode);
+            JSONObject action = sensitiveAction();
+            if (mode.equals("yolo")) action.put("risk_level", "critical");
+            int confirmations = ScreenShadow.confirmations, executions = ScreenShadow.executions;
+            assertContinuing(step(action));
+            assertEquals(confirmations + 1, ScreenShadow.confirmations);
+            assertEquals(executions + 1, ScreenShadow.executions);
+            assertTrue(ScreenShadow.lastApproved);
+        }
+    }
+
+    @Test public void yoloApprovesOrdinarySensitiveActionAndManualReplansWhenConfirmationChangesTarget() throws Exception {
+        field(session.getClass(), "permissionMode").set(session, "yolo");
+        assertContinuing(step(sensitiveAction()));
+        assertEquals(0, ScreenShadow.confirmations);
+        assertEquals(1, ScreenShadow.executions);
+        field(session.getClass(), "permissionMode").set(session, "manual");
+        ScreenShadow.afterConfirmation = frame(BUTTON.replace("提交", "另一个操作"));
+        assertSkipped(step(sensitiveAction()));
+        assertEquals(1, ScreenShadow.confirmations);
+        assertEquals(1, ScreenShadow.executions);
+    }
+
+    @Test public void autoReviewUsesSeparateBoundStepWithoutSpendingLastActionBudget() throws Exception {
+        field(session.getClass(), "permissionMode").set(session, "auto");
+        field(session.getClass(), "steps").setInt(session, 19);
+        JSONObject action = sensitiveAction();
+        String challengeResult = step(action);
+        assertContinuing(challengeResult);
+        assertTrue(challengeResult, challengeResult.contains("审计挑战="));
+        assertEquals(19, field(session.getClass(), "steps").getInt(session));
+        assertEquals(0, ScreenShadow.executions);
+        JSONObject challenge = (JSONObject) field(session.getClass(), "reviewChallenge").get(session);
+        action.put("permission_review", new JSONObject().put("token", challenge.getString("token"))
+            .put("decision", "allow").put("reason", "用户目标已授权该次提交，操作范围一致"));
+        assertContinuing(step(action));
+        assertEquals(20, field(session.getClass(), "steps").getInt(session));
+        assertEquals(0, ScreenShadow.confirmations);
+        assertEquals(1, ScreenShadow.executions);
+    }
+
+    @Test public void missingOrForgedAutoReviewFallsBackToIslandAndSettingsChangeDoesNotChangeSessionMode() throws Exception {
+        field(session.getClass(), "permissionMode").set(session, "auto");
+        assertContinuing(step(sensitiveAction()));
+        JSONObject action = sensitiveAction().put("permission_review", new JSONObject()
+            .put("token", "wrong-token").put("decision", "allow").put("reason", "approved"));
+        assertContinuing(step(action));
+        assertEquals(1, ScreenShadow.confirmations);
+        assertEquals(1, ScreenShadow.executions);
+        // step() supplies default Manual configuration, but this already-started task retains Auto.
+        assertEquals("auto", field(session.getClass(), "permissionMode").get(session));
+    }
+
+    @Test public void autoChallengeKeepsOriginalTargetWhenReturnedObservationAlreadyChanged() throws Exception {
+        field(session.getClass(), "permissionMode").set(session, "auto");
+        ScreenShadow.current = frame(BUTTON.replace("提交", "另一个操作"));
+        JSONObject action = sensitiveAction();
+        assertContinuing(step(action));
+        JSONObject challenge = (JSONObject) field(session.getClass(), "reviewChallenge").get(session);
+        action.put("permission_review", new JSONObject().put("token", challenge.getString("token"))
+            .put("decision", "allow").put("reason", "原始操作已授权"));
+        assertSkipped(step(action));
+        assertEquals(0, ScreenShadow.confirmations);
+        assertEquals(0, ScreenShadow.executions);
+        assertNull(field(session.getClass(), "reviewChallenge").get(session));
+    }
+
+    @Test public void structuredImagePixelActionCanReplayNormalizedAuditChallengeWithoutSecondConversion() throws Exception {
+        field(session.getClass(), "permissionMode").set(session, "auto");
+        field(session.getClass(), "sourceTool").set(session, NativePhoneUseTool.NAME);
+        JSONObject pixelAction = sensitiveAction().put("element", new JSONArray().put(1.6).put(1.6));
+        JSONObject request = new JSONObject().put("session", sessionRun.id).put("action", pixelAction);
+        String encoded = PhoneUseRouting.encode(NativePhoneUseTool.NAME, request);
+        Config config = new Config(Map.of());
+        assertContinuing(NativeSession.handle(config, encoded, new RunState("proposal", OWNER), false, NativePhoneUseTool.NAME));
+        JSONObject challenge = (JSONObject) field(session.getClass(), "reviewChallenge").get(session);
+        assertEquals("normalized", challenge.getString("coordinate_space"));
+        JSONObject reviewed = new JSONObject(challenge.getJSONObject("action").toString())
+            .put("permission_review", new JSONObject().put("token", challenge.getString("token"))
+                .put("decision", "allow").put("reason", "用户目标授权该表单提交"));
+        JSONObject continuation = new JSONObject().put("session", sessionRun.id).put("action", reviewed)
+            .put("coordinate_space", challenge.getString("coordinate_space"));
+        assertContinuing(NativeSession.handle(config, PhoneUseRouting.encode(NativePhoneUseTool.NAME, continuation),
+            new RunState("reviewed", OWNER), false, NativePhoneUseTool.NAME));
+        assertEquals(0, ScreenShadow.confirmations);
+        assertEquals(1, ScreenShadow.executions);
+        assertArrayEquals(new double[]{200, 200}, ScreenShadow.lastPoint, 0.001);
+    }
+
+    @Test public void manualSystemApprovalCannotAuthorizeChangedPromptWithSameAllowButton() throws Exception {
+        String permission = "android.widget.TextView [0,400][1000,500] window=3 "
+            + "id=com.miui.securitycenter:id/permission_group_title enabled=true text=读取联系人\n";
+        ScreenService.Frame before = new ScreenService.Frame(image, ROOT + BUTTON + permission,
+            1000, 1000, "com.miui.securitycenter", 8, 8, 0, "");
+        field(session.getClass(), "frame").set(session, before);
+        ScreenShadow.current = before;
+        ScreenShadow.afterConfirmation = new ScreenService.Frame(image,
+            before.tree().replace("读取联系人", "读取短信"), 1000, 1000, "com.miui.securitycenter", 8, 8, 0, "");
+        assertSkipped(step(sensitiveAction()));
+        assertEquals(1, ScreenShadow.confirmations);
+        assertEquals(0, ScreenShadow.executions);
+    }
+
+    private JSONObject sensitiveAction() throws Exception {
+        return new JSONObject().put("action", "tap").put("element", new JSONArray().put(200).put(200))
+            .put("requires_confirmation", true).put("message", "提交当前表单");
+    }
+
     @Test public void repeatedPreflightSkipsOnAFreshSessionStillAllowCancellationWithoutExecution() throws Exception {
         assertEquals("", field(session.getClass(), "previous").get(session));
         for (int attempt = 0; attempt < 6; attempt++) {
@@ -256,14 +366,24 @@ public final class NativeSessionReplanTest {
     @Implements(value = ScreenService.class, isInAndroidSdk = false)
     public static final class ScreenShadow {
         static ScreenService.Frame current;
-        static boolean rejectInjection;
+        static boolean rejectInjection, lastApproved;
+        static ScreenService.Frame afterConfirmation;
         static Exception failure;
-        static int attempts, executions;
+        static int attempts, executions, confirmations;
         static double[] lastPoint;
-        static void reset() { current = null; rejectInjection = false; failure = null; attempts = executions = 0; lastPoint = null; }
+        static void reset() {
+            current = afterConfirmation = null; rejectInjection = lastApproved = false; failure = null;
+            attempts = executions = confirmations = 0; lastPoint = null;
+        }
         @Implementation protected ScreenService.Frame capture(RunState run) { run.check(); return current; }
-        @Implementation protected void execute(Action action, ScreenService.Frame frame, RunState run) throws Exception {
+        @Implementation protected boolean confirm(String message, RunState run) {
+            run.check(); confirmations++;
+            if (afterConfirmation != null) current = afterConfirmation;
+            return true;
+        }
+        @Implementation protected void execute(Action action, ScreenService.Frame frame, RunState run, boolean approved) throws Exception {
             run.check();
+            lastApproved = approved;
             attempts++;
             if (rejectInjection) throw new ScreenService.ObservationChanged();
             if (failure != null) throw failure;

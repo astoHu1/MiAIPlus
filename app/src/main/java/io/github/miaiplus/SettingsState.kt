@@ -130,6 +130,10 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
     }
 
     fun setOption(key: String, value: Any): Boolean = attempt {
+        require(key != Config.PHONE_USE_PERMISSION_MODE_KEY || value == Config.PHONE_USE_PERMISSION_MANUAL
+            || value == Config.PHONE_USE_PERMISSION_AUTO || value == Config.PHONE_USE_PERMISSION_YOLO) {
+            "请选择 Manual、Auto 或 YOLO 权限预设"
+        }
         require(key != "planner" || value != "external" || !config.globalModel) {
             "全局外部模型已启用，控屏使用小爱当前模型"
         }
@@ -147,6 +151,12 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
         config = Config(context)
         if (key == "enabled" && value == false) BridgeProvider.cancelActive()
         notice = if (key == "globalModel" || key == "enabled") "已保存，请重启小爱" else "已保存"
+    }
+
+    fun setPhoneUsePermissionMode(mode: String): Boolean {
+        val saved = setOption(Config.PHONE_USE_PERMISSION_MODE_KEY, mode)
+        if (saved) notice = "已保存；新任务使用此权限预设"
+        return saved
     }
 
     fun setConversationTimeoutMinutes(minutes: Int): Boolean = attempt {

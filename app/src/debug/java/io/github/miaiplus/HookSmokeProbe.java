@@ -448,12 +448,119 @@ public final class HookSmokeProbe {
                 if (!instance.find()) throw new AssertionError("launch fixture content missing");
                 if (!last.isEmpty() && !last.equals(instance.group(1))) throw new AssertionError("already-open app restarted");
                 last = instance.group(1);
+                observation = next;
             }
+            String id = session.group(1);
+            observation = launchTap(service, context, id, observation, "Open owned chooser");
+            observation = launchStep(service, context, id, new org.json.JSONObject().put("action", "wait").put("duration_ms", 800));
+            assertOwnedChooser(observation);
+            // Ask to launch while the real chooser is still open. The launch verifier must return its
+            // readable decision UI to the same session instead of failing or opening behind the picker.
+            observation = launchStep(service, context, id, new org.json.JSONObject().put("action", "launch")
+                .put("app", "io.github.miaiplus.test"));
+            assertOwnedChooser(observation);
+            observation = launchTap(service, context, id, observation, "MiAIPlus choice A");
+            if (!observation.contains("前台=io.github.miaiplus.test；")
+                || !observation.contains("MiAIPlus owned choice A selected"))
+                throw new AssertionError("real chooser selection did not reach owned destination: "
+                    + observation.substring(0, Math.min(450, observation.length())));
         } finally {
             invoke(service, "controlApp", "MIAIPLUS:" + new org.json.JSONObject().put("session", session.group(1))
                 .put("action", new org.json.JSONObject().put("action", "finish").put("message", "启动测试结束")));
         }
-        return "PROBE PASS: launch from normal Security app page, separate test app focused, package/label resolution, already-open instance preserved";
+        return "PROBE PASS: launch from normal Security app page, separate test app focused, package/label resolution, already-open instance preserved; real Android chooser JPEG/tree read, pending launch continued original session, observed owned choice A tapped and reached";
+    }
+    private static void assertOwnedChooser(String observation) {
+        var match = java.util.regex.Pattern.compile("前台=([^；\\n]+)；").matcher(observation);
+        String owner = match.find() ? match.group(1) : "";
+        boolean selection = SystemDialogPolicy.isAppSelection(owner, observation);
+        boolean approval = SystemDialogPolicy.requiresApproval(owner, observation);
+        boolean hasA = observation.contains("MiAIPlus choice A"), hasB = observation.contains("MiAIPlus choice B");
+        if (owner.isEmpty() || !selection || approval || !hasA || !hasB)
+            throw new AssertionError("real owned Android chooser missing or not readable: owner=" + owner
+                + ", isAppSelection=" + selection + ", requiresApproval=" + approval
+                + ", hasA=" + hasA + ", hasB=" + hasB + ownedLaunchDiagnostic(observation));
+    }
+    private static String launchStep(Object service, Context context, String session, org.json.JSONObject action) throws Exception {
+        return launchRequest(service, context, session, new org.json.JSONObject().put("session", session).put("action", action));
+    }
+    private static String launchRequest(Object service, Context context, String session, org.json.JSONObject request) throws Exception {
+        String observation = String.valueOf(invoke(invoke(service, "controlApp", "MIAIPLUS:" + request), "getText"));
+        if (!observation.startsWith("CONTINUE") || !observation.contains("会话=" + session + "；"))
+            throw new AssertionError("chooser action lost the original session: " + observation.substring(0, Math.min(450, observation.length())));
+        var token = java.util.regex.Pattern.compile("MIAIPLUS_FRAME:([a-f0-9-]{36})").matcher(observation);
+        if (!token.find()) throw new AssertionError("chooser JPEG frame missing");
+        try (var input = context.getContentResolver().openInputStream(
+            android.net.Uri.withAppendedPath(BridgeProvider.URI, "frame/" + token.group(1)))) {
+            if (input == null) throw new AssertionError("chooser JPEG pipe missing");
+            var frame = new org.json.JSONObject(new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
+            byte[] jpeg = android.util.Base64.decode(frame.getString("image"), android.util.Base64.DEFAULT);
+            var image = android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length);
+            if (image == null) throw new AssertionError("chooser JPEG did not decode");
+            try {
+                if (image.getWidth() != frame.getInt("width") || image.getHeight() != frame.getInt("height"))
+                    throw new AssertionError("chooser JPEG dimensions differ from frame");
+            } finally { image.recycle(); }
+        }
+        return observation;
+    }
+    private static String launchTap(Object service, Context context, String session, String observation, String label) throws Exception {
+        var owner = java.util.regex.Pattern.compile("前台=([^；\\n]+)；").matcher(observation);
+        if (!owner.find()) throw new AssertionError("owned chooser foreground missing");
+        if (label.equals("Open owned chooser")) {
+            if (!owner.group(1).equals("io.github.miaiplus.test") || !observation.contains("MiAIPlus launch fixture, instance "))
+                throw new AssertionError("refusing chooser trigger outside owned fixture");
+        } else assertOwnedChooser(observation);
+        var bounds = java.util.regex.Pattern.compile("\\[\\s*(-?\\d+)\\s*,\\s*(-?\\d+)\\s*]\\s*\\[\\s*(-?\\d+)\\s*,\\s*(-?\\d+)\\s*]");
+        long smallest = Long.MAX_VALUE;
+        org.json.JSONArray point = null;
+        for (String line : observation.split("\\n")) {
+            if (!line.contains("enabled=true")) continue;
+            int textAt = line.indexOf(" text="), descriptionAt = line.indexOf(" description=");
+            String text = textAt < 0 ? "" : line.substring(textAt + 6,
+                descriptionAt > textAt ? descriptionAt : line.length()).strip();
+            String description = descriptionAt < 0 ? "" : line.substring(descriptionAt + 13).strip();
+            boolean trigger = label.equals("Open owned chooser")
+                && description.equals("MiAIPlus owned chooser trigger");
+            if (!trigger && !text.equalsIgnoreCase(label) && !description.equalsIgnoreCase(label)) continue;
+            var match = bounds.matcher(line);
+            if (!match.find()) continue;
+            int left = Integer.parseInt(match.group(1)), top = Integer.parseInt(match.group(2));
+            int right = Integer.parseInt(match.group(3)), bottom = Integer.parseInt(match.group(4));
+            if (right <= left || bottom <= top) continue;
+            long area = ((long) right - left) * ((long) bottom - top);
+            if (area < smallest) {
+                smallest = area;
+                point = new org.json.JSONArray().put((left + right) / 2).put((top + bottom) / 2);
+            }
+        }
+        if (point != null) return launchRequest(service, context, session, new org.json.JSONObject().put("session", session)
+            .put("coordinate_space", "screen_pixels").put("action", new org.json.JSONObject().put("action", "tap")
+                .put("element", point)));
+        throw new AssertionError("owned chooser target missing: " + label + ownedLaunchDiagnostic(observation));
+    }
+    private static String ownedLaunchDiagnostic(String observation) {
+        var owner = java.util.regex.Pattern.compile("前台=([^；\\n]+)；").matcher(observation);
+        if (!owner.find()) return "; foreground unavailable";
+        if (owner.group(1).equals("android") || owner.group(1).equals("com.android.intentresolver")) {
+            // This probe just opened a real chooser with two explicit owned targets and no content.
+            // Keep only its known labels and title metadata, never print unrelated system/app nodes.
+            int frame = observation.indexOf("MIAIPLUS_FRAME:", owner.start());
+            int tree = frame < 0 ? -1 : observation.indexOf('\n', frame);
+            StringBuilder selected = new StringBuilder("\nControlled chooser labels:");
+            if (tree >= 0) for (String line : observation.substring(tree + 1).split("\\n")) {
+                if (!(line.contains("MiAIPlus") || line.contains("选择") || line.contains("打开")
+                    || line.contains("Chooser") || line.contains("Resolver")
+                    || line.contains(" id=android:id/title ") || line.contains(" id=android:id/alertTitle ")
+                    || line.contains(" id=com.android.intentresolver:id/title "))) continue;
+                if (selected.length() + line.length() > 6000) break;
+                selected.append('\n').append(line);
+            }
+            return selected.toString();
+        }
+        if (!owner.group(1).equals("io.github.miaiplus.test")) return "; foreground=" + owner.group(1);
+        return "\nOwned fixture observation: " + observation.substring(owner.start(),
+            Math.min(observation.length(), owner.start() + 7000));
     }
     private static void assertFocus(Context context, String title) throws Exception {
         for (var notification : context.getSystemService(android.app.NotificationManager.class).getActiveNotifications()) {

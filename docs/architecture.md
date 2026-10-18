@@ -42,7 +42,7 @@ Phone Use 的 `maxSteps` 可设置范围为 1–200，默认 30。对话空闲�
 
 ## 默认官方模型控屏
 
-`NativeSession` 在模块 UID 维护四分钟以内的会话、最近观察、最大步数和停止状态。首次请求返回 `CONTINUE`、会话号和观察；模型可调用注册到原生 ToolRegistry 的两个函数：`miaiplus_phone_use` 前台控屏、`miaiplus_background_phone_use` 虚拟屏控屏。首次通过所选工具提交 `goal`，后续沿用同一工具提交 `session` 和 `action`；两者不受兼容入口默认屏幕开关影响；兼容入口接收 `MIAIPLUS:{session,action}`。结构化函数默认按实际 JPEG 像素接收坐标，也支持显式物理屏幕像素与0..1000；统一换算后再交给执行器。旧入口默认归一化坐标。结构化函数只在启用本机原生规划时加入模型工具列表，执行时再次校验配置。每步只执行一个数据动作，之后重新观察。对包含模块 CONTINUE 和截图 token 的 ToolResult.Success，清除直接答案标记与内部 CLI 直接答案 metadata，确保原 Agent 把中间观察回送模型；其他工具结果保持原行为。结束/接管显式关闭会话。
+`NativeSession` 在模块 UID 维护会话、最近观察、最大步数和停止状态；四分钟预算按单步进展续期，不限制持续推进任务的总时长。首次请求返回 `CONTINUE`、会话号和观察；模型可调用注册到原生 ToolRegistry 的两个函数：`miaiplus_phone_use` 前台控屏、`miaiplus_background_phone_use` 虚拟屏控屏。首次通过所选工具提交 `goal`，后续沿用同一工具提交 `session` 和 `action`；两者不受兼容入口默认屏幕开关影响；兼容入口接收 `MIAIPLUS:{session,action}`。结构化函数默认按实际 JPEG 像素接收坐标，也支持显式物理屏幕像素与0..1000；统一换算后再交给执行器。旧入口默认归一化坐标。结构化函数只在启用本机原生规划时加入模型工具列表，执行时再次校验配置。每步只执行一个数据动作，之后重新观察。对包含模块 CONTINUE 和截图 token 的 ToolResult.Success，清除直接答案标记与内部 CLI 直接答案 metadata，确保原 Agent 把中间观察回送模型；其他工具结果保持原行为。结束/接管显式关闭会话。
 
 无外部端点配置也可工作，`AgentEngine` 在该模式下不调用 `ModelClient`。截图由 `FrameStore` 存入短期内存，以随机、一次性、调用 UID 绑定的 token 经 Provider 管道读取。`NativeModelHook` 优先在 ToolResult.Success 中附加 `ImageContent`，使原生 CLI 与消息历史复制保留图片；TOOL Message 构造 Hook 提供兼容读取。图片元数据采用实际 JPEG 尺寸，执行坐标仍以原屏归一化。截图不以 Base64 进入工具返回字符串或 Binder Bundle。
 
@@ -117,7 +117,7 @@ API Key 仅在显式启用全局替换时经 UID 校验 IPC 交给小爱进程�
 
 Hook 仅安装在精确校验的小爱版本：工具入口、描述构造、PromptBuilder 路由、原生工具图片消息构造以及分发器和四个具体模型传输入口。安装失败撤销已安装 Hook；未改 APK、磁盘 osbot 提示词或系统服务。
 
-原主模型/工具选择、无障碍支持、动态页面、模型图片能力、系统权限及原生 Agent 的回合预算都会影响结果。支付/发送等确认依赖模型标记；不绕过锁屏、安全窗口、密码框、验证码。无应用白名单不等于任意页面都可成功操作。
+原主模型/工具选择、无障碍支持、动态页面、模型图片能力、系统权限及原生 Agent 的回合预算都会影响结果。支付/发送等操作由模型标记、可读动作目标与系统授权分类共同触发权限策略；未知模板/纯图片仍依赖模型判断。不绕过锁屏、安全窗口、密码框、验证码。无应用白名单不等于任意页面都可成功操作。
 
 独立外部循环只保留最新截图与有限历史；默认原生循环的历史与图片生命周期由小爱原消息管理控制。具体通过及待验证项目见 `docs/validation.md`。
 
@@ -127,7 +127,7 @@ Hook 仅安装在精确校验的小爱版本：工具入口、描述构造、Pro
 
 `InteractionUi` 在小爱 UID 发布 HyperOS 原生焦点模板；`screen_ready` 握手成功之前执行器不触摸屏幕。保存交互入口只发生于整个控屏会话开始；多步 CONTINUE 不重置入口。全屏移动原任务到后台，快捷键系统浮窗隐藏并关闭触摸/焦点；独立观察线程确认执行已经退出才恢复全屏或发布展开的完成岛。停止请求等待实际执行退出，避免恢复页面与末尾动作竞争。详见 [迁移与专项验证](api102-migration.md)。
 
-展开岛通过 `param_v2.actions` / `miui.focus.actions` 提供停止控制。前台敏感操作也通过该模板展示完整操作说明及“确认本次操作／停止任务”，不创建无障碍悬浮确认窗，不拉起小爱界面；普通通知展开区保留完整说明。`ActionConfirmation` 经 Provider 传递绑定 UID、screen_task 与一次性 token 的请求，60 秒未确认则停止；取消、超时、旧任务或旧按钮均不能授权后续动作，确认前后继续检查锁屏与页面目标。确认卡隐藏锁屏敏感内容，批准按钮要求解锁；若 ROM 在重新锁屏时仍递送批准广播，则拒绝此次批准并刷新按钮。模型显式要求确认但说明为空时，使用已有操作意图，仍须用户确认。该确认独立于当前应用使用授权。Provider 用独立 `screen_task` 生命周期连接各次工具请求，宿主页面的中间更新在任务结束前保持后台。
+展开岛通过 `param_v2.actions` / `miui.focus.actions` 提供停止控制。前后台需要人工批准的敏感操作都通过该模板展示完整操作说明及“确认本次操作／停止任务”，不创建无障碍悬浮确认窗，不拉起小爱界面；普通通知展开区保留完整说明。`ActionConfirmation` 经 Provider 传递绑定 UID、screen_task 与一次性 token 的请求，60 秒未确认则停止；取消、超时、旧任务或旧按钮均不能授权后续动作，确认前后继续检查锁屏与页面目标。确认卡隐藏锁屏敏感内容，批准按钮要求解锁；若 ROM 在重新锁屏时仍递送批准广播，则拒绝此次批准并刷新按钮。需要确认但说明为空时，使用已有操作意图及可读目标标签，不把输入正文写入派生说明。该确认独立于当前应用使用授权。确认或审计期间目标变化，在原会话返回新观察，不复用旧批准。权限预设与两阶段审计见 [Phone Use 权限](phone-use-permissions.md)。Provider 用独立 `screen_task` 生命周期连接各次工具请求，宿主页面的中间更新在任务结束前保持后台。
 
 设置页独立模型测试没有小爱 UID 的灵动岛观察器与动作接收器，因此遇到敏感提交会立即 PAUSE，提示从小爱对话发起；不会等待一张无法显示的确认卡，也不放宽跨 UID 授权。
 
@@ -157,8 +157,8 @@ Hook 仅安装在精确校验的小爱版本：工具入口、描述构造、Pro
 
 取消清理绑定具体 NativeSession/BackgroundDisplay 实例，异步等待执行退出；步骤续期同步更新 deadline 与 watchdog。后台输入定位原焦点节点并精确回读原节点值，helper 拒绝输入或不能验证 HIDE 输入法策略时停止。帧节流保留最终待复制图像，手势使用同一 downTime 与实际注入时刻。上述当前实现的新增设备验收尚未完成，不继承此前版本的实测通过结论。
 
-`NativeSession` 和 `AgentEngine` 共用同一后端。后台敏感操作仍返回 PAUSE，交给用户手动接管；具体行为、错误码与已验证项见 [后台虚拟屏](background-display.md)。
+`NativeSession` 和 `AgentEngine` 共用同一后端与 Manual／Auto／YOLO 策略。后台人工确认通过小爱灵动岛等待，批准后在原后台屏复核并继续，不切换物理屏；具体行为、错误码与已验证项见 [后台虚拟屏](background-display.md)。
 
 ## 应用启动
 
-`AppLaunchTarget` 从可见的 MAIN/LAUNCHER 列表解析包名或唯一名称；`ScreenService` 提交标准显式 launcher Intent。`LaunchPrompt` 只匹配小米安全中心当前发起方/目标的启动确认，执行器最多点击一次“本次允许”；`LaunchVerifier` 等待稳定前台，超时和未匹配权限返回 PAUSE，点击确认本身不是成功依据。原生首次观察提供应用列表，控屏规划引导模型统一用 launch。详细边界与设备验证见 [应用启动](app-launch.md)。
+`AppLaunchTarget` 从可见的 MAIN/LAUNCHER 列表解析包名或唯一名称；`ScreenService` 提交标准显式 launcher Intent。`LaunchPrompt` 只匹配小米安全中心当前发起方/目标的启动确认，执行器最多点击一次“本次允许”；`LaunchVerifier` 等待稳定前台，遇可读应用选择或授权窗口则返回同会话观察，由模型选应用或进入权限策略。真正启动超时仍 PAUSE，点击确认本身不是成功依据。原生首次观察提供应用列表，控屏规划引导模型统一用 launch。详细边界与设备验证见 [应用启动](app-launch.md)。

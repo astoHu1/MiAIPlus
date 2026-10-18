@@ -275,6 +275,7 @@ final class EndpointProfilesRunner {
                 capture("home");
                 click("控屏");
                 check(!new Config(context).backgroundDisplay, "Background display default changed");
+                checkPhoneUsePermissionPresets();
                 click("最大步数");
                 edit("30", "0"); click("保存");
                 waitFor(() -> "步数需在 1–200 之间".equals(state.getError()), "Lower bound accepted");
@@ -304,7 +305,7 @@ final class EndpointProfilesRunner {
                 click("返回");
                 click("返回");
                 check(state.getJob() == null, "UI checks started a model job");
-                result.putString("stream", "PASS: physical-device Compose navigation, legacy migration, draft/recreation/discard, keyboard/save visibility, save/create/switch/delete, API persistence, selector background brightness, global-model planner lock/unlock, step limits 0/201/1/200, background status result, direct-test navigation. No model requests.\n");
+                result.putString("stream", "PASS: physical-device Compose navigation, legacy migration, draft/recreation/discard, keyboard/save visibility, save/create/switch/delete, API persistence, selector background brightness, global-model planner lock/unlock, Phone Use Manual/Auto/YOLO dropdown/persistence/recreation/fresh ViewModel, step limits 0/201/1/200, background status result, direct-test navigation. No model requests.\n");
             }
             code = Activity.RESULT_OK;
         } catch (Throwable failure) {
@@ -339,6 +340,71 @@ final class EndpointProfilesRunner {
             }
         }
         test.finish(code, result);
+    }
+
+    private void checkPhoneUsePermissionPresets() throws Exception {
+        var context = test.getTargetContext();
+        var prefs = Config.prefs(context);
+        check(Config.PHONE_USE_PERMISSION_MANUAL.equals(new Config(context).phoneUsePermissionMode),
+            "Phone Use permission default is not Manual");
+        String[][] modes = {
+            {"Auto", Config.PHONE_USE_PERMISSION_AUTO, "模型自动审计，无法确定时请求你确认"},
+            {"YOLO", Config.PHONE_USE_PERMISSION_YOLO, "除严重安全问题外自动同意，安全限制始终生效"},
+            {"Manual", Config.PHONE_USE_PERMISSION_MANUAL, "敏感操作由你逐次确认"}
+        };
+        for (int i = 0; i < modes.length; i++) {
+            String label = modes[i][0], mode = modes[i][1], summary = modes[i][2];
+            click("Phone Use 权限预设");
+            for (String[] option : modes) {
+                check(find(n -> option[0].equals(text(n))) != null,
+                    "Phone Use permission menu is missing " + option[0]);
+            }
+            if (i == 0) capture("control-phone-use-permission-menu-device");
+            click(label);
+            waitFor(() -> mode.equals(state.getConfig().phoneUsePermissionMode)
+                && mode.equals(prefs.getString(Config.PHONE_USE_PERMISSION_MODE_KEY, null))
+                && mode.equals(new Config(context).phoneUsePermissionMode),
+                label + " permission preset did not persist");
+            checkPermissionSelection(label, summary);
+            capture("control-phone-use-permission-" + mode + "-device");
+
+            SettingsState previous = state;
+            recreate();
+            enterControlPage();
+            check(mode.equals(state.getConfig().phoneUsePermissionMode),
+                label + " permission preset lost on Activity recreation");
+            checkPermissionSelection(label, summary);
+
+            // A recreation can retain the ViewModel. Reopen after finish as well, so the UI
+            // must construct a fresh SettingsState from the persisted fixture preferences.
+            onMain(activity::finish);
+            test.waitForIdleSync();
+            activity = (MainActivity) test.startActivitySync(new Intent(context, MainActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
+            onMain(() -> state = new ViewModelProvider(activity).get(SettingsState.class));
+            check(state != previous && mode.equals(state.getConfig().phoneUsePermissionMode),
+                label + " permission preset lost in a fresh ViewModel");
+            enterControlPage();
+            checkPermissionSelection(label, summary);
+            check(state.getJob() == null, "Permission selection started a model job");
+        }
+    }
+
+    private void enterControlPage() {
+        settle();
+        // Recreation restores the current page and scroll. Its non-clickable toolbar title
+        // can precede the same-named navigation item in the accessibility tree.
+        if (find(n -> "Phone Use 权限预设".equals(text(n)) || "最大步数".equals(text(n))
+            || "动作协议".equals(text(n)) || "启用控屏工具".equals(text(n))
+            || "任务前检查无障碍".equals(text(n))) == null) click("控屏");
+    }
+
+    private void checkPermissionSelection(String label, String summary) {
+        for (int attempt = 0; attempt < 18; attempt++) {
+            if (find(n -> summary.equals(text(n))) != null && find(n -> label.equals(text(n))) != null) return;
+            if (attempt < 9) scroll(true); else scroll(false);
+        }
+        throw new AssertionError("Permission preset label/description missing: " + label);
     }
 
     private void checkGlobalPlanner() throws Exception {

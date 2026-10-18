@@ -8,6 +8,18 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class ConfigTest {
+    @Test public void permissionModeDefaultsToManualUnlessAnExplicitSupportedModeWasSaved() {
+        assertEquals("manual", new Config(Map.of()).phoneUsePermissionMode);
+        for (Object[] mode : new Object[][]{
+            {"manual", "manual"}, {"auto", "auto"}, {"yolo", "yolo"},
+            {"", "manual"}, {"YOLO", "manual"}, {"unknown", "manual"},
+            {true, "manual"}, {1, "manual"}
+        }) {
+            assertEquals("phoneUsePermissionMode=" + mode[0], mode[1],
+                new Config(Map.of(Config.PHONE_USE_PERMISSION_MODE_KEY, mode[0])).phoneUsePermissionMode);
+        }
+    }
+
     @Test public void globalExternalModelAlwaysUsesNativePlannerIncludingLegacyPreferences() {
         assertEquals("native", new Config(Map.of("globalModel", true, "planner", "external")).planner);
         assertEquals("native", new Config(Map.of("globalModel", true)).planner);

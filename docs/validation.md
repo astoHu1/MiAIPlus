@@ -1,4 +1,31 @@
-# MiAIPlus 1.0.0-preview 实现与验证状态
+# MiAIPlus 1.0.1-preview 实现与验证状态
+
+## v1.0.1-preview 发布构建（2026-10-18）
+
+将版本元数据更新为 `versionName=1.0.1-preview`、`versionCode=15` 后，重新通过 345 项 JVM／Robolectric 测试、Debug／Release 完整 Lint（0 errors，35／26 warnings），以及 Debug、Release、Preview、AndroidTest 构建。下述实机验收对应相同功能代码、版本元数据更新前的 Debug 构建；没有在设备上安装正式签名 Release，也没有请求真实模型。正式签名与预发布由版本 tag 的 GitHub 工作流处理，发布范围与说明见 [版本说明](releases/v1.0.1-preview.md)。
+
+## Phone Use 弹窗、权限预设与确认连续性（2026-10-18）
+
+本轮工作树统一前台与后台的敏感操作策略：控屏 → 权限新增 Manual／Auto／YOLO，默认 Manual，保存对新任务生效。Manual 逐次请求灵动岛批准；Auto 审计具体动作，不确定或审计失败转人工；YOLO 自动批准一般敏感操作，严重风险仍人工确认。锁屏、安全窗口、密码、验证码、取消及任务所有权限制保持。风险识别结合模型标记、可读目标与系统授权标题，不宣称任意页面都能可靠识别。详见 [权限与连续性](phone-use-permissions.md)。
+
+小米安全中心普通页面、应用选择与可读授权弹窗不再一刀切中止。前台启动和后台 root helper 都将待选择/确认状态交回同会话观察，不能把弹窗或发起启动当作目标已打开。后台仍检查目标是否被挪到其他显示，失败不回退物理屏。需要人工批准的后台动作也使用共同灵动岛链路；确认后继续同一任务，目标/授权正文变化则作废旧批准并重新规划。后台双击第一击后目标变化会报告部分执行并停止，避免重放首击。
+
+灵动岛观察器不再因进度为空吞掉确认卡，也不再将发布失败的请求当成已显示而永久去重。原生 Auto 使用独立工具轮的一次性动作/观察审计挑战，不消耗动作预算；挑战明确 normalized 坐标，避免 JPEG 坐标二次换算，并保留候选动作的原观察锚。独立 Phone Use／AutoGLM 使用额外模型审计请求，初次规划响应不能自批。修正物理截图缩小后的 JPEG 尺寸记录，并为连续截图加入 350 毫秒可取消间隔，等待后重新读树与截图。
+
+本地最终 345 项 JVM／Robolectric 测试通过（0 failures/errors/skipped），包含策略矩阵、两阶段审计、UID/任务一次性批准、缺失/伪造/过期审计、最后动作预算、真实 JPEG 坐标与归一化挑战、确认期间目标/授权改变、前后台确认调度、零物理屏调用、后台启动协议与跨屏保护。Debug／Release／AndroidTest 构建及两套完整 Lint 通过（0 errors，35／26 warnings）；`git diff --check` 通过。设置页三档保存与重建通过，`app/build/outputs/ui-screenshots/control-phone-use-permission.png` 已渲染并人工核对。
+
+本轮已在用户授权的 Xiaomi 25019PNF3C／xuanyuan（API 37，`CP2A.260605.016`，小爱 `8.3.30.4420 / 508003030`）安装最终 Debug／AndroidTest APK，并串行执行确定性实机验收：
+
+- `--action-confirmation` 全部 31 阶段通过：Manual 同意／拒绝／停止／真实 60 秒超时；YOLO 普通敏感动作自动执行、critical 请求灵动岛；Auto 首轮零输入且不耗动作步数、JPEG 坐标转 normalized 后仅点击一次、`ask_user`／无效 token 转人工；后台 Manual 批准后仅后台自有测试页收到一次触摸，物理屏零输入且 Activity／焦点不变；旧 PendingIntent 不能重复授权。真实灵动岛确认卡截图已人工核对。
+- `--profiles` 通过三档下拉、持久化、Activity 重建和全新 ViewModel 读取；真实设备四张权限截图已人工核对。runner 退出前恢复原配置并逐项比较整个 SharedPreferences map。
+- `--launch` 通过安全中心普通页面读取、本次启动自动确认，以及真实 `com.android.intentresolver` 选择器 JPEG／树读取；待选择状态保留原会话，点击自有候选后进入目标页面。先前两次选择器探针因目标／标题假设失败，已修正并在最终 APK 复测通过；不代表所有小米授权模板通过。
+- `--robust-screen`、`--focus` 和 `background_display_test.py --skip-install` 通过，覆盖旧观察拒绝／同会话重新规划、灵动岛连续性、后台输入／键盘隔离与正常释放。
+
+设备日志与截图保存在忽略目录 `work/phone-use-device-20261018/`，灵动岛原图为 `work/action-confirmation-island.png`。权限审计使用确定性候选和审计回复，没有请求真实模型，不能据此声称真实模型的自主规划／审计质量已验证。未知 ROM、语言、小米授权模板及后台系统弹窗的完整实际交互仍未覆盖；helper 待确认状态另有协议／任务快照测试。
+
+补强权限与 Hook 设备 runner 的恢复检查，覆盖全部 SharedPreferences 值类型，提交或逐项比较失败会明确失败。重建、安装新版 AndroidTest 后再次串行运行 `--action-confirmation` 和 `--launch` 均通过；两个 runner 均报告恢复成功，主机在内存独立解析前后配置，差异 key 为空。新增测试代码随后通过 Debug Lint。
+
+收尾恢复原无障碍列表并重连，健康状态为 `connected=true,busy=false`；仅 display 0，无 helper、活动 instrumentation 或 reverse 映射，设备回到桌面，状态记录为 `work/phone-use-device-20261018/final-state.json`。早期基线仅保存原始配置 XML 的 SHA256，最终字节摘要不同，无法由哈希还原或证明全轮语义一致；诊断字段及 XML 序列化顺序也可能变化。保留当前配置，不猜改原值；上述逐项恢复验证只证明对应测试入口到出口一致。未提交、推送或发布；原有 README 编辑保留。
 
 ## OpenCode Go 请求头、全局规划联动与下拉窗口（2026-10-18）
 
@@ -387,7 +414,7 @@ Debug、Release、AndroidTest 构建与 88 项 JUnit（含 5 项 Robolectric Com
 
 ## 运行限制
 
-不绕过锁屏、安全窗口、密码输入或验证码。当前 launch 对应的小米启动确认自动允许本次；其他系统授权仍接管。敏感操作确认依赖模型标注。原模型是否选工具、是否正确理解观察与预算限制，都会影响实际效果。
+不绕过锁屏、安全窗口、密码输入或验证码。当前 launch 对应的小米启动确认自动允许本次；应用选择类弹窗交给模型选择，其他可读系统授权进入 Manual／Auto／YOLO 权限策略。风险识别结合模型标注、目标标签与已知系统授权标题；未知模板和纯图片仍依赖模型判断。原模型是否选工具、是否正确理解观察与预算限制，都会影响实际效果。
 
 APK 内置的是参考 Open-AutoGLM 的本机执行器和动作协议，没有 AutoGLM 模型权重。默认官方模式仍按小爱原模型网络路径推理，不等于完全离线。
 

@@ -35,6 +35,8 @@ public final class Action {
     public String fingerprint() throws Exception {
         JSONObject execution = new JSONObject(data.toString());
         execution.remove("intent");
+        // A fresh review token does not make an otherwise repeated input a new action.
+        execution.remove("permission_review");
         return execution.toString();
     }
     public static Action parseAutoGlm(String output) throws Exception {

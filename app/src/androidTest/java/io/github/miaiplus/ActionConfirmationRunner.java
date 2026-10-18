@@ -25,25 +25,47 @@ final class ActionConfirmationRunner {
             check(ScreenService.instance != null, "accessibility service unavailable");
             prefs.edit().putBoolean("enabled", true).putBoolean("globalModel", false)
                 .putBoolean("backgroundDisplay", false).putString("planner", "native")
-                .putInt("maxSteps", 12).remove("hook_report").commit();
+                .putInt("maxSteps", 12)
+                .putInt("displayWidth", 1080).putInt("displayHeight", 1920).putInt("displayDensity", 320)
+                .putString(Config.PHONE_USE_PERMISSION_MODE_KEY, Config.PHONE_USE_PERMISSION_MANUAL)
+                .remove("hook_report").commit();
             openFixture(test);
             signal(test, "MIAIPLUS_RESTART_XIAOAI MIAIPLUS_ACTION_CONFIRMATION");
             String previous = "", result = "", top = "", focus = "";
             boolean waiting = false;
             int stages = 0;
+            java.util.Set<String> displaysBefore = java.util.Set.of();
             long nextSample = 0;
-            long deadline = SystemClock.elapsedRealtime() + 180_000;
+            long deadline = SystemClock.elapsedRealtime() + 360_000;
             while (SystemClock.elapsedRealtime() < deadline) {
                 result = prefs.getString("hook_report", "");
                 if (result.startsWith("PROBE ")) break;
                 if (result.startsWith("ACTION_CONFIRMATION_") && !previous.equals(result)) {
                     check(RobustFixtureActivity.current != null, "owned confirmation fixture disappeared");
-                    if (result.endsWith("_READY")) {
-                        counters(0);
+                    if (result.endsWith("_START")) {
+                        waiting = false;
+                        // Host initialization may have put XiaoAI in front after the initial fixture launch.
+                        if (stages == 0) openFixture(test);
+                        String mode = result.contains("_YOLO_") ? Config.PHONE_USE_PERMISSION_YOLO
+                            : result.contains("_AUTO_") ? Config.PHONE_USE_PERMISSION_AUTO : Config.PHONE_USE_PERMISSION_MANUAL;
+                        check(prefs.edit().putString(Config.PHONE_USE_PERMISSION_MODE_KEY, mode).commit(),
+                            "could not set the permission preset for the next task");
+                        test.runOnMainSync(() -> {
+                            RobustFixtureActivity.clicks = 0;
+                            RobustFixtureActivity.touchDowns = 0;
+                        });
                         top = physical("topResumedActivity"); focus = physical("mFocusedApp");
                         check(top.equals("io.github.miaiplus/.RobustFixtureActivity")
-                            || top.equals("io.github.miaiplus/io.github.miaiplus.RobustFixtureActivity"), "confirmation moved the foreground Activity");
-                        check(focus.contains("RobustFixtureActivity"), "confirmation took app focus away from owned fixture");
+                            || top.equals("io.github.miaiplus/io.github.miaiplus.RobustFixtureActivity"),
+                            "permission scenario did not start on the physical owned fixture");
+                        check(focus.contains("RobustFixtureActivity"), "physical owned fixture has no app focus");
+                        displaysBefore = displayIds();
+                        stable(test, top, focus);
+                    } else if (result.endsWith("_REVIEW_READY")) {
+                        // This independent tool round must have injected no input or asked the real user.
+                        stable(test, top, focus);
+                    } else if (result.endsWith("_READY")) {
+                        stable(test, top, focus);
                         for (int sample = 0; sample < 4; sample++) {
                             Thread.sleep(200);
                             stable(test, top, focus);
@@ -56,16 +78,15 @@ final class ActionConfirmationRunner {
                         waiting = result.equals("ACTION_CONFIRMATION_TIMEOUT_READY");
                     } else if (result.endsWith("_DONE")) {
                         waiting = false;
-                        counters(result.equals("ACTION_CONFIRMATION_ALLOW_DONE") ? 1 : 0);
+                        boolean noPhysicalInput = result.equals("ACTION_CONFIRMATION_DENY_DONE")
+                            || result.equals("ACTION_CONFIRMATION_CANCEL_DONE")
+                            || result.equals("ACTION_CONFIRMATION_TIMEOUT_DONE")
+                            || result.equals("ACTION_CONFIRMATION_BACKGROUND_ALLOW_DONE");
+                        counters(noPhysicalInput ? 0 : 1);
                         check(top.equals(physical("topResumedActivity")) && focus.equals(physical("mFocusedApp")),
-                            "confirmation completion unexpectedly changed app focus or Activity");
+                            "permission scenario unexpectedly changed physical Activity or focus");
+                        check(displaysBefore.equals(displayIds()), "permission scenario leaked a virtual display");
                         noOverlay(test);
-                        if (!result.equals("ACTION_CONFIRMATION_TIMEOUT_DONE")) {
-                            test.runOnMainSync(() -> {
-                                RobustFixtureActivity.clicks = 0;
-                                RobustFixtureActivity.touchDowns = 0;
-                            });
-                        }
                     } else throw new AssertionError("unknown confirmation stage: " + result);
                     shell("am broadcast --user 0 -a io.github.miaiplus.DEBUG_PROBE -p com.miui.voiceassist --es frame MIAIPLUS_ACTION_CONFIRMATION_READY");
                     signal(test, result + "; owned fixture touch/focus and no legacy overlay verified");
@@ -79,9 +100,9 @@ final class ActionConfirmationRunner {
                 Thread.sleep(70);
             }
             check(result.startsWith("PROBE PASS"), result.isEmpty() ? "confirmation probe timed out" : result);
-            check(stages == 8, "confirmation probe skipped required cases/stages: " + stages);
+            check(stages == 31, "confirmation probe skipped required cases/stages: " + stages);
             counters(0);
-            report.putString("stream", result + "; allow exactly one touch/click, deny/stop/timeout zero; unchanged physical Activity/focus and no accessibility overlay while waiting; preferences restored\n");
+            report.putString("stream", result + "; all permitted foreground scenarios exactly one touch/click, first Auto round and deny/stop/timeout zero; background confirmation zero physical touches with unchanged physical Activity/focus; no legacy overlay or leaked display; preferences restored\n");
             code = Activity.RESULT_OK;
         } catch (Throwable failure) {
             report.putString("stream", "FAIL: " + failure + "\n" + android.util.Log.getStackTraceString(failure));
@@ -116,7 +137,12 @@ final class ActionConfirmationRunner {
                     edit.putStringSet(entry.getKey(), strings);
                 }
             }
-            edit.commit();
+            if (!edit.commit() || !saved.equals(prefs.getAll())) {
+                code = Activity.RESULT_CANCELED;
+                report.putString("stream", report.getString("stream", "")
+                    + "FAIL: Could not restore original settings\n");
+            } else report.putString("stream", report.getString("stream", "")
+                + "Original settings restored and verified.\n");
             test.finish(code, report);
         }
     }
@@ -159,6 +185,13 @@ final class ActionConfirmationRunner {
         if (display == 0) physical.append(dump.substring(from));
         var match = Pattern.compile(field + "=ActivityRecord\\{[^}]*?\\s([\\w.]+/[\\w.$.]+)").matcher(physical);
         check(match.find(), "physical " + field + " unavailable"); return match.group(1);
+    }
+    private static java.util.Set<String> displayIds() throws Exception {
+        var ids = new java.util.TreeSet<String>();
+        var match = Pattern.compile("^\\s*Display Id=(\\d+)", Pattern.MULTILINE).matcher(shell("dumpsys display"));
+        while (match.find()) ids.add(match.group(1));
+        check(ids.contains("0"), "physical display missing from display dump");
+        return ids;
     }
     private static String shell(String command) throws Exception {
         Process process = new ProcessBuilder("su", "-c", command).redirectErrorStream(true).start();

@@ -6,6 +6,7 @@ import java.util.Set;
 final class LaunchVerifier {
     static final String XIAOMI_CONFIRMATION = "com.miui.securitycenter:launch-confirmation";
     static final String XIAOMI_AUTHORIZATION = "com.miui.securitycenter:authorization";
+    static final String APP_SELECTION = "system:app-selection";
     private static final long TIMEOUT_MS = 10_000;
     private static final long STABLE_MS = 500;
     private static final Set<String> AUTHORIZATION_PACKAGES = Set.of(
@@ -26,12 +27,13 @@ final class LaunchVerifier {
         if (!"com.miui.securitycenter".equals(owner) || permissionGroup.isBlank()) return owner;
         return "启动应用".equals(permissionGroup) ? XIAOMI_CONFIRMATION : XIAOMI_AUTHORIZATION;
     }
-    static void launch(String target, Driver driver) throws Exception {
+    /** False means a readable system prompt needs the model's next step, never that the target opened. */
+    static boolean launch(String target, Driver driver) throws Exception {
         driver.check();
         String foreground = driver.foreground();
         boolean allowedPrompt = XIAOMI_CONFIRMATION.equals(foreground)
             && driver.allowLaunchPrompt();
-        if (!allowedPrompt) rejectAuthorization(target, foreground);
+        if (!allowedPrompt && awaitsDecision(target, foreground)) return false;
         boolean requested = !target.equals(foreground) && !allowedPrompt;
         if (requested) {
             driver.check();
@@ -49,20 +51,20 @@ final class LaunchVerifier {
                 continue;
             }
             // Give the clicked prompt time to disappear; never click twice.
-            if (!(allowedPrompt && XIAOMI_CONFIRMATION.equals(foreground)))
-                rejectAuthorization(target, foreground);
+            if (!(allowedPrompt && XIAOMI_CONFIRMATION.equals(foreground))
+                && awaitsDecision(target, foreground)) return false;
             long now = driver.now();
             if (target.equals(foreground)) {
                 if (focusedSince < 0) focusedSince = now;
-                if (now - focusedSince >= STABLE_MS) return;
+                if (now - focusedSince >= STABLE_MS) return true;
             } else focusedSince = -1;
             if (now >= deadline)
                 throw new IllegalStateException("PAUSE：打开应用后未确认目标进入前台，已暂停。可能被系统限制、启动失败或跳到了其他应用，请手动打开目标应用后重新发起任务；不要重复启动或报告已打开。");
             driver.pause(250);
         }
     }
-    private static void rejectAuthorization(String target, String foreground) {
-        if (!target.equals(foreground) && AUTHORIZATION_PACKAGES.contains(foreground))
-            throw new IllegalStateException("PAUSE：打开应用遇到系统授权或安全提示，已暂停。该提示不符合当前应用启动确认，未自动允许；请手动处理后重新发起任务。");
+    private static boolean awaitsDecision(String target, String foreground) {
+        return !target.equals(foreground)
+            && (AUTHORIZATION_PACKAGES.contains(foreground) || APP_SELECTION.equals(foreground));
     }
 }

@@ -67,7 +67,7 @@ public class HookProbeRunner extends Instrumentation {
                 // These probes are about the physical screen: the launch probe asserts the Security page is the
                 // foreground it observes, which cannot hold if the device is configured for the background display.
                 prefs.edit().putBoolean("enabled", true).putBoolean("globalModel", false).putBoolean("backgroundDisplay", false)
-                    .putString("planner", "native").commit();
+                    .putString("planner", "native").putString(Config.PHONE_USE_PERMISSION_MODE_KEY, "manual").commit();
                 int confirmations = ScreenService.instance == null ? 0 : ScreenService.instance.launchConfirmationCount;
                 report.putString("stream", probe(conversation ? "MIAIPLUS_CONVERSATION_RETURN" : launch ? "MIAIPLUS_LAUNCH_UI" : "MIAIPLUS_FOCUS_UI") + (launch ? "; automatic launch confirmations="
                     + (ScreenService.instance == null ? 0 : ScreenService.instance.launchConfirmationCount - confirmations) : "") + "\n"); code = Activity.RESULT_OK;
@@ -105,8 +105,19 @@ public class HookProbeRunner extends Instrumentation {
                 else if (e.getValue() instanceof Boolean v) edit.putBoolean(e.getKey(), v);
                 else if (e.getValue() instanceof Long v) edit.putLong(e.getKey(), v);
                 else if (e.getValue() instanceof Integer v) edit.putInt(e.getKey(), v);
+                else if (e.getValue() instanceof Float v) edit.putFloat(e.getKey(), v);
+                else if (e.getValue() instanceof java.util.Set<?> v) {
+                    var strings = new java.util.HashSet<String>();
+                    for (Object item : v) strings.add((String) item);
+                    edit.putStringSet(e.getKey(), strings);
+                }
             }
-            edit.commit();
+            if (!edit.commit() || !saved.equals(prefs.getAll())) {
+                code = Activity.RESULT_CANCELED;
+                report.putString("stream", report.getString("stream", "")
+                    + "FAIL: Could not restore original settings\n");
+            } else report.putString("stream", report.getString("stream", "")
+                + "Original settings restored and verified.\n");
             if (focus || launch || conversation) finish(code, report);
         }
         finish(code, report);
