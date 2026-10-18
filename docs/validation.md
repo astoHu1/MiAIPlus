@@ -1,5 +1,17 @@
 # MiAIPlus 1.0.0-preview 实现与验证状态
 
+## OpenCode Go 请求头、全局规划联动与下拉窗口（2026-10-18）
+
+联网查阅 [OpenCode Go 官方文档](https://opencode.ai/docs/go/#where-can-i-use-it)，为独立与原生外部 Chat／Responses 请求补充客户端 User-Agent 和 `x-opencode-session`。独立循环按任务稳定；原生按消息身份关联，重复／续轮与部分历史裁剪复用，不按提问内容合并不同会话。记忆和路由按辅助请求 ID 分组，缺失时使用单次 UUID，尚未与主对话统一；全部关联消息被压缩掉或缓存淘汰后可能产生新标识。接入地址、模型列表路径差异及协议范围见 [接入说明](opencode-go.md)。
+
+全局外部模型开启时强制原生控屏规划，开启设置时同步保存 `planner=native`，旧配置读取也遵守约束；界面显示「小爱当前模型」并禁用选择。关闭全局替换后保持原生规划，可再手动选独立外部规划。API 协议等五类下拉选择关闭背景压暗，保留 Miuix 定位、勾选、动画和外部点击关闭；确认／编辑对话框保持原有行为。
+
+本地 282 项 JVM／Robolectric 测试通过（0 failures/errors/skipped）。新增 8 项覆盖实际本地 HTTP 的 Chat／Responses 请求头、同任务稳定与跨任务隔离、原生消息身份与部分裁剪、空历史、标识安全、旧配置强制规划、设置保存／禁用／重新选择，以及下拉背景像素不变和协议草稿选择。`protocol-popup-no-dim.png` 与 `control-global-model.png` fixture 截图已渲染并人工核对，位于 `app/build/outputs/ui-screenshots/`。Debug／Release 完整 Lint、APK 与 Debug AndroidTest APK 构建均通过；Lint 为 0 errors、35／26 warnings；`git diff --check` 通过。
+
+最新 Debug／AndroidTest 已安装到 Xiaomi 25019PNF3C / xuanyuan、API 37、小爱 8.3.30.4420（508003030）。`device_test.py --hook` 与 `--hook --responses` 均通过，重启小爱后在真实宿主客户端验证 Dyn／直接模型、流式文字／工具、工具结果及图片续轮、记忆、gate／能力和 intent 原生响应解析。模拟服务逐个请求断言唯一有效 UUID 会话头及自有 User-Agent，并检查工具续轮标识不变、不同测试对话标识不同。
+
+`device_test.py --profiles` 实机通过，覆盖 API 协议草稿／保存、非黑色页面区域在弹窗前后像素不变、全局开启时规划模型保存／禁用及实际触摸不展开、关闭后重新选择，以及原有设置页回归。截图已人工核对。Runner 验证原配置完整恢复，无障碍服务列表保持原值；测试模拟服务已停止，reverse 映射已移除。此轮使用本地模拟模型，未调用真实 Go 订阅，不能据此保证服务端账号、模型或长任务兼容；旧小爱 8.2.65 仅核对方法签名，未降级实测。工作区并行 README 改动未纳入本任务提交。
+
 ## 测试集精简（2026-10-18）
 
 在 `452e104` 基础上审计单元测试、设备 runner 与主机脚本：JVM／Robolectric 测试方法从 334 合并为 274（减少 60，约 18%），测试类从 50 合并为 47；无障碍主机测试从 9 个方法合为 5 个契约测试，保留全部 10 个输入场景。方法数按 JUnit 报告统计，输入矩阵的每行仍实际执行，不能把方法数减少解释为删除同等数量的行为场景。

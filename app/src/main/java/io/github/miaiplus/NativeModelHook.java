@@ -20,6 +20,7 @@ public final class NativeModelHook {
     private static final ThreadLocal<Boolean> delegating = ThreadLocal.withInitial(() -> false);
     private static final ThreadLocal<Boolean> memoryTransport = ThreadLocal.withInitial(() -> false);
     private static final ThreadLocal<Bundle> memorySettings = new ThreadLocal<>();
+    private static final java.util.Map<Object, String> delegateSessions = java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
     private static long fetchedAt;
     static synchronized void invalidateConfig() { fetchedAt = 0; }
     static synchronized Bundle requestConfig(Context context) {
@@ -99,6 +100,17 @@ public final class NativeModelHook {
         Class<?> openai = Reflector.findClass("qm.i", loader);
         Class<?> ktor = Reflector.findClass("io.ktor.client.HttpClient", loader);
         var openaiConstructor = openai.getConstructor(String.class, String.class, ktor);
+        hooks.add(Hooks.hookMethod(openai.getDeclaredMethod("e",
+            Reflector.findClass("io.ktor.client.request.HttpRequestBuilder", loader), String.class, String.class,
+            Reflector.findClass(HostCompatibility.choose("qm.f", "dn.f"), loader), String.class), new HookCallback() {
+            @Override protected void afterHookedMethod(MethodHookParam p) {
+                String session = delegateSessions.get(p.thisObject);
+                if (session == null || p.hasThrowable()) return;
+                Object headers = Reflector.callMethod(p.args[0], "getHeaders");
+                Reflector.callMethod(headers, "remove", ModelHeaders.SESSION);
+                Reflector.callMethod(headers, "append", ModelHeaders.SESSION, session);
+            }
+        }));
         Method nativeStream = openai.getDeclaredMethod("streamCompletion", List.class, List.class, nativeConfig,
             Reflector.findClass("kotlin.coroutines.Continuation", loader));
         for (String className : new String[]{"qm.c", "um.h", "qm.i", "qm.j", "qm.b"}) {
@@ -125,6 +137,7 @@ public final class NativeModelHook {
                     // Keep native serialization/SSE, but never reuse Xiaomi's account-auth transport.
                     Object delegate = openaiConstructor.newInstance(setting.getString("apiKey", ""), endpoint,
                         cleanHttp(loader, setting));
+                    delegateSessions.put(delegate, ModelHeaders.nativeSession((List<?>)param.args[0]));
                     delegating.set(true);
                     try { param.setResult(nativeStream.invoke(delegate, param.args[0], param.args[1], replacement, param.args[3])); }
                     finally { delegating.remove(); }
@@ -151,6 +164,10 @@ public final class NativeModelHook {
                 p.args[5] = null; // Xiaomi billing/feature query parameters do not apply externally.
                 p.setObjectExtra("memoryTransportPrevious", memoryTransport.get());
                 p.setObjectExtra("memorySettingsPrevious", memorySettings.get());
+                setting = new Bundle(setting);
+                String requestId = (String)p.args[3];
+                setting.putString(ModelHeaders.SESSION, requestId == null || requestId.isBlank()
+                    ? java.util.UUID.randomUUID().toString() : ModelHeaders.identifier("memory:" + requestId));
                 memorySettings.set(setting);
                 memoryTransport.set(true);
                 } catch (Throwable failure) {
@@ -247,11 +264,16 @@ public final class NativeModelHook {
         }
     }
     static boolean canReload() { return NativeResponsesAdapter.isIdle(); }
+    static String memorySession() {
+        Bundle setting = memorySettings.get();
+        return memoryTransport.get() && setting != null ? setting.getString(ModelHeaders.SESSION) : null;
+    }
     static synchronized void dispose() {
         for (Object http : externalHttp.values()) Reflector.callMethod(http, "close");
         externalHttp.clear(); modelConfig = null; fetchedAt = 0;
         delegating.remove(); memoryTransport.remove(); memorySettings.remove();
         NativeResponsesAdapter.clear();
+        delegateSessions.clear(); ModelHeaders.clear();
     }
     private static final java.util.Map<String, Object> externalHttp = new java.util.HashMap<>();
     interface Configure { void apply(Object value) throws Throwable; }

@@ -35,8 +35,8 @@ public final class Config {
             string(p, ReasoningPolicy.preferenceKey(endpoint, model, api), "default"));
         String storedProtocol = string(p, "protocol", "phone_use");
         protocol = "computer".equals(storedProtocol) ? "phone_use" : storedProtocol;
-        planner = string(p, "planner", "native");
         globalModel = Boolean.TRUE.equals(p.get("globalModel"));
+        planner = globalModel ? "native" : string(p, "planner", "native");
         Object conversationTimeout = p.get("conversationTimeoutMinutes");
         conversationTimeoutMinutes = conversationTimeout instanceof Number
             ? Math.max(0, Math.min(MAX_CONVERSATION_TIMEOUT_MINUTES, ((Number) conversationTimeout).intValue()))

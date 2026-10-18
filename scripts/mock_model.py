@@ -10,6 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 class Handler(BaseHTTPRequestHandler):
+    native_sessions = {}
     def log_message(self, *_):
         pass
 
@@ -80,6 +81,10 @@ class Handler(BaseHTTPRequestHandler):
             assert self.path in ("/v1/chat/completions", "/v1/responses"), "wrong completion path"
             self.use_responses = self.path == "/v1/responses"
             assert self.headers.get("Authorization") == "Bearer test-key", "missing expected test auth (present=%s, count=%s)" % (self.headers.get("Authorization") is not None, len(self.headers.get_all("Authorization", [])))
+            session = self.headers.get("x-opencode-session", "")
+            assert re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", session), "missing or invalid session header"
+            assert len(self.headers.get_all("x-opencode-session", [])) == 1, "duplicate session headers"
+            assert self.headers.get("User-Agent", "").startswith("MiAIPlus/"), "client user agent missing"
             forbidden = ("cookie", "x-xiaomi", "x-mi-", "x-device", "x-osbot", "service-token", "x-model-provider-id")
             assert not any(any(name.lower().startswith(prefix) for prefix in forbidden) for name in self.headers), "Xiaomi account/device headers leaked"
             request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
@@ -119,12 +124,15 @@ class Handler(BaseHTTPRequestHandler):
                 assert any(m["role"] == "system" and "MIAIPLUS_NATIVE_SYSTEM" in m["content"] for m in messages), "native prompt lost"
                 results = [m for m in messages if m["role"] == "tool"]
                 if results:
+                    assert self.native_sessions.get(self.path) == session, "native session changed across tool roundtrip"
                     assert results[-1]["tool_call_id"] == "probe-call", "native tool call id lost"
                     assert "probe-result" in results[-1]["content"], "native tool result lost"
                     assert any(isinstance(m.get("content"), list) and any(p.get("type") == "image_url" for p in m["content"]) for m in messages), "native screenshot lost"
                     delta = {"content": "native-roundtrip-ok"}
                     reason = "stop"
                 elif task.endswith("_TEST"):
+                    assert session != self.native_sessions.get(self.path), "distinct native conversations share a session"
+                    self.native_sessions[self.path] = session
                     probe = next((t["function"] for t in request["tools"] if t["function"]["name"] == "probe_tool"), None)
                     assert probe is not None and probe["parameters"]["type"] == "object", "native tools lost"
                     delta = {"tool_calls": [{"index": 0, "id": "probe-call", "type": "function", "function": {"name": "probe_tool", "arguments": "{}"}}]}

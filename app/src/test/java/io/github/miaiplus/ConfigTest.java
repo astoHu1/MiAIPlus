@@ -8,6 +8,12 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class ConfigTest {
+    @Test public void globalExternalModelAlwaysUsesNativePlannerIncludingLegacyPreferences() {
+        assertEquals("native", new Config(Map.of("globalModel", true, "planner", "external")).planner);
+        assertEquals("native", new Config(Map.of("globalModel", true)).planner);
+        assertEquals("external", new Config(Map.of("globalModel", false, "planner", "external")).planner);
+    }
+
     @Test public void stepBudgetsKeepDefaultAndClampPersistedValuesToSupportedBounds() {
         assertEquals("missing budget", 30, new Config(Map.of()).maxSteps);
         for (int[] budget : new int[][]{{81, 81}, {200, 200}, {0, 1}, {201, 200}}) {

@@ -598,7 +598,8 @@ public final class HookSmokeProbe {
         for (String type : new String[]{"qm.i", "qm.j", "qm.b"})
             clients.add(Reflector.newInstance(Reflector.findClass(type, loader), "unused-native-key", "http://127.0.0.1:1", http));
         for (Object transport : clients) {
-            List<Object> events = collect(loader, transport, List.of(message(loader, "USER", "MIAIPLUS_NATIVE_STREAM_TEST", null)), List.of(tool), config);
+            Object user = message(loader, "USER", "MIAIPLUS_NATIVE_STREAM_TEST", null);
+            List<Object> events = collect(loader, transport, List.of(user), List.of(tool), config);
             if (events.stream().noneMatch(e -> e.getClass().getName().equals(HostCompatibility.name("sm.b$f")))) throw new AssertionError("no native tool-call event for " + transport.getClass().getName() + ": " + events);
             assertStreamEnded(events, "TOOL_CALLS");
             Object called = events.stream().filter(e -> e.getClass().getName().equals(HostCompatibility.name("sm.b$f"))).findFirst().orElseThrow();
@@ -612,7 +613,7 @@ public final class HookSmokeProbe {
                 UUID.randomUUID().toString(), enumValue(loader, "MessageRole", "TOOL"), "probe-result", null, invoke(called, "getId"), null, images,
                 System.currentTimeMillis(), enumValue(loader, "MessageSource", "CHAT"), null, null, null);
             List<Object> continued = collect(loader, transport,
-                List.of(message(loader, "USER", "MIAIPLUS_NATIVE_STREAM_TEST", null), assistant, toolResult), List.of(tool), config);
+                List.of(user, assistant, toolResult), List.of(tool), config);
             if (continued.stream().noneMatch(e -> e.getClass().getName().equals(HostCompatibility.name("sm.b$d")) && String.valueOf(invoke(e, "getText")).contains("native-roundtrip-ok")))
                 throw new AssertionError("native tool result/image roundtrip failed for " + transport.getClass().getName() + ": " + continued);
             assertStreamEnded(continued, "STOP");

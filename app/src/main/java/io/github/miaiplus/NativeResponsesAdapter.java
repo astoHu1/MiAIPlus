@@ -64,6 +64,10 @@ final class NativeResponsesAdapter {
         JSONObject body = "responses".equals(api) ? ModelProtocol.request(chat) : chat;
         ReasoningPolicy.apply(body, model, api, reasoning);
         Object builder = Reflector.callMethod(request, "newBuilder");
+        Reflector.callMethod(builder, "header", "User-Agent", ModelHeaders.USER_AGENT);
+        Object session = Reflector.callMethod(request, "header", ModelHeaders.SESSION);
+        if (!(session instanceof String value) || value.isBlank())
+            Reflector.callMethod(builder, "header", ModelHeaders.SESSION, java.util.UUID.randomUUID().toString());
         if ("responses".equals(api))
             Reflector.callMethod(builder, "url", url.substring(0, url.length() - "/chat/completions".length()) + "/responses");
         Object requestBody = Reflector.callStaticMethod(type("gg2.g0"), "create", jsonType(), body.toString());

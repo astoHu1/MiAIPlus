@@ -19,6 +19,12 @@ public final class NativeIntentHook {
                 Object request = p.args[0];
                 Object url = Reflector.callMethod(request, "getUrl");
                 String value = String.valueOf(Reflector.callMethod(url, "buildString"));
+                String memorySession = NativeModelHook.memorySession();
+                if (memorySession != null) {
+                    Object headers = Reflector.callMethod(request, "getHeaders");
+                    Reflector.callMethod(headers, "remove", ModelHeaders.SESSION);
+                    Reflector.callMethod(headers, "append", ModelHeaders.SESSION, memorySession);
+                }
                 if (!"/osbot/api/intent/v2/chat/completions".equals(URI.create(value).getPath())) return;
                 try {
                     var config = NativeModelHook.requestConfig(context);
@@ -37,6 +43,9 @@ public final class NativeIntentHook {
                     Object headers = Reflector.callMethod(request, "getHeaders");
                     Reflector.callMethod(headers, "clear");
                     Reflector.callMethod(headers, "append", "Content-Type", "application/json");
+                    String requestId = new org.json.JSONObject(text).optString("rid", "");
+                    Reflector.callMethod(headers, "append", ModelHeaders.SESSION, requestId.isBlank()
+                        ? java.util.UUID.randomUUID().toString() : ModelHeaders.identifier("intent:" + requestId));
                     String key = config.getString("apiKey", "");
                     if (!key.isBlank()) Reflector.callMethod(headers, "append", "Authorization", "Bearer " + key);
                     Reflector.callMethod(request, "setBody", adapted);

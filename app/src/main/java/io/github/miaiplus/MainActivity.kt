@@ -51,7 +51,6 @@ import top.yukonga.miuix.kmp.basic.*
 import top.yukonga.miuix.kmp.icon.basic.ArrowRight
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.preference.ArrowPreference
-import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.darkColorScheme
@@ -413,6 +412,8 @@ private fun ControlPage(state: SettingsState, openSettings: (Boolean) -> Unit, o
     }
     Section("执行") {
         OverlayDropdownPreference(title = "规划模型", items = listOf("小爱当前模型", "外部模型"),
+            enabled = !state.config.globalModel,
+            summary = if (state.config.globalModel) "已启用全局外部模型，控屏跟随小爱当前模型" else null,
             selectedIndex = if (state.config.planner == "external") 1 else 0,
             onSelectedIndexChange = { state.setOption("planner", if (it == 1) "external" else "native") })
         OverlayDropdownPreference(title = "动作协议", items = listOf("Phone Use", "AutoGLM"),

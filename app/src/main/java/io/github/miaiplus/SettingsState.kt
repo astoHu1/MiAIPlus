@@ -130,10 +130,14 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
     }
 
     fun setOption(key: String, value: Any): Boolean = attempt {
+        require(key != "planner" || value != "external" || !config.globalModel) {
+            "全局外部模型已启用，控屏使用小爱当前模型"
+        }
         if ((key == "globalModel" && value == true) || (key == "planner" && value == "external")) {
             requireNotNull(profiles).active().validated(true)
         }
         val editor = prefs.edit()
+        if (key == "globalModel" && value == true) editor.putString("planner", "native")
         when (value) {
             is Boolean -> editor.putBoolean(key, value)
             is String -> editor.putString(key, value)

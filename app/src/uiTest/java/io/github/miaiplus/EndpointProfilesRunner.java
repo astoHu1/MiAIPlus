@@ -242,7 +242,21 @@ final class EndpointProfilesRunner {
                 click("保存并切换");
                 waitFor(() -> new EndpointProfiles(prefs).profiles.size() == 2, "New profile missing");
                 check("服务 B".equals(new EndpointProfiles(prefs).active().name), "New profile not selected");
+                var modelField = find(n -> n.isEditable() && "fixture-a".equals(text(n)));
+                check(modelField != null, "Model field not visible for popup brightness check");
+                Rect sample = new Rect(); modelField.getBoundsInScreen(sample);
+                int sampleX = sample.left + 4, sampleY = sample.centerY();
+                Bitmap beforePopup = ui.takeScreenshot();
+                check(beforePopup != null, "Could not capture popup baseline");
+                int baselineColor = beforePopup.getPixel(sampleX, sampleY);
+                check((baselineColor & 0x00ffffff) != 0, "Black background cannot detect dimming");
                 click("API 协议");
+                capture("protocol-popup-no-dim-device");
+                Bitmap afterPopup = ui.takeScreenshot();
+                try {
+                    check(afterPopup != null, "Could not capture popup");
+                    check(baselineColor == afterPopup.getPixel(sampleX, sampleY), "Selector dimmed the background");
+                } finally { beforePopup.recycle(); if (afterPopup != null) afterPopup.recycle(); }
                 click("Chat Completions");
                 click("保存配置");
                 waitFor(() -> "chat".equals(new Config(context).api), "API protocol not saved");
@@ -256,6 +270,7 @@ final class EndpointProfilesRunner {
                 click("删除");
                 waitFor(() -> new EndpointProfiles(prefs).profiles.size() == 1, "Delete failed");
                 check("服务 A".equals(new EndpointProfiles(prefs).active().name), "Delete did not switch profile");
+                checkGlobalPlanner();
                 click("首页");
                 capture("home");
                 click("控屏");
@@ -289,7 +304,7 @@ final class EndpointProfilesRunner {
                 click("返回");
                 click("返回");
                 check(state.getJob() == null, "UI checks started a model job");
-                result.putString("stream", "PASS: physical-device Compose navigation, legacy migration, draft/recreation/discard, keyboard/save visibility, save/create/switch/delete, API persistence, step limits 0/201/1/200, background status result, direct-test navigation. No model requests.\n");
+                result.putString("stream", "PASS: physical-device Compose navigation, legacy migration, draft/recreation/discard, keyboard/save visibility, save/create/switch/delete, API persistence, selector background brightness, global-model planner lock/unlock, step limits 0/201/1/200, background status result, direct-test navigation. No model requests.\n");
             }
             code = Activity.RESULT_OK;
         } catch (Throwable failure) {
@@ -324,6 +339,39 @@ final class EndpointProfilesRunner {
             }
         }
         test.finish(code, result);
+    }
+
+    private void checkGlobalPlanner() throws Exception {
+        onMain(() -> check(state.setOption("planner", "external"), "External planner setup failed"));
+        click("使用外部模型"); click("开启");
+        waitFor(() -> state.getConfig().globalModel && "native".equals(state.getConfig().planner),
+            "Global model did not force native planner");
+        check("native".equals(Config.prefs(test.getTargetContext()).getString("planner", "")),
+            "Native planner was not persisted");
+        click("控屏");
+        var planner = find(n -> "规划模型".equals(text(n)));
+        // Android exposes the title text as a child; enabled belongs to the preference row.
+        while (planner != null && planner.isEnabled() && !planner.isClickable() && planner.getParent() != null)
+            planner = planner.getParent();
+        check(planner != null && !planner.isEnabled(), "Planner selector was not disabled");
+        Rect bounds = new Rect(); planner.getBoundsInScreen(bounds);
+        long now = SystemClock.uptimeMillis();
+        for (int action : new int[]{MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP}) {
+            MotionEvent event = MotionEvent.obtain(now, SystemClock.uptimeMillis(), action,
+                bounds.centerX(), bounds.centerY(), 0);
+            event.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
+            check(ui.injectInputEvent(event, true), "Disabled selector touch failed");
+            event.recycle();
+        }
+        settle();
+        check(find(n -> "外部模型".equals(text(n))) == null, "Disabled selector opened a menu");
+        capture("control-global-model-device");
+        click("模型 API"); click("使用外部模型");
+        waitFor(() -> !state.getConfig().globalModel, "Global model switch did not turn off");
+        click("控屏"); click("规划模型"); click("外部模型");
+        waitFor(() -> "external".equals(state.getConfig().planner), "Planner did not unlock");
+        click("规划模型"); click("小爱当前模型");
+        waitFor(() -> "native".equals(state.getConfig().planner), "Native planner selection failed");
     }
 
     /** Same fixture and gesture stream for Debug/Preview; keep accessibility services connected. */

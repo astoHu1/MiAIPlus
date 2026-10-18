@@ -39,6 +39,50 @@ import java.util.concurrent.atomic.AtomicInteger
 class SettingsUiTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
+    @Test fun globalExternalModelForcesAndLocksNativePlanner() {
+        val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
+        compose.runOnIdle {
+            state.updateProfile(endpoint = "https://example.com/v1", model = "fixture-model")
+            check(state.saveProfile())
+            check(state.setOption("planner", "external"))
+            check(state.setOption("globalModel", true))
+            assertEquals("native", state.config.planner)
+            assertEquals("native", io.github.miaiplus.Config.prefs(state.getApplication<Application>()).getString("planner", null))
+            assertEquals(false, state.setOption("planner", "external"))
+        }
+        compose.onNodeWithTag("tab-Control").performClick()
+        compose.onNodeWithText("规划模型").assertIsNotEnabled()
+        compose.onNodeWithText("小爱当前模型").assertExists()
+        capture("control-global-model")
+        compose.runOnIdle {
+            check(state.setOption("globalModel", false))
+            assertEquals("native", state.config.planner)
+        }
+        compose.onNodeWithText("规划模型").assertIsEnabled().performClick()
+        compose.onNodeWithText("外部模型").performClick()
+        compose.runOnIdle { assertEquals("external", state.config.planner) }
+    }
+
+    @Test fun protocolSelectorKeepsBackgroundBrightnessAndSavesSelectionAsDraft() {
+        compose.onNodeWithTag("tab-Model").performClick()
+        compose.onNodeWithText("API 协议").performScrollTo()
+        compose.waitForIdle()
+        val before = compose.onRoot().captureToImage().asAndroidBitmap()
+        compose.onNodeWithText("API 协议").performClick()
+        compose.onNodeWithText("Chat Completions").assertExists()
+        capture("protocol-popup-no-dim")
+        val after = compose.onRoot().captureToImage().asAndroidBitmap()
+        try {
+            assertEquals(before.getPixel(2, before.height / 2), after.getPixel(2, after.height / 2))
+        } finally { before.recycle(); after.recycle() }
+        compose.onNodeWithText("Chat Completions").performClick()
+        val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
+        compose.runOnIdle {
+            assertEquals("chat", state.draft?.api)
+            assertEquals("auto", state.profiles?.active()?.api)
+        }
+    }
+
     @After fun clearFixturePreferences() {
         // AndroidViewModel's factory can retain its Application between Robolectric cases.
         // Clean the same preferences owner used by the UI, including after a failed test.

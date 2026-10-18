@@ -15,6 +15,7 @@ public final class ModelClient {
         try {
             c.setInstanceFollowRedirects(false); c.setConnectTimeout(10000); c.setReadTimeout(15000);
             if (!key.isBlank()) c.setRequestProperty("Authorization", "Bearer " + key);
+            c.setRequestProperty("User-Agent", ModelHeaders.USER_AGENT);
             if (c.getResponseCode() != 200) throw new IllegalStateException("HTTP " + c.getResponseCode());
             try (InputStream in = c.getInputStream(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
                 byte[] buffer = new byte[8192]; int n;
@@ -47,6 +48,8 @@ public final class ModelClient {
             c.setConnectTimeout(10_000); c.setReadTimeout((int)Math.min(60_000, Math.max(1, run.deadline - android.os.SystemClock.elapsedRealtime())));
             c.setRequestMethod("POST"); c.setDoOutput(true);
             c.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+            c.setRequestProperty("User-Agent", ModelHeaders.USER_AGENT);
+            c.setRequestProperty(ModelHeaders.SESSION, ModelHeaders.identifier("run:" + run.id));
             if (!config.apiKey.isBlank()) c.setRequestProperty("Authorization", "Bearer " + config.apiKey);
             byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
             c.setFixedLengthStreamingMode(bytes.length);
