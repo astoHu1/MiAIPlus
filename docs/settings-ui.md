@@ -38,7 +38,7 @@ API 协议、当前配置、规划模型、动作协议和测试类型等小型�
 
 ## 虚拟屏
 
-「控屏 → 虚拟屏」管理原有 `backgroundDisplay` 配置，首页同步显示执行屏幕。开关影响新任务，进行中的任务保持原屏幕。关闭时沿用主屏；开启后由已有后端执行虚拟屏任务，不可用时停止。
+「控屏 → 虚拟屏」管理兼容入口的默认屏幕偏好 `backgroundDisplay`，默认关闭，首页同步显示该配置。开关影响后续通过兼容入口发起的新任务，进行中的任务保持原屏幕；关闭选用主屏，开启选用虚拟屏。原生 `miaiplus_phone_use`／`miaiplus_background_phone_use` 分别选择前台／后台，不受此默认偏好影响。后台不可用时停止，不静默回退物理屏。
 
 - 画布可自定义宽、高和密度，分别限制为 320–4096 像素、80–1000 dpi；默认保持 1080×1920@320。可读取本机当前物理屏的完整像素尺寸与密度并填入编辑框，点击「保存」后应用于后续新建的虚拟屏，能力探测也使用同一画布；进行中的会话保持原参数。
 
@@ -53,29 +53,20 @@ API 协议、当前配置、规划模型、动作协议和测试类型等小型�
 
 草稿在 ViewModel 中保留，不把密钥写入 SavedState。密钥默认遮挡，离开页面或切换配置后重新遮挡，配置保存在应用私有存储。2026-10-18 起模块设置窗口不再设置 `FLAG_SECURE`，设置页与继承窗口策略的弹窗允许用户截图；用户主动显示的密钥也可能进入截图。服务地址、密钥、模型默认仍为空。未保存时，外部对话开关暂不可更改，避免将草稿与已保存服务混用。
 
-沿用 `Config`、`EndpointProfiles`、`AccessibilityGuard`、`HotReload` 和 `BridgeProvider`；集成保留 main 的最新 Hook、执行器及后台屏实现。开启外部模型前验证已保存配置；保留对话数据发送确认。前置检查不创建屏幕；能力检测会实际创建并销毁屏幕。两者均不能替代真实模型任务验证。
+设置通过 `Config`、`EndpointProfiles`、`AccessibilityGuard`、`HotReload` 和 `BridgeProvider` 连接配置与后端。开启外部模型前验证已保存配置；保留对话数据发送确认。前置检查不创建屏幕；能力检测会实际创建并销毁屏幕。两者均不能替代真实模型任务验证。
 
-## 验证
+## 维护与验证
 
-2026-10-18：最新 Debug／AndroidTest 在 Xiaomi 25019PNF3C、API 37 上通过设置页专项。API 协议下拉打开前后，菜单外非黑色区域像素保持一致；全局外部模型开启后，规划模型持久化为原生且实际触摸不展开，关闭后可重新选择。两张实机截图已人工核对；测试结束验证原配置恢复，未发起模型请求。完整本地与原生网络测试见 [验证记录](validation.md)。
+行为说明以当前源码为准；已执行检查及 mock／实机／真实模型覆盖范围集中记录在 [验证记录](validation.md)，性能采样见 [性能记录](settings-performance.md)。此处不重复维护各轮测试总数、构建状态和设备操作流水；旧截图、局部探针或历史混合后端测试包不能证明当前完整版本已通过。
 
-`SettingsUiTest` 在 Robolectric Android 35 上检查底栏顺序、草稿保存/放弃/取消、二级页进退过渡与父页面、历史注入状态、步数边界、画布编辑保存与本机分辨率填充、模型列表懒加载以及后台屏按需查询。`SettingsStateDisplayGeometryTest` 检查画布持久化、边界拒绝和默认屏几何读取。截图位于 `app/build/outputs/ui-screenshots/`，只使用默认值和测试数据。
-
-前一轮 96 项 JVM / Robolectric 测试通过，包含应用搜索与选择；Debug、AndroidTest 与优化 Preview APK 构建通过。Preview 本地构建显式跳过存在基线错误的 `lintVitalPreview`；完整 Lint 单独执行并保留失败结果。实机 UI 专项通过，未重启小爱或发起模型请求。本次与历史性能数据分别记录于 [性能记录](settings-performance.md)。
-
-上述旧前端基线当时被 `helper/DisplayHelper.java` 的三处错误阻塞；不能代表最新集成源码的检查结果。
-
-## 最新后端集成验证（2026-10-17）
-
-在隔离工作区将完整前端与 main 当时的全部后端改动联合编译，覆盖 `NativeSession` / `PageGuard`、`RunState`、`FrameStore`、`InteractionUi`、`XiaoAiHook` 及后台屏五个文件，避免只同步五个后台屏文件而遗漏会话与生命周期修复。前端提交不收录其他作者未提交的后端改动；合并工作区继续保留它们。
-
-103 项 JVM/Robolectric 测试通过，含新增的虚拟屏、主屏、纯对话三类直接测试界面交接。Debug/Release Lint、Debug/Release APK、Debug AndroidTest APK 均通过，未跳过 Lint。本轮没有安装设备、重启小爱、运行 root 探针或调用模型；下方实机结论属于历史验证。前端能力探针仍如实显示其未测的无障碍树，不将独立设备报告的结果填入本次探针。
-
-以下截图为本轮 Robolectric fixture 渲染，只含测试状态：
-
-| 虚拟屏 | 深色虚拟屏 |
+| 维护入口 | 职责 |
 | --- | --- |
-| ![集成虚拟屏](images/settings-virtual-integrated.png) | ![集成深色虚拟屏](images/settings-virtual-integrated-dark.png) |
+| `MainActivity.kt` / `SettingsState.kt` | 导航、表单草稿、配置保存与状态刷新 |
+| `VirtualScreenState.kt` | 虚拟屏画布、按需检查和能力探测 |
+| `DiagnosticLogPage.kt` / `DiagnosticLogState.kt` | 日志筛选、详情、前台刷新和导出交互 |
+| `DiagnosticLogStore.java` / `PhoneUseLog.java` | 私有轮转存储、双来源采集与诊断上下文 |
+
+`SettingsUiTest` 的 Robolectric 测试覆盖导航、草稿、配置、权限预设、日志筛选／详情／清空与直接测试交接；`SettingsStateDisplayGeometryTest` 覆盖画布持久化、边界和本机几何读取；`DiagnosticLogStoreTest` 覆盖轮转、存储失败、队列容量及 ZIP 白名单。测试存在不等于本轮已运行，设备专项也不能替代真实模型任务验证。
 
 ## 截图
 
@@ -85,8 +76,15 @@ API 协议、当前配置、规划模型、动作协议和测试类型等小型�
 
 ![深色首页](images/settings-dark.png)
 
+以下虚拟屏图为历史 Robolectric fixture，未展示后续新增的全部设置：
 
-运行虚拟屏专项（须有已授权、无活动控屏任务的设备及独立测试应用）：
+| 虚拟屏 | 深色虚拟屏 |
+| --- | --- |
+| ![虚拟屏](images/settings-virtual-integrated.png) | ![深色虚拟屏](images/settings-virtual-integrated-dark.png) |
+
+## 设备专项入口
+
+以下命令仅供已授权、无活动控屏任务的测试设备使用；文档不授予设备操作权限。使用独立测试应用，运行前确认配置可恢复。
 
 ```sh
 ./gradlew -PuiTestBuildType=preview :app:assemblePreviewAndroidTest
@@ -94,19 +92,4 @@ adb shell am instrument --user 0 -w -e virtual true \
   io.github.miaiplus.test/io.github.miaiplus.SettingsUiRunner
 ```
 
-`-e virtualIdle true` 提供 45 秒页面空闲采样窗口，不启动 root 前置检查或能力检测。测试应用标签为「虚拟屏测试」，搜索使用包名 `virtualfixture`，避免误点同名输入框。
-
-## 实机验证（2026-10-16）
-
-设备为 Xiaomi 25019PNF3C / Android API 37 / HyperOS 4，有线连接、横屏。先推送 PR，再安装优化 Preview 前端测试包。为保留手机尚未同步到远程的后端，测试包使用已安装 APK 的原有后端类及 record 支持类，214 个类的完整 smali 逐一比对一致；不将后端快照提交到分支。初次本地重打包漏带 record 支持类，导致 helper 退出；补齐依赖后，通过页面完成两轮实际能力检测。
-
-实机 Runner 验证开关保存与恢复、root/解锁检查、应用搜索与选择、确认/取消、实际能力检测、详情、重建保留及返回控屏/首页。
-
-| 检测项 | 本机结果 |
-| --- | --- |
-| 创建独立屏幕、截图、启动测试应用 | 通过 |
-| 定向触控、按键通路 | 通过 |
-| 主屏焦点隔离、关闭与回收 | 通过 |
-| 无障碍树 | 未验证：后端探针不测此项 |
-
-使用无权限、无网络、无个人数据的独立测试应用。按键项只证明定向 BACK 与画面变化，不能据此宣称中文输入可用；没有执行真实模型控屏任务。原配置对比仅 `hook_at` 注入报告时间变化，无障碍保持测试前的未连接状态；结束后无模块虚拟屏或 helper 残留，并移除本轮测试应用。
+`-e virtualIdle true` 提供 45 秒页面空闲采样窗口，不启动 root 前置检查或能力检测。测试应用标签为「虚拟屏测试」，搜索使用包名 `virtualfixture`，避免误点同名输入框。日志专项入口与清空影响见 [详细日志](phone-use-logging.md#设备回归)。

@@ -60,7 +60,7 @@ Provider 在创建任务或收起界面前校验续调的会话、UID、期限�
 
 `ConversationReturn` 在首次工具调用时从宿主 `ExecutionContext.getContextVarIdentity()` 提取 agent/chat，以当前匹配页面或只读持久化查询构造原生 `PageNavigationData` 返回入口；旧入口从当前浮窗/全屏页面获取。定位在启动 IPC 前完成，不挤占界面就绪期限。`InteractionUi` 为每个控屏任务创建独立、不可变的通知 PendingIntent，续调与收尾保持首次对话；结束不自动切换页面，用户点击完成岛后进入对应对话。
 
-原官方模型及其传输链是否支持图片需要单独确认；不支持时有无障碍树可用，但纯图片页面受限。该实现没有内置 AutoGLM 模型权重，不能把模型名称与执行器协议混为一谈。
+历史默认官方模型已有截图清零任务闭环证据，但其他官方模型与传输链仍需单独确认；不支持时有无障碍树可用，但纯图片页面受限。该实现没有内置 AutoGLM 模型权重，不能把模型名称与执行器协议混为一谈。
 
 `PhoneUseLog` 提供默认关闭的前后台控屏诊断开关，按会话／步骤／观察编号关联窗口读取、动作、输入回读、helper RPC、一次性帧和宿主附图。元数据保留 Logcat 输出，并由 `DiagnosticLogStore` 在模块私有目录异步轮转保存（最多 2 MiB）；宿主通过受 UID 校验的追加 IPC 汇总到模块，队列满或失败只影响诊断。`DiagnosticLogState` / `DiagnosticLogPage` 提供首页日志入口、筛选展开和 ZIP 保存／分享；读取／快照／清空与写入有序，压缩在写入线程之外执行。FileProvider 仅暴露专用分享缓存目录。外部请求只检查图文结构与图片摘要，不输出正文或凭证。诊断异常被隔离，不更改动作结果和重试策略。开关、收集方式及官方传输的覆盖边界见 [详细日志](phone-use-logging.md)。
 
@@ -82,7 +82,7 @@ Provider 在创建任务或收起界面前校验续调的会话、UID、期限�
 
 设置页切换未保存内容时提供保存、放弃和取消；另存新配置保留原记录，最后一套禁止删除。页面重建保留编辑内容，旧服务异步模型列表不会覆盖新配置。原生提交/模型/记忆/路由请求开始时刷新配置，不复用 UI 两秒缓存；记忆请求将本次配置快照传到同步 HTTP 构造阶段，避免并发切换后模型与协议不一致。独立循环在任务开始时固定 Config。
 
-在当前精确支持版本上，`qm.c` 为 DynLlmClient，负责根据 `sm.a` 选择 Taiyi / OpenAI / Anthropic；`um.h` 是直接 Taiyi 客户端；同时接入 `qm.i`（OpenAI Chat Completions）、`qm.j`（OpenAI Responses）、`qm.b`（Anthropic）直接传输入口，覆盖绕开分发器构造客户端的调用。
+在 8.2.65 绑定中，`qm.c` 为 DynLlmClient，负责根据 `sm.a` 选择 Taiyi / OpenAI / Anthropic；`um.h` 是直接 Taiyi 客户端；同时接入 `qm.i`（OpenAI Chat Completions）、`qm.j`（OpenAI Responses）、`qm.b`（Anthropic）直接传输入口，覆盖绕开分发器构造客户端的调用。
 开关关闭时不改推理配置；打开时为这些调用构造临时 OpenAI 配置，保留原消息列表、工具列表、systemPrompt、协程 Continuation 和原生 SSE 事件解析。使用原生 `qm.i` 作为消息/工具序列化和 Agent 事件前端，保留小爱原工具调用结果处理；它不再决定外部服务的线上协议。为外部请求单独创建干净的 Ktor/OkHttp 客户端，仅安装 JSON 序列化与超时插件，关闭重定向，不使用原应用的 ServiceToken、设备签名、账号认证与网络日志拦截器。
 
 API Key 仅在显式启用全局替换时经 UID 校验 IPC 交给小爱进程内存，不改小爱配置文件。该范围覆盖通过上述 OSBot 入口的聊天、Agent 与辅助推理；语音识别/合成、独立系统服务、独立云端推理入口不在这个 Hook 的声明范围内。启用状态变化和工具定义更新后需重启小爱或按热重载要求重载；切换已保存的 Endpoint 无需重启。
@@ -167,7 +167,7 @@ Hook 仅安装在精确校验的小爱版本：工具入口、描述构造、Pro
 
 2026-10-17 按用户要求调整冲突处理：任务查询读取系统 TaskInfo 的真实组件与 task identity；首次目标就是主屏当前应用时转前台，中途则由 `ForegroundConsent` 经 Provider 暴露绑定 UID/任务/token 的请求，`InteractionUi` 仅以灵动岛按钮收集同意或拒绝。同意后重新验证主屏归属、释放后台屏并作废旧观察，下一步从新的主屏观察规划；拒绝/超时暂停并结束本轮。后台故障仍停止，不触发此交接。完整探针与准备、执行、原生跨步间隔及收尾互斥，状态查询单独持有缓存目录。
 
-取消清理绑定具体 NativeSession/BackgroundDisplay 实例，异步等待执行退出；步骤续期同步更新 deadline 与 watchdog。后台输入定位原焦点节点并精确回读原节点值，helper 拒绝输入或不能验证 HIDE 输入法策略时停止。帧节流保留最终待复制图像，手势使用同一 downTime 与实际注入时刻。上述当前实现的新增设备验收尚未完成，不继承此前版本的实测通过结论。
+取消清理绑定具体 NativeSession/BackgroundDisplay 实例，异步等待执行退出；步骤续期同步更新 deadline 与 watchdog。后台输入定位原焦点节点并精确回读原节点值，helper 拒绝输入或不能验证 HIDE 输入法策略时停止。帧节流保留最终待复制图像，手势使用同一 downTime 与实际注入时刻。2026-10-18 的确定性设备验收已覆盖后台中文输入、主屏键盘隔离、前后台确认与正常回收；其他 ROM、未知授权模板和真实模型长任务仍未全面验证，见 [验证摘要](validation.md)。
 
 `NativeSession` 和 `AgentEngine` 共用同一后端与 Manual／Auto／YOLO 策略。后台人工确认通过小爱灵动岛等待，批准后在原后台屏复核并继续，不切换物理屏；具体行为、错误码与已验证项见 [后台虚拟屏](background-display.md)。
 

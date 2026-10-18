@@ -57,6 +57,8 @@ GitHub Actions 在 main 推送、PR 和手动触发时执行测试、Lint 与构
 
 ## 更多说明
 
+- [文档索引与维护说明](docs/README.md) · [当前验证状态](docs/validation.md)
+
 - [后台虚拟屏与限制](docs/background-display.md) · [应用启动](docs/app-launch.md) · [无障碍前置检查](docs/accessibility-guard.md)
 - [配置界面](docs/settings-ui.md) · [API 102 与热重载](docs/api102-migration.md)
 - [开发指南](AGENTS.md) · [架构与验证](docs/architecture.md)
