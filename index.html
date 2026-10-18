@@ -1,34 +1,359 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#111611"><meta name="description" content="MiAIPlus 为超级小爱带来前台控屏、后台虚拟屏与自定义模型。保留原生交互，把更多选择交给你。">
-<meta property="og:title" content="MiAIPlus — 让小爱，多做一点。"><meta property="og:description" content="手机操作、后台虚拟屏、模型自由配置。为超级小爱而做的开源模块。"><meta property="og:type" content="website"><meta property="og:url" content="https://astohu1.github.io/MiAIPlus/">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0b0f0b">
+<meta name="description" content="MiAIPlus 为超级小爱带来前台控屏、后台虚拟屏与自定义模型。保留原生交互，把更多选择交给你。">
+<meta property="og:title" content="MiAIPlus — 让小爱，多做一点。">
+<meta property="og:description" content="手机操作、后台虚拟屏、模型自由配置。为超级小爱而做的开源模块。">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://astohu1.github.io/MiAIPlus/">
 <link rel="canonical" href="https://astohu1.github.io/MiAIPlus/">
 <title>MiAIPlus — 让小爱，多做一点。</title>
-<link rel="icon" href="./icon.svg" type="image/svg+xml"><link rel="stylesheet" href="./style.css"><script src="./site.js" defer></script>
+<link rel="icon" href="./icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="./style.css">
+<script src="./site.js" defer></script>
 </head>
 <body>
 <a class="skip" href="#main">跳到正文</a>
-<header class="nav wrap"><a class="brand" href="#" aria-label="MiAIPlus 首页"><span class="brand-icon">+</span>MiAIPlus</a><nav aria-label="主导航"><a href="#capabilities">能力</a><a href="#models">模型</a><a href="#start">开始使用</a></nav><a class="nav-github" href="https://github.com/astoHu1/MiAIPlus">GitHub <span aria-hidden="true">↗</span></a></header>
+
+<header class="nav">
+  <div class="nav-inner wrap">
+    <a class="brand" href="#" aria-label="MiAIPlus 首页">
+      <span class="brand-icon" aria-hidden="true">+</span>
+      <span class="brand-name">MiAIPlus</span>
+    </a>
+    <nav aria-label="主导航">
+      <a href="#capabilities">能力</a>
+      <a href="#models">模型</a>
+      <a href="#start">开始使用</a>
+    </nav>
+    <a class="nav-cta" href="https://github.com/astoHu1/MiAIPlus">GitHub <span aria-hidden="true">↗</span></a>
+  </div>
+</header>
+
 <main id="main">
+
 <section class="hero wrap">
-<div class="hero-copy"><div class="eyebrow"><i></i> 为超级小爱而做 · 开源 LSPosed 模块</div><h1>让小爱，<br>多做<span class="accent">一点。</span></h1><p class="lead">从回答问题，到操作手机。<br>把任务交给小爱，把屏幕留给自己。</p><div class="actions"><a class="button primary" href="https://github.com/astoHu1/MiAIPlus/releases">获取模块 <span>↗</span></a><a class="text-link" href="#capabilities">看看它能做什么 <span>↓</span></a></div><p class="hero-note">默认使用小爱当前模型，无需额外 API。</p></div>
-<div class="hero-art" role="img" aria-label="主屏与后台虚拟屏独立执行的概念示意，不是运行截图">
-<div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><span class="coord top-coord">DISPLAY / 02</span><div class="back-screen"><div class="screen-head"><span><i></i> 虚拟屏</span><span>BACKGROUND</span></div><div class="task-visual"><span class="tiny-label">PHONE USE</span><div class="visual-title">任务，继续。</div><div class="task-row"><span class="task-check">✓</span> 观察页面 <b></b></div><div class="task-row"><span class="task-check">✓</span> 执行动作 <b></b></div><div class="task-row current"><span class="task-check">↗</span> 返回新观察 <b></b></div></div><div class="back-foot"><span class="pulse"></span> 独立屏幕 · 逐步执行</div></div>
-<div class="front-screen"><div class="phone-top"><span>9:41</span><span class="camera"></span><span>•••</span></div><div class="front-body"><span class="tiny-label">YOUR SPACE</span><div class="front-title">屏幕，<br>还是你的。</div><div class="front-block"><span class="small-sun">✳</span><div>继续你的日常<small>主屏可以继续使用</small></div></div><div class="lines"><i></i><i></i><i></i></div></div><div class="phone-bottom"></div></div><div class="art-badge"><span>↗</span> 一台手机，另一块工作空间。</div><span class="art-caption">屏幕与流程概念示意，非运行截图</span></div>
-<div class="hero-bottom"><span>原生入口。更多能力。</span><span>01 / EXPAND WHAT'S POSSIBLE</span></div>
+  <div class="hero-copy">
+    <p class="eyebrow"><span class="eyebrow-dot" aria-hidden="true"></span>为超级小爱而做 · 开源 LSPosed 模块</p>
+    <h1>让小爱，<br>多做<span class="accent">一点。</span></h1>
+    <p class="lead">从回答问题，到操作手机。<br>把任务交给小爱，把屏幕留给自己。</p>
+    <div class="actions">
+      <a class="button primary" href="https://github.com/astoHu1/MiAIPlus/releases">获取模块 <span aria-hidden="true">↗</span></a>
+      <a class="text-link" href="#capabilities">看看它能做什么 <span aria-hidden="true">↓</span></a>
+    </div>
+    <p class="hero-note">默认使用小爱当前模型，无需额外 API。</p>
+  </div>
+
+  <div class="hero-art" role="img" aria-label="主屏与后台虚拟屏独立执行的概念示意，不是运行截图">
+    <div class="art-grid" aria-hidden="true"></div>
+    <div class="art-glow" aria-hidden="true"></div>
+
+    <div class="screen-back" aria-hidden="true">
+      <div class="screen-head">
+        <span class="screen-title"><i></i>虚拟屏</span>
+        <span class="screen-code">DISPLAY / 02</span>
+      </div>
+      <div class="screen-body">
+        <p class="screen-kicker">PHONE USE · 进行中</p>
+        <p class="screen-heading">后台清理计算器</p>
+        <ol class="mini-steps">
+          <li class="done"><i>✓</i>打开计算器</li>
+          <li class="done"><i>✓</i>读取当前结果</li>
+          <li class="active"><i>↗</i>点击「清空」</li>
+        </ol>
+        <div class="progress" aria-hidden="true"><span></span></div>
+      </div>
+      <div class="screen-foot"><span class="pulse"></span>独立屏幕 · 逐步执行</div>
+    </div>
+
+    <div class="phone" aria-hidden="true">
+      <div class="phone-frame">
+        <span class="phone-island"></span>
+        <div class="phone-screen">
+          <div class="phone-status"><span>9:41</span><span class="status-icons">▮▮ ᯤ ▰</span></div>
+          <div class="chat">
+            <p class="chat-name">小爱</p>
+            <p class="bubble bubble-user">打开计算器，清空当前结果</p>
+            <div class="bubble bubble-ai">
+              <p class="ai-step"><i>✓</i>已打开计算器</p>
+              <p class="ai-step"><i>✓</i>找到「清空」按钮</p>
+              <span class="typing"><b></b><b></b><b></b></span>
+            </div>
+            <div class="chat-task"><i></i>后台任务进行中<b>2 / 3</b></div>
+          </div>
+          <div class="phone-input">继续说话，或在后台操作<span class="mic"></span></div>
+        </div>
+      </div>
+    </div>
+
+    <p class="art-caption">屏幕与流程概念示意，非运行截图</p>
+  </div>
+
+  <div class="hero-foot">
+    <span>原生入口。更多能力。</span>
+    <span class="mono">01 / EXPAND WHAT'S POSSIBLE</span>
+  </div>
 </section>
-<section id="capabilities" class="section wrap"><div class="section-intro"><span class="eyebrow">01 / PHONE USE</span><h2>能动手，<br>也懂得让出屏幕。</h2><p>前台操作与后台执行，各有自己的工具入口。<br>不用换一个聊天应用，直接在小爱里发起任务。</p></div>
-<div class="feature-grid"><article class="feature foreground"><span class="card-no">01 — 前台控屏</span><h3>说清楚。<br>剩下的，让它点。</h3><p>打开应用、点击、长按、滑动、输入文字。每一步操作之后重新观察页面，再继续下一步。</p><div class="gesture-art" aria-hidden="true"><div class="gesture-target"><span>打开应用</span><span>↗</span></div><div class="gesture-cursor">↖</div><div class="gesture-line"></div><span class="gesture-label">观察 → 操作 → 再观察</span></div><a class="card-link" href="https://github.com/astoHu1/MiAIPlus/blob/main/docs/architecture.md">了解逐步控屏 <span>↗</span></a></article>
-<article class="feature background"><span class="card-no">02 — 后台虚拟屏</span><h3>它忙它的。<br>你用你的。</h3><p>在独立虚拟屏执行任务。显示焦点与输入隔离，后台操作不必占住你眼前这块屏幕。</p><div class="dual-art" aria-hidden="true"><div><span>主屏</span><strong>你的日常</strong><i></i><i></i></div><div><span>虚拟屏</span><strong>它的任务</strong><b>↗</b></div></div><p class="card-note">需 root 与 ROM 隔离能力支持；同一应用可能存在冲突。</p></article></div>
-<div class="micro-grid"><article><span>↻</span><h3>页面在变，动作会复核。</h3><p>检查目标区域。目标移动或被替换时先返回新观察，交给模型重新规划。</p></article><article><span>⌘</span><h3>画布，按需要设置。</h3><p>虚拟屏宽高与密度可配置，也能填入本机分辨率。新任务使用保存后的尺寸。</p><small>自定义画布已实现；不同尺寸的实机表现仍待验证。</small></article><article><span>◎</span><h3>随时知道，它做到哪了。</h3><p>灵动岛显示进度并提供停止入口。任务完成后，点击通知回到发起任务的原对话。</p></article></div>
+
+<section id="capabilities" class="section wrap">
+  <div class="section-intro">
+    <p class="eyebrow"><span class="eyebrow-dot" aria-hidden="true"></span>01 / PHONE USE</p>
+    <h2>能动手，<br>也懂得让出屏幕。</h2>
+    <p class="section-lead">前台操作与后台执行，各有自己的工具入口。<br>不用换一个聊天应用，直接在小爱里发起任务。</p>
+  </div>
+
+  <div class="feature-grid">
+    <article class="feature-card is-light">
+      <div class="card-head">
+        <span class="card-no">01 — 前台控屏</span>
+        <span class="card-arrow" aria-hidden="true">↗</span>
+      </div>
+      <h3>说清楚。<br>剩下的，让它点。</h3>
+      <p>打开应用、点击、长按、滑动、输入文字。每一步操作之后重新观察页面，再继续下一步。</p>
+      <div class="gesture-visual" aria-hidden="true">
+        <div class="mini-app">
+          <div class="mini-app-bar"><i></i><i></i><i></i></div>
+          <div class="mini-row muted"></div>
+          <div class="mini-row target">清空 <span>↗</span></div>
+          <div class="mini-row muted short"></div>
+        </div>
+        <span class="tap-ring"></span>
+        <span class="tap-chip">点击 · 已复核</span>
+      </div>
+      <a class="card-link" href="https://github.com/astoHu1/MiAIPlus/blob/main/docs/architecture.md">了解逐步控屏 <span aria-hidden="true">↗</span></a>
+    </article>
+
+    <article class="feature-card is-dark">
+      <div class="card-head">
+        <span class="card-no">02 — 后台虚拟屏</span>
+        <span class="card-arrow" aria-hidden="true">↗</span>
+      </div>
+      <h3>它忙它的。<br>你用你的。</h3>
+      <p>在独立虚拟屏执行任务。显示焦点与输入隔离，后台操作不必占住你眼前这块屏幕。</p>
+      <div class="dual-visual" aria-hidden="true">
+        <div class="dual-plane">
+          <span class="dual-label">虚拟屏</span>
+          <strong>它的任务</strong>
+          <span class="dual-code">DISPLAY 02</span>
+        </div>
+        <div class="dual-card">
+          <span class="dual-label">主屏</span>
+          <strong>你的日常</strong>
+          <div class="dual-lines"><i></i><i></i><i></i></div>
+        </div>
+      </div>
+      <p class="card-note">需 root 与 ROM 隔离能力支持；同一应用可能存在冲突。</p>
+    </article>
+  </div>
+
+  <div class="micro-grid">
+    <article>
+      <span class="micro-no">01</span>
+      <h3>页面在变，动作会复核。</h3>
+      <p>检查目标区域。目标移动或被替换时先返回新观察，交给模型重新规划。</p>
+    </article>
+    <article>
+      <span class="micro-no">02</span>
+      <h3>画布，按需要设置。</h3>
+      <p>虚拟屏宽高与密度可配置，也能填入本机分辨率。新任务使用保存后的尺寸。</p>
+      <small>自定义画布已实现；不同尺寸的实机表现仍待验证。</small>
+    </article>
+    <article>
+      <span class="micro-no">03</span>
+      <h3>随时知道，它做到哪了。</h3>
+      <p>灵动岛显示进度并提供停止入口。任务完成后，点击通知回到发起任务的原对话。</p>
+    </article>
+  </div>
 </section>
-<section id="models" class="model-section"><div class="wrap"><div class="model-header"><div><span class="eyebrow">02 / YOUR MODEL, YOUR CHOICE</span><h2>小爱的入口。<br><span class="accent">你的模型。</span></h2></div><p>用熟悉的界面，选适合自己的模型。<br>日常聊天与手机操作，可以各有所长。</p></div><div class="model-switch" role="group" aria-label="模型使用方式"><button type="button" aria-pressed="true" data-mode="native">小爱当前模型</button><button type="button" aria-pressed="false" data-mode="external">外部模型对话</button><button type="button" aria-pressed="false" data-mode="split">独立控屏模型</button></div><div class="routing-panel"><div class="routing-art" aria-hidden="true"><div class="route-source">小爱<span>原生对话入口</span></div><div class="route-connector"><i></i><i></i></div><div class="route-destinations"><div id="chat-dest">小爱当前模型<small>日常聊天</small></div><div id="phone-dest">小爱当前模型<small>手机操作规划</small></div></div></div><div class="route-copy" aria-live="polite"><span id="mode-label" class="tiny-label">开箱即可配置</span><h3 id="mode-title">不用先买一份 API。</h3><p id="mode-description">控屏规划保持「小爱当前模型」，API 配置全部留空。先用已有的小爱，再决定要不要接入外部服务。</p></div></div><div class="model-bottom"><div><span>01</span><h3>双协议</h3><p>Chat Completions / Responses</p></div><div><span>02</span><h3>多套服务配置</h3><p>保存、切换自己的服务与模型。</p></div><div><span>03</span><h3>原生思考菜单</h3><p>支持的思考档位，直接在小爱里选。</p></div></div><p class="model-footnote">模型能力与思考档位因服务而异；控屏模型需支持图片与工具调用。语音识别、语音合成及米家等服务仍走原链路。</p></div></section>
-<section class="section wrap conversation"><div><span class="eyebrow">03 / STAY IN THE CONVERSATION</span><h2>对话，<br>接着聊。</h2><p class="section-copy">全屏与系统浮窗共用对话状态。<br>时间之内接着聊，闲置之后再开启新话题。</p><a class="text-link" href="https://github.com/astoHu1/MiAIPlus/blob/main/docs/architecture.md">查看实现细节 <span>↗</span></a></div><div class="conversation-cards"><article><span class="big-number">15<span>min</span></span><div><h3>默认闲置时长，你可以改。</h3><p>支持 1–1440 分钟，或关闭自动新建。只有再次唤醒时才判断，不会突然打断当前对话。</p></div></article><article><span class="big-number">200<span>步</span></span><div><h3>更长的控屏动作预算。</h3><p>最多可设 200 步，默认 30 步。预算、取消、超时和错误终止仍然有效。</p></div></article><article class="conversation-long"><span class="long-symbol">↗</span><div><h3>放开纯计数门槛。</h3><p>移除指定聊天 Agent 的硬轮次门槛与第 101 个历史话题的创建限制。服务端限制、上下文容量与任务边界仍然存在。</p></div></article></div></section>
-<section class="control-section wrap"><div class="control-heading"><span class="eyebrow">04 / YOU'RE IN CONTROL</span><h2>多做一点。<br>决定权，始终留给你。</h2></div><div class="control-items"><article><span>01</span><h3>敏感操作，单次确认。</h3><p>前台敏感操作通过灵动岛确认。拒绝、取消或超时就停止；后台敏感动作交给你接管。</p></article><article><span>02</span><h3>后台失败，不偷换主屏。</h3><p>隔离校验或后台执行失败即停止。需要使用主屏当前应用时，遵循明确的前台交接规则。</p></article><article><span>03</span><h3>知道数据去了哪里。</h3><p>屏幕观察会发送给所选模型；外接模式也会发送相应对话与工具上下文。模块不是离线运行。</p></article></div></section>
-<section id="start" class="start-section"><div class="wrap"><div class="start-heading"><div><span class="eyebrow">05 / GET STARTED</span><h2>给小爱，<br>加一点本事。</h2></div><a class="button primary" href="https://github.com/astoHu1/MiAIPlus/releases">前往 GitHub 下载 <span>↗</span></a></div><div class="requirements"><div><span>系统与框架</span><strong>HyperOS 3 · 支持 MiClaw</strong><p>支持 API 102 的 LSPosed；控屏需无障碍权限。</p></div><div><span>超级小爱 · 精确版本</span><strong>8.2.65.4714<br>8.3.30.4420</strong><p>其他版本不启用 Hook。</p></div><div><span>后台虚拟屏</span><strong>root + ROM 能力支持</strong><p>需要独立焦点与输入隔离能力，兼容性因设备而异。</p></div></div><ol class="steps"><li><b>01</b><div><h3>安装并启用模块</h3><p>在 LSPosed 启用 MiAIPlus，保持默认作用域。</p></div></li><li><b>02</b><div><h3>打开控屏与无障碍</h3><p>默认使用小爱当前模型，无需填写 API。</p></div></li><li><b>03</b><div><h3>重启小爱，发起任务</h3><p>例如「打开计算器，清空当前结果」。后台任务请明确说「在后台操作」。</p></div></li></ol><div class="release-note"><span class="release-dot"></span><p>项目持续开发中。此页展示当前源码能力，安装包以 Release 说明为准。自动操作可能出错，请关注执行过程。</p><a href="https://github.com/astoHu1/MiAIPlus/blob/main/docs/validation.md">验证记录 ↗</a></div></div></section>
-<section class="faq wrap"><h2>再说清楚几件事。</h2><details><summary>需要另外购买模型 API 吗？<span>+</span></summary><p>默认不需要。模块可以直接使用小爱当前模型。接入外部模型是可选项，费用与服务条款由所选服务商决定。</p></details><details><summary>后台虚拟屏是不是应用分身？<span>+</span></summary><p>不是。它是独立执行屏幕，不能保证同一应用在两个屏幕同时独立运行。首次目标为主屏当前应用时会转前台；任务中途遇到应用冲突时会征求同意，拒绝或超时则暂停。</p></details><details><summary>所有展示的能力都经过实机测试了吗？<span>+</span></summary><p>后台固定画布执行、主屏键盘隔离、原生菜单与对话续接已有指定设备的验证记录。自定义画布目前完成本地测试，未完成不同尺寸实机验收。协议 mock 和确定动作测试不代表真实模型自主任务成功率；其他 ROM 与输入法仍需验证。</p></details><details><summary>有没有安装与使用文档？<span>+</span></summary><p>完整步骤、后台限制、权限说明和模型设置请看 <a href="https://github.com/astoHu1/MiAIPlus#readme">项目 README ↗</a>。建议使用 Release 提供的安装包；持续集成构建位于 GitHub Actions。</p></details></section>
+
+<section id="models" class="model-section">
+  <div class="wrap">
+    <div class="model-header">
+      <div>
+        <p class="eyebrow"><span class="eyebrow-dot" aria-hidden="true"></span>02 / YOUR MODEL, YOUR CHOICE</p>
+        <h2>小爱的入口。<br><span class="accent">你的模型。</span></h2>
+      </div>
+      <p>用熟悉的界面，选适合自己的模型。<br>日常聊天与手机操作，可以各有所长。</p>
+    </div>
+
+    <div class="model-switch" role="group" aria-label="模型使用方式">
+      <button type="button" aria-pressed="true" data-mode="native">小爱当前模型</button>
+      <button type="button" aria-pressed="false" data-mode="external">外部模型对话</button>
+      <button type="button" aria-pressed="false" data-mode="split">独立控屏模型</button>
+    </div>
+
+    <div class="routing-panel">
+      <div class="routing-art" aria-hidden="true">
+        <div class="route-node route-source">
+          <span class="route-code">ENTRY</span>
+          <strong>小爱</strong>
+          <small>原生对话入口</small>
+        </div>
+        <svg class="route-connector" viewBox="0 0 120 176" fill="none" preserveAspectRatio="none">
+          <path d="M0 88H36" />
+          <path d="M36 88V34H120" />
+          <path d="M36 88V142H120" />
+          <circle cx="36" cy="88" r="3.5" />
+        </svg>
+        <div class="route-destinations">
+          <div id="chat-dest">小爱当前模型<small>日常聊天</small></div>
+          <div id="phone-dest">小爱当前模型<small>手机操作规划</small></div>
+        </div>
+      </div>
+      <div class="route-copy" aria-live="polite">
+        <span id="mode-label" class="route-code">默认模式</span>
+        <h3 id="mode-title">不用先买一份 API。</h3>
+        <p id="mode-description">控屏规划保持「小爱当前模型」，API 配置全部留空。先用已有的小爱，再决定要不要接入外部服务。</p>
+      </div>
+    </div>
+
+    <div class="model-bottom">
+      <div><span>01</span><h3>双协议</h3><p>Chat Completions / Responses</p></div>
+      <div><span>02</span><h3>多套服务配置</h3><p>保存、切换自己的服务与模型。</p></div>
+      <div><span>03</span><h3>原生思考菜单</h3><p>支持的思考档位，直接在小爱里选。</p></div>
+    </div>
+    <p class="model-footnote">模型能力与思考档位因服务而异；控屏模型需支持图片与工具调用。语音识别、语音合成及米家等服务仍走原链路。</p>
+  </div>
+</section>
+
+<section class="section wrap conversation">
+  <div class="conversation-copy">
+    <p class="eyebrow"><span class="eyebrow-dot" aria-hidden="true"></span>03 / STAY IN THE CONVERSATION</p>
+    <h2>对话，<br>接着聊。</h2>
+    <p class="section-copy">全屏与系统浮窗共用对话状态。<br>时间之内接着聊，闲置之后再开启新话题。</p>
+    <a class="text-link" href="https://github.com/astoHu1/MiAIPlus/blob/main/docs/architecture.md">查看实现细节 <span aria-hidden="true">↗</span></a>
+  </div>
+
+  <div class="conversation-cards">
+    <article>
+      <span class="big-number">15<span>min</span></span>
+      <div>
+        <h3>默认闲置时长，你可以改。</h3>
+        <p>支持 1–1440 分钟，或关闭自动新建。只有再次唤醒时才判断，不会突然打断当前对话。</p>
+      </div>
+    </article>
+    <article>
+      <span class="big-number">200<span>步</span></span>
+      <div>
+        <h3>更长的控屏动作预算。</h3>
+        <p>最多可设 200 步，默认 30 步。预算、取消、超时和错误终止仍然有效。</p>
+      </div>
+    </article>
+    <article>
+      <span class="big-number symbol" aria-hidden="true">↗</span>
+      <div>
+        <h3>放开纯计数门槛。</h3>
+        <p>移除指定聊天 Agent 的硬轮次门槛与第 101 个历史话题的创建限制。服务端限制、上下文容量与任务边界仍然存在。</p>
+      </div>
+    </article>
+  </div>
+</section>
+
+<section class="control-section wrap">
+  <div class="control-heading">
+    <p class="eyebrow"><span class="eyebrow-dot" aria-hidden="true"></span>04 / YOU'RE IN CONTROL</p>
+    <h2>多做一点。<br>决定权，始终留给你。</h2>
+  </div>
+  <div class="control-items">
+    <article>
+      <span class="control-no">01</span>
+      <h3>敏感操作，单次确认。</h3>
+      <p>前台敏感操作通过灵动岛确认。拒绝、取消或超时就停止；后台敏感动作交给你接管。</p>
+    </article>
+    <article>
+      <span class="control-no">02</span>
+      <h3>后台失败，不偷换主屏。</h3>
+      <p>隔离校验或后台执行失败即停止。需要使用主屏当前应用时，遵循明确的前台交接规则。</p>
+    </article>
+    <article>
+      <span class="control-no">03</span>
+      <h3>知道数据去了哪里。</h3>
+      <p>屏幕观察会发送给所选模型；外接模式也会发送相应对话与工具上下文。模块不是离线运行。</p>
+    </article>
+  </div>
+</section>
+
+<section id="start" class="start-section">
+  <div class="wrap">
+    <div class="start-heading">
+      <div>
+        <p class="eyebrow"><span class="eyebrow-dot" aria-hidden="true"></span>05 / GET STARTED</p>
+        <h2>给小爱，<br>加一点本事。</h2>
+      </div>
+      <a class="button primary" href="https://github.com/astoHu1/MiAIPlus/releases">前往 GitHub 下载 <span aria-hidden="true">↗</span></a>
+    </div>
+
+    <div class="requirements">
+      <div>
+        <span>系统与框架</span>
+        <strong>HyperOS 3 · 支持 MiClaw</strong>
+        <p>支持 API 102 的 LSPosed；控屏需无障碍权限。</p>
+      </div>
+      <div>
+        <span>超级小爱 · 精确版本</span>
+        <strong>8.2.65.4714<br>8.3.30.4420</strong>
+        <p>其他版本不启用 Hook。</p>
+      </div>
+      <div>
+        <span>后台虚拟屏</span>
+        <strong>root + ROM 能力支持</strong>
+        <p>需要独立焦点与输入隔离能力，兼容性因设备而异。</p>
+      </div>
+    </div>
+
+    <ol class="steps">
+      <li><b>01</b><div><h3>安装并启用模块</h3><p>在 LSPosed 启用 MiAIPlus，保持默认作用域。</p></div></li>
+      <li><b>02</b><div><h3>打开控屏与无障碍</h3><p>默认使用小爱当前模型，无需填写 API。</p></div></li>
+      <li><b>03</b><div><h3>重启小爱，发起任务</h3><p>例如「打开计算器，清空当前结果」。后台任务请明确说「在后台操作」。</p></div></li>
+    </ol>
+
+    <div class="release-note">
+      <span class="release-dot" aria-hidden="true"></span>
+      <p>项目持续开发中。此页展示当前源码能力，安装包以 Release 说明为准。自动操作可能出错，请关注执行过程。</p>
+      <a href="https://github.com/astoHu1/MiAIPlus/blob/main/docs/validation.md">验证记录 ↗</a>
+    </div>
+  </div>
+</section>
+
+<section class="faq wrap">
+  <h2>再说清楚几件事。</h2>
+  <details>
+    <summary>需要另外购买模型 API 吗？<span aria-hidden="true">+</span></summary>
+    <p>默认不需要。模块可以直接使用小爱当前模型。接入外部模型是可选项，费用与服务条款由所选服务商决定。</p>
+  </details>
+  <details>
+    <summary>后台虚拟屏是不是应用分身？<span aria-hidden="true">+</span></summary>
+    <p>不是。它是独立执行屏幕，不能保证同一应用在两个屏幕同时独立运行。首次目标为主屏当前应用时会转前台；任务中途遇到应用冲突时会征求同意，拒绝或超时则暂停。</p>
+  </details>
+  <details>
+    <summary>所有展示的能力都经过实机测试了吗？<span aria-hidden="true">+</span></summary>
+    <p>后台固定画布执行、主屏键盘隔离、原生菜单与对话续接已有指定设备的验证记录。自定义画布目前完成本地测试，未完成不同尺寸实机验收。协议 mock 和确定动作测试不代表真实模型自主任务成功率；其他 ROM 与输入法仍需验证。</p>
+  </details>
+  <details>
+    <summary>有没有安装与使用文档？<span aria-hidden="true">+</span></summary>
+    <p>完整步骤、后台限制、权限说明和模型设置请看 <a href="https://github.com/astoHu1/MiAIPlus#readme">项目 README ↗</a>。建议使用 Release 提供的安装包；持续集成构建位于 GitHub Actions。</p>
+  </details>
+</section>
+
 </main>
-<footer class="wrap"><a class="brand" href="#"><span class="brand-icon">+</span>MiAIPlus</a><p>为超级小爱，留一点折腾的空间。</p><div><a href="https://github.com/astoHu1/MiAIPlus">源码 ↗</a><a href="https://github.com/astoHu1/MiAIPlus/issues">反馈 ↗</a><a href="https://github.com/astoHu1/MiAIPlus/blob/main/NOTICE">第三方许可 ↗</a></div><small>独立开源项目，与小米官方无隶属关系。 · 内容更新于 2026.10.18</small></footer>
-</body></html>
+
+<footer class="wrap">
+  <div class="footer-top">
+    <a class="brand" href="#">
+      <span class="brand-icon" aria-hidden="true">+</span>
+      <span class="brand-name">MiAIPlus</span>
+    </a>
+    <p>为超级小爱，留一点折腾的空间。</p>
+    <div class="footer-links">
+      <a href="https://github.com/astoHu1/MiAIPlus">源码 ↗</a>
+      <a href="https://github.com/astoHu1/MiAIPlus/issues">反馈 ↗</a>
+      <a href="https://github.com/astoHu1/MiAIPlus/blob/main/NOTICE">第三方许可 ↗</a>
+    </div>
+  </div>
+  <small>独立开源项目，与小米官方无隶属关系。 · 内容更新于 2026.10.18</small>
+</footer>
+</body>
+</html>
