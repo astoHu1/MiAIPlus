@@ -50,6 +50,37 @@ public class DisplayHelperTaskTest {
         public int getDisplayImePolicy(int display) { return 1; }
     }
 
+    public static final class LocalImePolicy {
+        public void setDisplayImePolicy(int display, int policy) { }
+        public int getDisplayImePolicy(int display) { return 0; }
+    }
+
+    public static final class WorkingImePolicy {
+        int policy;
+        int writes;
+        public void setDisplayImePolicy(int display, int policy) {
+            assertEquals(99, display);
+            assertEquals(2, policy);
+            this.policy = policy;
+            writes++;
+        }
+        public int getDisplayImePolicy(int display) { assertEquals(99, display); return policy; }
+    }
+
+    public static final class FocusManagerFlags {
+        public static final int VIRTUAL_DISPLAY_FLAG_OWN_FOCUS = 1 << 14;
+        public static final int VIRTUAL_DISPLAY_FLAG_STEAL_TOP_FOCUS_DISABLED = 1 << 16;
+    }
+
+    public static final class FocusDisplayFlags {
+        public static final int FLAG_OWN_FOCUS = 1 << 11;
+        public static final int FLAG_STEAL_TOP_FOCUS_DISABLED = 1 << 12;
+    }
+
+    public static final class PartialFocusFlags {
+        public static final int VIRTUAL_DISPLAY_FLAG_OWN_FOCUS = 1 << 14;
+    }
+
     private TaskFixture task(int id, int display, boolean visible, String packageName, String affinity) throws Exception {
         TaskFixture task = new TaskFixture();
         set(task, "taskId", id);
@@ -126,5 +157,43 @@ public class DisplayHelperTaskTest {
         assertEquals("error", reply.getString("status"));
         assertEquals("IME_ISOLATION_FAILED", reply.getString("code"));
         assertTrue(!reply.optBoolean("verified", false));
+    }
+    @Test public void localImePolicyCannotMasqueradeAsKeyboardIsolation() throws Exception {
+        JSONObject reply = imeReply(new LocalImePolicy());
+        assertEquals("error", reply.getString("status"));
+        assertEquals("IME_ISOLATION_FAILED", reply.getString("code"));
+    }
+
+    @Test public void hidePolicyIsVerifiedAndRecheckingDoesNotReconfigureDisplay() throws Exception {
+        WorkingImePolicy policy = new WorkingImePolicy();
+        JSONObject first = imeReply(policy);
+        assertEquals("HIDE", first.getString("policy"));
+        assertEquals("true", first.getString("verified"));
+        assertEquals(1, policy.writes);
+        assertEquals("HIDE", imeReply(policy).getString("policy"));
+        assertEquals(1, policy.writes);
+    }
+
+    @Test public void missingImePolicyApiCannotReportReady() throws Exception {
+        JSONObject reply = imeReply(new Object());
+        assertEquals("error", reply.getString("status"));
+        assertEquals("IME_ISOLATION_FAILED", reply.getString("code"));
+    }
+
+    @Test public void platformMustExposeBothRequestAndEffectiveFocusCapabilities() throws Exception {
+        int[] flags = DisplayHelper.requiredFocusFlags(FocusManagerFlags.class, FocusDisplayFlags.class);
+        assertEquals((1 << 14) | (1 << 16), flags[0]);
+        assertEquals((1 << 11) | (1 << 12), flags[1]);
+        assertThrows(Exception.class,
+            () -> DisplayHelper.requiredFocusFlags(PartialFocusFlags.class, FocusDisplayFlags.class));
+        assertThrows(Exception.class,
+            () -> DisplayHelper.requiredFocusFlags(FocusManagerFlags.class, Object.class));
+    }
+
+    @Test public void ignoredFocusBitsFailEvenWhenOneIsolationFeatureWorks() {
+        int ownFocus = 1 << 11, noSteal = 1 << 12;
+        DisplayHelper.verifyFocusFlags(ownFocus | noSteal | 1, ownFocus | noSteal);
+        assertThrows(IllegalStateException.class, () -> DisplayHelper.verifyFocusFlags(ownFocus, ownFocus | noSteal));
+        assertThrows(IllegalStateException.class, () -> DisplayHelper.verifyFocusFlags(noSteal, ownFocus | noSteal));
     }
 }

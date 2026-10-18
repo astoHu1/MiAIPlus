@@ -62,22 +62,49 @@ public final class DisplayHelper {
     private static final int FLAG_DEVICE_DISPLAY_GROUP = romFlag("VIRTUAL_DISPLAY_FLAG_DEVICE_DISPLAY_GROUP", 1 << 15);
 
     /**
-     * Deliberately absent: ALWAYS_UNLOCKED. The scrcpy reference sets it so a mirror stays usable on a locked
-     * phone; for an agent that would mean operating a device the user believes is locked. Locked devices keep
-     * failing here, and the module reports PAUSE instead.
-     *
-     * <p>Also deliberately absent: OWN_FOCUS, and its companion STEAL_TOP_FOCUS_DISABLED is not needed because of
-     * it. A display created with OWN_FOCUS becomes the top-focused display, and Android tracks focus for only one
-     * display at a time: measured on the target ROM, the physical display's {@code mCurrentFocus} went to null the
-     * moment the display was created, and stayed null while the background app held focus. The user's screen was
-     * still drawn, but it no longer held focus, which is exactly the state this feature must not produce. The
-     * background display does not need top focus here either, because every touch and key is injected with the
-     * display id attached rather than delivered through whatever happens to be focused.
+     * ALWAYS_UNLOCKED remains absent: creating a display still requires an unlocked device.
+     * OWN_FOCUS and STEAL_TOP_FOCUS_DISABLED are required separately at runtime. Together they let targeted
+     * input reach the background window without making it the top-focused display. IME client ownership is
+     * global on supported Android versions, so LOCAL alone cannot preserve the user's foreground keyboard.
      */
-    private static final int DISPLAY_FLAGS = FLAG_PUBLIC | FLAG_PRESENTATION | FLAG_OWN_CONTENT_ONLY
+    private static final int BASE_DISPLAY_FLAGS = FLAG_PUBLIC | FLAG_PRESENTATION | FLAG_OWN_CONTENT_ONLY
         | FLAG_SUPPORTS_TOUCH | FLAG_ROTATES_WITH_CONTENT | FLAG_DESTROY_CONTENT_ON_REMOVAL
         | FLAG_TRUSTED | FLAG_OWN_DISPLAY_GROUP | FLAG_TOUCH_FEEDBACK_DISABLED
         | FLAG_DEVICE_DISPLAY_GROUP;
+    private static final int IME_POLICY_HIDE = 2;
+
+    private static final class IsolationFailure extends Exception {
+        final String code;
+        IsolationFailure(String code, String message, Throwable cause) {
+            super(message, cause);
+            this.code = code;
+        }
+    }
+
+    /** No numeric fallback: Android 13 lacks these flags unless the ROM backports the feature. */
+    static int[] requiredFocusFlags(Class<?> displayManagerClass, Class<?> displayClass) throws Exception {
+        int own = requiredFlag(displayManagerClass, "VIRTUAL_DISPLAY_FLAG_OWN_FOCUS");
+        int noSteal = requiredFlag(displayManagerClass, "VIRTUAL_DISPLAY_FLAG_STEAL_TOP_FOCUS_DISABLED");
+        int effectiveOwn = requiredFlag(displayClass, "FLAG_OWN_FOCUS");
+        int effectiveNoSteal = requiredFlag(displayClass, "FLAG_STEAL_TOP_FOCUS_DISABLED");
+        if (own == noSteal || effectiveOwn == effectiveNoSteal)
+            throw new IllegalStateException("focus flags overlap");
+        return new int[] { own | noSteal, effectiveOwn | effectiveNoSteal };
+    }
+
+    private static int requiredFlag(Class<?> owner, String name) throws Exception {
+        java.lang.reflect.Field field = owner.getField(name);
+        field.setAccessible(true);
+        int value = field.getInt(null);
+        if (value <= 0 || (value & (value - 1)) != 0)
+            throw new IllegalStateException("invalid platform flag " + name);
+        return value;
+    }
+
+    static void verifyFocusFlags(int actual, int required) {
+        if ((actual & required) != required)
+            throw new IllegalStateException("platform ignored independent focus or no-steal flag");
+    }
 
     /** Reads a hidden DisplayManager constant from the running platform, falling back to the AOSP value. */
     private static int romFlag(String name, int fallback) {
@@ -193,6 +220,8 @@ public final class DisplayHelper {
                 case "stop" -> { destroy(); reply(token, "stopped", "displayId", "-1"); System.exit(0); }
                 default -> error(token, "BAD_REQUEST", "unknown verb " + fields[1]);
             }
+        } catch (IsolationFailure failure) {
+            error(token, failure.code, failure.getMessage());
         } catch (Exception failure) {
             error(token, "HELPER_FAILED", failure.getClass().getSimpleName() + ": " + failure.getMessage());
         }
@@ -239,17 +268,51 @@ public final class DisplayHelper {
             // Creating a screen the user believes is locked would let the agent work behind the lock screen.
             error(token, "DEVICE_LOCKED", "device is locked"); return;
         }
-        reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3);
-        virtualDisplay = displays.createVirtualDisplay("miaiplus-agent", width, height, density, reader.getSurface(), DISPLAY_FLAGS);
-        if (virtualDisplay == null) { error(token, "DISPLAY_UNAVAILABLE", "createVirtualDisplay returned null"); return; }
-        displayId = virtualDisplay.getDisplay().getDisplayId();
-        startFrameConsumer("miaiplus-agent");
-        // Still reported, but no longer on the capture path: the frame consumer above reads the display's own
-        // output. Capturing through `screencap -d <token>` needed this token, and on a ROM that never publishes
-        // one the display looked uncapturable even though its pixels were arriving here all along.
-        surfaceFlingerId = surfaceFlingerId("miaiplus-agent");
+        int flags = createIsolatedDisplay("miaiplus-agent", width, height, density);
         reply(token, "created", "displayId", String.valueOf(displayId), "surfaceFlingerId", surfaceFlingerId,
-            "summary", describeDisplay(), "flags", Integer.toHexString(DISPLAY_FLAGS));
+            "summary", describeDisplay(), "flags", Integer.toHexString(flags), "imePolicy", "HIDE");
+    }
+
+    /** Shared by production and the capability probe; no activity can launch before isolation is verified. */
+    @SuppressLint("WrongConstant")
+    private static int createIsolatedDisplay(String name, int width, int height, int density) throws Exception {
+        int[] focusFlags;
+        try {
+            focusFlags = requiredFocusFlags(DisplayManager.class, Display.class);
+        } catch (Exception failure) {
+            throw new IsolationFailure("FOCUS_ISOLATION_FAILED",
+                "platform does not provide independent background focus without stealing top focus", failure);
+        }
+        if (keyguardLocked()) throw new IllegalStateException("device is locked");
+        int flags = BASE_DISPLAY_FLAGS | focusFlags[0];
+        try {
+            reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3);
+            virtualDisplay = displays.createVirtualDisplay(name, width, height, density, reader.getSurface(), flags);
+            if (virtualDisplay == null) throw new IllegalStateException("createVirtualDisplay returned null");
+            Display display = virtualDisplay.getDisplay();
+            displayId = display.getDisplayId();
+            if (displayId == Display.DEFAULT_DISPLAY) throw new IllegalStateException("returned the default display");
+            try {
+                verifyFocusFlags(display.getFlags(), focusFlags[1]);
+            } catch (Exception failure) {
+                throw new IsolationFailure("FOCUS_ISOLATION_FAILED",
+                    "platform did not retain independent background focus and no-steal flags", failure);
+            }
+            try {
+                configureImePolicy(windowManager());
+            } catch (IsolationFailure failure) {
+                throw failure;
+            } catch (Exception failure) {
+                throw new IsolationFailure("IME_ISOLATION_FAILED", "cannot access display IME policy", failure);
+            }
+            startFrameConsumer(name);
+            // Retained for diagnostics; capture reads this display's own ImageReader surface.
+            surfaceFlingerId = surfaceFlingerId(name);
+            return flags;
+        } catch (Exception failure) {
+            destroy();
+            throw failure;
+        }
     }
 
     /**
@@ -265,48 +328,45 @@ public final class DisplayHelper {
      * <p>Output contains build facts, flags and window owners only; no page content, text or credentials.
      */
     @SuppressLint("WrongConstant") // Same hidden trusted/own-focus bits as the production create path.
-    private static void capability(long token, String component) throws Exception {
+    private static void capability(long token, String arguments) throws Exception {
         if (virtualDisplay != null) { error(token, "ALREADY_OPEN", "close the display before probing"); return; }
+        String[] parts = arguments.split(" +", 4);
+        if (parts.length < 3) { error(token, "BAD_REQUEST", "capability needs width height density [component]"); return; }
+        int width = Integer.parseInt(parts[0]), height = Integer.parseInt(parts[1]), density = Integer.parseInt(parts[2]);
+        if (width < 320 || height < 320 || width > 4096 || height > 4096 || density < 80 || density > 1000) {
+            error(token, "BAD_REQUEST", "unsupported geometry"); return;
+        }
+        String component = parts.length == 4 ? parts[3] : "";
         JSONArray items = new JSONArray();
         // The physical display must settle before it can serve as a baseline. A phone the user is holding never
         // settles, and in that case the isolation items are reported untested rather than blamed on the probe.
         MainState baseline = stableMainState();
         JSONArray samples = new JSONArray();
         sample(samples, "baseline", baseline);
-        int width = 1080, height = 1920, density = 320;
         int probeDisplayId = -1;
         boolean created = false, captured = false, launched = false;
         try {
             JSONObject create = new JSONObject();
             create.put("item", "createOwnDisplay");
             try {
-                reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3);
-                virtualDisplay = displays.createVirtualDisplay("miaiplus-probe", width, height, density,
-                    reader.getSurface(), DISPLAY_FLAGS);
-                if (virtualDisplay == null) {
-                    create.put("status", "unsupported").put("reason", "createVirtualDisplay returned null");
-                } else {
-                    displayId = virtualDisplay.getDisplay().getDisplayId();
-                    startFrameConsumer("miaiplus-probe");
-                    surfaceFlingerId = surfaceFlingerId("miaiplus-probe");
-                    Display display = displays.getDisplay(displayId);
-                    android.util.DisplayMetrics metrics = new android.util.DisplayMetrics();
-                    if (display != null) display.getRealMetrics(metrics);
-                    boolean distinct = displayId != Display.DEFAULT_DISPLAY;
-                    boolean geometry = metrics.widthPixels == width && metrics.heightPixels == height;
-                    created = distinct && geometry;
-                    // A frame count is deliberately not required here. A freshly created own-content display with
-                    // nothing launched into it composites nothing, so zero frames is the expected reading rather
-                    // than a defect; requiring one would fail a display that is working. What the display draws is
-                    // measured by the capture item below, once there is something to draw.
-                    create.put("status", created ? "supported" : "unsupported")
-                        .put("displayId", displayId).put("surfaceFlingerId", surfaceFlingerId)
-                        .put("frames", frameCount)
-                        .put("geometry", metrics.widthPixels + "x" + metrics.heightPixels + "@" + metrics.densityDpi)
-                        .put("flags", Integer.toHexString(DISPLAY_FLAGS))
-                        .put("reason", created ? "trusted own-content display accepted"
-                            : !distinct ? "returned the default display" : "reported geometry differs from the request");
-                }
+                int flags = createIsolatedDisplay("miaiplus-probe", width, height, density);
+                Display display = displays.getDisplay(displayId);
+                android.util.DisplayMetrics metrics = new android.util.DisplayMetrics();
+                if (display != null) display.getRealMetrics(metrics);
+                boolean distinct = displayId != Display.DEFAULT_DISPLAY;
+                boolean geometry = metrics.widthPixels == width && metrics.heightPixels == height;
+                created = distinct && geometry;
+                // A frame count is deliberately not required here. A freshly created own-content display with
+                // nothing launched into it composites nothing, so zero frames is the expected reading rather
+                // than a defect; requiring one would fail a display that is working. What the display draws is
+                // measured by the capture item below, once there is something to draw.
+                create.put("status", created ? "supported" : "unsupported")
+                    .put("displayId", displayId).put("surfaceFlingerId", surfaceFlingerId)
+                    .put("frames", frameCount)
+                    .put("geometry", metrics.widthPixels + "x" + metrics.heightPixels + "@" + metrics.densityDpi)
+                    .put("flags", Integer.toHexString(flags)).put("imePolicy", "HIDE")
+                    .put("reason", created ? "trusted own-content display accepted"
+                        : !distinct ? "returned the default display" : "reported geometry differs from the request");
             } catch (Exception failure) {
                 create.put("status", "unsupported").put("reason", failure.getClass().getSimpleName() + ": " + failure.getMessage());
             }
@@ -341,11 +401,13 @@ public final class DisplayHelper {
         boolean gone = displayId < 0 && displays.getDisplay(probeDisplayId) == null;
         JSONObject last = samples.getJSONObject(samples.length() - 1);
         boolean restored = baseline != null
+            && !baseline.windowFocus().isEmpty()
+            && sampleField(last, "windowFocus").equals(baseline.windowFocus())
             && sampleField(last, "appFocus").equals(baseline.appFocus())
             && sampleField(last, "task").equals(baseline.task());
         if (!created) teardown.put("status", "untested").put("reason", "no display was created");
         else if (!gone) teardown.put("status", "unsupported").put("reason", "the display still exists after release");
-        else if (baseline == null) teardown.put("status", "untested")
+        else if (baseline == null || baseline.windowFocus().isEmpty()) teardown.put("status", "untested")
             .put("reason", "the display is gone, but the physical display had no readable baseline for comparison");
         else if (restored)
             teardown.put("status", "supported")
@@ -378,11 +440,14 @@ public final class DisplayHelper {
     private static JSONObject probeFocusIsolation(MainState baseline, JSONArray samples) throws Exception {
         // Each reading is attributed to the step it followed, so a change points at the action that caused it
         // instead of merely being noticed somewhere in the run.
-        String appFocusChanged = "", taskChanged = "";
+        String appFocusChanged = "", windowFocusChanged = "", taskChanged = "";
         for (int index = 0; baseline != null && index < samples.length(); index++) {
             JSONObject entry = samples.getJSONObject(index);
             String step = entry.optString("step");
             if (step.equals("baseline") || step.equals("afterTeardown")) continue;
+            if (!baseline.windowFocus().isEmpty() && windowFocusChanged.isEmpty()
+                    && !sampleField(entry, "windowFocus").equals(baseline.windowFocus()))
+                windowFocusChanged = step;
             if (appFocusChanged.isEmpty() && !sampleField(entry, "appFocus").equals(baseline.appFocus()))
                 appFocusChanged = step;
             if (taskChanged.isEmpty() && !sampleField(entry, "task").equals(baseline.task())) taskChanged = step;
@@ -399,25 +464,22 @@ public final class DisplayHelper {
             focus.put("status", "unsupported").put("appFocusChangedDuring", appFocusChanged)
                 .put("reason", "the physical display lost app focus during " + appFocusChanged
                     + ", so something else took over the user's screen");
+        } else if (!windowFocusChanged.isEmpty()) {
+            focus.put("status", "unsupported").put("windowFocusChangedDuring", windowFocusChanged)
+                .put("reason", "the physical display's window focus changed during " + windowFocusChanged
+                    + "; unchanged app focus and task cannot prove foreground keyboard isolation");
+        } else if (baseline.windowFocus().isEmpty()) {
+            focus.put("status", "untested")
+                .put("reason", "the baseline has no focused physical window; keyboard focus isolation is untested");
         } else {
             focus.put("status", "supported")
-                .put("reason", "the physical display kept its app focus and top task through every step; its "
-                    + "window focus reads null whenever another display exists, which is expected and does not "
-                    + "stop it receiving its own input");
+                .put("reason", "the physical display kept its window focus, app focus and top task through every step; "
+                    + "this probe does not test an active foreground keyboard");
         }
         return focus;
     }
 
-    /**
-     * What the physical display is showing, as far as isolation is concerned.
-     *
-     * <p>{@code windowFocus} and {@code appFocus} are both recorded because only one of them means anything here.
-     * A window-level focus of null with an intact app focus and top task is normal while a second display exists:
-     * measured on the target ROM, the physical display reports {@code mCurrentFocus=null} from the moment another
-     * display is created, yet it still receives its own touches and keys and its top task is unchanged. Treating
-     * that null as a failure would fail every run on this ROM, so the verdict is driven by the app focus and the
-     * top task, and the window reading is kept only as evidence.
-     */
+    /** Physical window focus is required evidence even when app ownership and task order remain unchanged. */
     private record MainState(String windowFocus, String appFocus, String task) {
         boolean readable() { return !appFocus.isEmpty() || !task.isEmpty(); }
     }
@@ -453,11 +515,9 @@ public final class DisplayHelper {
     /**
      * Reads the physical display after letting a transition finish, for the per-step comparisons.
      *
-     * <p>Starting a task on another display briefly leaves the main screen with no focused window while the old
-     * window is going away and the new one arrives. Sampling inside that window records an empty focus that has
-     * already recovered by the next step, which reads as an isolation failure when nothing leaked. Waiting for two
-     * consecutive agreeing reads measures the settled state instead; if it never settles the last reading is
-     * returned so an unstable phone still shows up rather than being silently dropped.
+     * <p>Two agreeing samples reduce transient dump noise. A stable missing or changed physical window focus
+     * still fails isolation; an unchanged app/task cannot excuse losing the user's keyboard focus. If the phone
+     * never settles, return the last reading so instability remains visible in the result.
      */
     private static MainState settledMainState() {
         MainState previous = null, latest = null;
@@ -1237,31 +1297,45 @@ public final class DisplayHelper {
         return delivered;
     }
 
+    private static Object windowManager() throws Exception {
+        Object binder = Class.forName("android.os.ServiceManager").getMethod("getService", String.class).invoke(null, "window");
+        return Class.forName("android.view.IWindowManager$Stub")
+            .getMethod("asInterface", android.os.IBinder.class).invoke(null, binder);
+    }
+
     private static void setImePolicy(long token) {
         if (displayId < 0) { error(token, "NO_DISPLAY", "create the display first"); return; }
         try {
-            Object binder = Class.forName("android.os.ServiceManager").getMethod("getService", String.class).invoke(null, "window");
-            Object windowManager = Class.forName("android.view.IWindowManager$Stub")
-                .getMethod("asInterface", android.os.IBinder.class).invoke(null, binder);
-            setImePolicy(token, windowManager);
+            setImePolicy(token, windowManager());
         } catch (Exception failure) {
-            error(token, "IME_ISOLATION_FAILED", "cannot verify display-local IME policy: " + failure.getClass().getSimpleName());
+            error(token, "IME_ISOLATION_FAILED", "cannot verify hidden background IME policy: " + failure.getClass().getSimpleName());
+        }
+    }
+
+    /** HIDE is defense in depth; the no-steal display flag prevents global foreground IME client changes. */
+    static void configureImePolicy(Object windowManager) throws IsolationFailure {
+        try {
+            Method get = windowManager.getClass().getMethod("getDisplayImePolicy", int.class);
+            get.setAccessible(true);
+            // Rechecking a ready session must not reconfigure the display or disturb an active foreground IME.
+            if (Integer.valueOf(IME_POLICY_HIDE).equals(get.invoke(windowManager, displayId))) return;
+            Method set = windowManager.getClass().getMethod("setDisplayImePolicy", int.class, int.class);
+            set.setAccessible(true);
+            set.invoke(windowManager, displayId, IME_POLICY_HIDE);
+            if (!Integer.valueOf(IME_POLICY_HIDE).equals(get.invoke(windowManager, displayId)))
+                throw new IllegalStateException("HIDE policy did not persist");
+        } catch (Exception failure) {
+            throw new IsolationFailure("IME_ISOLATION_FAILED",
+                "cannot verify hidden background IME policy: " + failure.getClass().getSimpleName(), failure);
         }
     }
 
     static void setImePolicy(long token, Object windowManager) {
         try {
-            Method set = windowManager.getClass().getMethod("setDisplayImePolicy", int.class, int.class);
-            set.setAccessible(true);
-            // 0 = LOCAL: the IME stays on the target display instead of surfacing on the physical screen.
-            set.invoke(windowManager, displayId, 0);
-            Method get = windowManager.getClass().getMethod("getDisplayImePolicy", int.class);
-            get.setAccessible(true);
-            if (!Integer.valueOf(0).equals(get.invoke(windowManager, displayId)))
-                throw new IllegalStateException("LOCAL policy did not persist");
-            reply(token, "ime", "policy", "LOCAL", "verified", "true");
-        } catch (Exception failure) {
-            error(token, "IME_ISOLATION_FAILED", "cannot verify display-local IME policy: " + failure.getClass().getSimpleName());
+            configureImePolicy(windowManager);
+            reply(token, "ime", "policy", "HIDE", "verified", "true");
+        } catch (IsolationFailure failure) {
+            error(token, failure.code, failure.getMessage());
         }
     }
 

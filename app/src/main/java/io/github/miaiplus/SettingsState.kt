@@ -1,7 +1,9 @@
 package io.github.miaiplus
 
 import android.app.Application
+import android.hardware.display.DisplayManager
 import android.os.Bundle
+import android.util.DisplayMetrics
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -24,6 +26,8 @@ data class ProfileDraft(val id: String, val name: String, val endpoint: String,
         profile.apiKey, profile.model, profile.api)
     fun toProfile() = EndpointProfiles.Profile(id, name, endpoint, apiKey, model, api)
 }
+
+data class DisplayGeometry(val width: Int, val height: Int, val density: Int)
 
 /** UI state only. Runtime configuration and task safeguards stay in their existing owners. */
 class SettingsState(application: Application) : AndroidViewModel(application) {
@@ -133,12 +137,47 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
         when (value) {
             is Boolean -> editor.putBoolean(key, value)
             is String -> editor.putString(key, value)
-            is Int -> { require(value in 1..80) { "步数需在 1–80 之间" }; editor.putInt(key, value) }
+            is Int -> { require(value in 1..Config.MAX_PHONE_USE_STEPS) { "步数需在 1–${Config.MAX_PHONE_USE_STEPS} 之间" }; editor.putInt(key, value) }
         }
         check(editor.commit()) { "保存失败，请重试" }
         config = Config(context)
         if (key == "enabled" && value == false) BridgeProvider.cancelActive()
         notice = if (key == "globalModel" || key == "enabled") "已保存，请重启小爱" else "已保存"
+    }
+
+    fun setConversationTimeoutMinutes(minutes: Int): Boolean = attempt {
+        require(minutes in 0..Config.MAX_CONVERSATION_TIMEOUT_MINUTES) {
+            "时长需在 0–${Config.MAX_CONVERSATION_TIMEOUT_MINUTES} 分钟之间，0 表示关闭"
+        }
+        check(prefs.edit().putInt("conversationTimeoutMinutes", minutes).commit()) { "保存失败，请重试" }
+        config = Config(context)
+        notice = "已保存"
+    }
+
+    fun currentDisplayGeometry(): DisplayGeometry {
+        val display = context.getSystemService(DisplayManager::class.java)
+            ?.getDisplay(android.view.Display.DEFAULT_DISPLAY)
+            ?: throw IllegalStateException("无法读取本机屏幕分辨率")
+        val metrics = DisplayMetrics()
+        display.getRealMetrics(metrics)
+        return DisplayGeometry(metrics.widthPixels, metrics.heightPixels, metrics.densityDpi)
+    }
+
+    fun setDisplayGeometry(width: Int, height: Int, density: Int): Boolean = attempt {
+        require(width in Config.MIN_DISPLAY_SIZE..Config.MAX_DISPLAY_SIZE
+            && height in Config.MIN_DISPLAY_SIZE..Config.MAX_DISPLAY_SIZE) {
+            "宽度和高度需在 ${Config.MIN_DISPLAY_SIZE}–${Config.MAX_DISPLAY_SIZE} 像素之间"
+        }
+        require(density in Config.MIN_DISPLAY_DENSITY..Config.MAX_DISPLAY_DENSITY) {
+            "密度需在 ${Config.MIN_DISPLAY_DENSITY}–${Config.MAX_DISPLAY_DENSITY} dpi 之间"
+        }
+        check(prefs.edit()
+            .putInt("displayWidth", width)
+            .putInt("displayHeight", height)
+            .putInt("displayDensity", density)
+            .commit()) { "保存失败，请重试" }
+        config = Config(context)
+        notice = "已保存；新任务将使用此画布"
     }
 
     fun setGuard(enabled: Boolean) {
@@ -196,7 +235,7 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
         result = "正在启动…"
         val testQuery = query.trim()
         val screen = testMode == 0
-        // Physical capture needs the secure settings window hidden; background tasks use their own display.
+        // Physical tasks need the target app visible; background tasks use their own display.
         // This callback runs immediately and is not retained by the polling coroutine.
         if (screen && !config.backgroundDisplay) onScreenTask()
         viewModelScope.launch {

@@ -1,5 +1,71 @@
 # MiAIPlus 1.0.0-preview 实现与验证状态
 
+## 模块截图与虚拟屏键盘隔离（2026-10-18）
+
+模块 `MainActivity` 不再设置 `FLAG_SECURE`，设置页及继承宿主策略的弹窗允许用户截图。密钥默认遮挡、离页重新遮挡及私有存储保持。设置 UI runner 改为断言允许截图，截图后不再重新开启安全旗标。
+
+虚拟屏此前未设置独立焦点和禁止抢顶层焦点，仅按 display id 注入输入、设置 `IME_POLICY_LOCAL`。这些条件只能限定输入去向和键盘显示位置，不能阻止后台启动／触摸争用系统顶层焦点及 IME client。当前统一生产建屏与 capability 初始化：要求运行平台真实提供 `OWN_FOCUS | STEAL_TOP_FOCUS_DISABLED` 并回读有效显示标志，在启动任何应用前设置并回读 `IME_POLICY_HIDE=2`。后台文字仍通过原目标屏编辑框 `ACTION_SET_TEXT` 写入和精确回读；重复 IME 验证不重新配置已经就绪的屏幕。隔离校验失败立即释放后台屏，不回退主屏。AOSP Android 13 没有这两个焦点标志，未回移植能力的 ROM 会明确拒绝后台模式，模块前台仍支持 Android 13。
+
+源码依据为 AOSP Android 14 的 [Display 焦点标志说明](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/android14-release/core/java/android/view/Display.java) 及 [WindowManagerService](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/android14-release/services/core/java/com/android/server/wm/WindowManagerService.java)：`moveDisplayToTopInternal` 拒绝不能抢顶层焦点的屏幕，`hasInputMethodClientFocus` 拒绝非顶层焦点屏绑定 IME client。`LOCAL` 并不隔离系统输入法。
+
+本地 332 项 JVM／Robolectric 测试通过（0 failures/errors/skipped），新增 7 项回归覆盖 HIDE 成功及重复检查无写入、LOCAL／FALLBACK／缺失方法拒绝、缺失请求／有效焦点标志拒绝，以及 app／task 不变但窗口焦点丢失或不可读时不误报隔离通过。Debug／Release／AndroidTest 构建及两套完整 Lint 通过（0 errors，35／26 warnings）。`git diff --check` 通过。
+
+设备回归 `BackgroundRunner` 新增 `PhysicalImeGuard`：主屏先真实打开键盘并稳定 500ms，此后按每帧、16ms 轮询及焦点事件持续监测窗口／编辑框焦点、IME 可见性及 `isActive(input)`，首次丢失锁存。覆盖原生后台会话创建／启动／返回／结束，以及后台测试页真实点击编辑框、产品输入／回读、BACK 退出页面、销毁；随后同一主屏键盘保持打开，验证 capability 真正建屏、HIDE 策略及无残留。helper 能力探针也不再忽略主屏窗口失焦，但其离散采样本身不证明活跃键盘隔离。
+
+本轮未安装设备、未执行上述设备回归或真实模型任务，未验证目标 ROM／不同输入法实际保持键盘的结果；新增 runner 入口仍为 `python3 scripts/background_display_test.py`。历史仅比较 app 焦点／任务的 PASS 不能作为本次键盘修复的实机结论。未提交、推送或发布。
+
+## 虚拟屏自定义画布（2026-10-18）
+
+「控屏 → 虚拟屏 → 自定义分辨率」新增宽、高和密度编辑，默认保持 1080×1920@320，范围与 root helper 一致：宽高 320–4096 像素、密度 80–1000 dpi。「填入本机分辨率」读取默认物理屏当前的完整像素尺寸与密度，只填入编辑框；点击「保存」后持久化。NativeSession、AgentEngine 的新虚拟屏会话和能力检测都使用保存参数，进行中的会话不调整尺寸。后台设备验收显式写入基准画布，结束恢复原配置。
+
+本地 325 项 JVM／Robolectric 测试通过（0 failures/errors/skipped），包括画布默认值、异常配置钳制、合法配置保留、设置持久化、边界拒绝、默认屏参数读取，以及界面编辑／填入／保存。画布弹窗截图已渲染核对。Debug／Release／AndroidTest 构建及两套完整 Lint 通过（0 errors，35／26 warnings）；`git diff --check` 通过。
+
+本轮未安装设备、未运行虚拟屏／模型任务，未验证自定义尺寸下的真实创建、输入／截图隔离或第三方 APP 再次打开后的布局；不将历史固定画布的设备结果视为自定义画布验收，也不承诺修复 APP 已缓存的布局状态。改动未提交、推送或发布。
+
+## 控屏 200 步与统一对话生命周期（2026-10-18）
+
+Phone Use 最大步数设置范围从 1–80 扩至 1–200，默认仍为 30；设置输入、持久化和执行配置共同遵循该上限。首页新增「对话 → 自动新建对话」，按用户选择默认 15 分钟，支持 1–1440 分钟，0 关闭，独立于控屏开关及模型 API。
+
+全屏和系统浮窗保存同一原生话题身份、共用上次用户操作时间；时长内唤醒续用，超时后唤醒新建。触摸、按键、文字提交及最终 ASR 结果更新计时，模型回复和工具结果只刷新身份，不延长时间。历史及通知显式选择优先；控屏忙碌、设置失效或待处理唤醒过期时不回放自动跳转。删除当前话题使保存身份失效，重载释放回调。
+
+移除聊天 Agent 的计数停止、普通 60／复杂 1000 轮开始门槛，以及侧栏第 101 个话题的创建门槛；保留真实轮次、事件、取消、错误、上下文压缩、时间限制及实际强制禁用工具。独立 Phone Use 动作预算仍生效；未修改其他专项 Agent 的限制或模型服务端限制。
+
+本地 318 项 JVM／Robolectric 测试通过（0 failures/errors/skipped），包含设置保存／重建、200 步边界、闲置策略、显式路由、配置／忙碌竞争、Launcher 恢复前不得消费唤醒及真实 Activity 生命周期判断。首页截图已重新渲染核对，显示默认 15 分钟。Debug／Release／AndroidTest 构建及两套完整 Lint 通过，Lint 为 0 errors、34／25 warnings。
+
+同一 Xiaomi 25019PNF3C / xuanyuan、API 37、小爱 8.3.30.4420（508003030）已安装最新 Debug／AndroidTest，`--conversation-continuity` 完整通过：
+
+- 真实宿主计数 gate 在 41／61／205／1001 轮放行，保留实际轮次／session 事件、同步及挂起发送、取消传播。
+- 自有本地话题续用、超时后新建不同 topic／chat、显式历史及完成通知覆盖待处理自动唤醒、原生通知选择更新时间，以及从磁盘重建策略与话题身份。
+- 真实桌面 Launcher 的超时／未超时唤醒，实际卡片身份与可见导航同步。
+- 三次真实 VoiceService 唤醒均经原生界面重置，并断言系统浮窗已附着、可见且宿主不在全屏前台；全屏转浮窗续用、浮窗超时新建、浮窗再次续用及返回全屏均保持预期话题。HOME 切换后等待原生全屏前台标志消失，避免 paused Activity 过渡误选全屏。测试结束严格确认恢复原生主对话路由／选中项／卡片模式，清理自有话题并恢复配置。
+
+同一生产代码的 `--phone-use-terminal`、`--focus` 和 `--conversation-return` 回归通过，覆盖实际错误终态、强制清工具与 session 释放、收尾不抢前台及完成通知返回最初对话。前者采样 106 次主屏焦点／任务，未发生旧任务重开。
+
+上述会话测试使用 1 分钟测试配置并定向推进保存的闲置时间，不实际等待 15 分钟；三次自有 nonce 唤醒的 recorder 预热和 ASR 启动在录音前阻断，音频／模型兜底拦截均未触发，未请求模型或采集音频。验证了真实窗口／路由及原生方法，不代表模型自主长任务成功率；未按实体电源键或语音热词唤醒，未实测多窗口中已恢复页面的焦点切换或宿主进程重启，持久化仅验证状态重建。旧小爱 8.2.65 绑定经源码及本地检查，本轮未降级实测。
+
+测试后回到桌面，instrumentation 已结束（`mFinished=true`），无 DisplayHelper、仅 display 0，无 reverse 映射；原无障碍服务列表保持一致，模块服务重连后健康查询为 `connected=true,busy=false`。改动未提交、推送或发布。
+
+## 控屏步数与模型错误终态（2026-10-18）
+
+针对临近步数上限时反复返回对话、灵动岛重复提示未完成的问题，修复四条收尾路径：
+
+- 结构化工具此前只读取 `AppResult.getText()`，把底层错误也返回为普通 Success。现在保留 `isError()`，返回 `shouldRetry=false`、`PERMANENT`、`terminateAgent=true` 的原生 Failure，并提供明确的 STOP 原因和禁止自动重开指令。停止 gate 同时识别 Failure、所有顶层 PAUSE 和精确兼容 CLI 入口，CONTINUE 页面数据不能注入停止指令。
+- 过期续调此前会先分配新控屏任务、收起界面，再因会话不存在失败。现在在任务/UI 分配前验证会话、UID、期限和来源工具，重复旧 session 不改变任务 ID、结束结果或通知。
+- 观察中报告剩余动作预算，最后一步仍保留新观察；预算为零时只接受完成或接管，额外动作在坐标解析和执行前停止。去除“达到步数上限，请重新发起任务”等诱导自动重启的文案。页面变化仍在同一会话 CONTINUE，跳过动作消耗预算。
+- 宿主轮次耗尽、禁用工具或本轮退出时，按执行身份/requestId/原观察 session/模块 task token 清理对应未完成控屏。旧回合不能结束替代任务或后续纯对话；无可靠请求身份时保留原 watchdog。宿主 UI 启动和 Activity 恢复统一遵守收尾静默，明确唤醒与有效通知返回仍可立即打开。
+
+本地 267 项 JVM/Robolectric 测试通过（0 failures/errors/skipped）；Debug、Release、AndroidTest 构建及两套完整 Lint 通过（0 errors，Debug 31／Release 24 warnings）。新增 Debug 探针、runner 和 `device_test.py --phone-use-terminal`。
+
+Xiaomi 25019PNF3C / xuanyuan、API 37、小爱 8.3.30.4420（508003030）已安装本轮 Debug／AndroidTest。`--phone-use-terminal` 七阶段通过：真实注册工具返回 Failure／不可重试／终止 Agent，实际原生 STOP gate 生效；最后观察保持非终态，超额动作停止；三次旧会话重试及缺参调用不新建任务、不改变结束通知发布时间；预算为零后完成／接管／询问均可收尾；直接调用宿主真实 IterationGuard 与 AgentContext.release 后，原生 session 释放并保留对应原因。111 次主屏焦点/任务采样保持自有页面，无注入触摸或输入。`--focus` 回归通过，覆盖跨步通知、快速任务更换、停止、收尾不抢前台和点击通知返回原全屏对话。
+
+`--robust-screen` 回归通过：动态无关文字继续刷新时稳定目标仍可点击，移动/替换目标拒绝旧动作并在原会话重规划，严格 3 次触摸/点击，50ms 采样跨步通知只在 finish 后结束。`--dual-tools` 在两种兼容默认屏幕设置下通过，跨工具错误返回真实 Failure 后原会话仍可由正确工具继续，后台点击/滑动保持主屏隔离，helper/display 正常退出。
+
+`--action-confirmation` 回归通过：实际注册工具及通知 PendingIntent 覆盖同意、拒绝、停止与真实 60 秒超时；同意仅执行一次自有页面无害点击，后三种均零触摸，并返回终止结果。等待期间 Activity／焦点保持，无旧无障碍确认悬浮窗；收尾后旧按钮失效，runner 恢复原配置。
+
+测试后已回到桌面，无活动 instrumentation、无 DisplayHelper，仅 display 0，无 reverse 映射。无障碍服务列表逐字保持原值，重新连接后健康查询为 `connected=true,busy=false`。本轮改动未提交、推送或发布。
+
+上述实机检查使用确定动作、自有页面和真实宿主方法，不调用真实模型，也不证明模型自主任务成功率；旧版小爱绑定经源码/本地验证，本轮未降级重测旧版。
+
 ## 新版全屏思考强度菜单动画修复（2026-10-17）
 
 8.3.30 全屏外部模型菜单此前替换为普通 Android `PopupWindow`，绕过了宿主原生动画。现在保留原生 `FunctionModePopup`／`HyperPopupMenu`，只在工厂同步调用内替换档位、勾选状态及经 UID／配置身份校验的保存回调。保留原生定位、键盘焦点策略、再次点击收起、配置变更处理与 Miuix 动画；热重载释放选择回调并关闭菜单。旧版全屏和普通输入栏路径保持原实现。

@@ -118,11 +118,130 @@ public final class NativeSessionReplanTest {
         assertEquals(0, ScreenShadow.executions);
     }
 
+    @Test public void finalAllowedActionReturnsItsObservationAndZeroRemainingBudget() throws Exception {
+        field(session.getClass(), "steps").setInt(session, 19);
+        String result = step(200, 200);
+        assertContinuing(result);
+        assertTrue(result, result.contains("步数=20/20；剩余动作步数=0"));
+        assertTrue(result, result.contains("下一次只允许finish、take_over或ask_user"));
+        assertSame(ScreenShadow.current, field(session.getClass(), "frame").get(session));
+        assertEquals(1, ScreenShadow.executions);
+    }
+
+    @Test public void exhaustedBudgetRejectsMalformedNextActionWithoutParsingOrExecutingIt() throws Exception {
+        field(session.getClass(), "steps").setInt(session, 20);
+        try {
+            step(new JSONObject().put("action", "tap"));
+            fail("Expected exhausted budget");
+        } catch (IllegalStateException stopped) {
+            assertTrue(stopped.getMessage(), stopped.getMessage().startsWith("达到最大步数，任务未确认完成"));
+            assertTrue(stopped.getMessage(), stopped.getMessage().contains("不要重试或重新发起任务"));
+        }
+        assertEquals(20, field(session.getClass(), "steps").getInt(session));
+        assertEquals(0, ScreenShadow.attempts);
+        assertClosed();
+    }
+
+    @Test public void finishRemainsAllowedAfterFinalAction() throws Exception {
+        field(session.getClass(), "steps").setInt(session, 19);
+        assertContinuing(step(200, 200));
+        String result = step(new JSONObject().put("action", "finish").put("message", "已从最后观察确认完成"));
+        assertEquals("模型报告任务完成：已从最后观察确认完成", result);
+        assertEquals(20, field(session.getClass(), "steps").getInt(session));
+        assertEquals(1, ScreenShadow.executions);
+        assertClosed();
+    }
+
+    @Test public void takeoverRemainsAllowedAtExhaustedBudget() throws Exception {
+        field(session.getClass(), "steps").setInt(session, 20);
+        assertEquals("PAUSE：尚有步骤未完成", step(new JSONObject().put("action", "take_over").put("message", "尚有步骤未完成")));
+        assertEquals(0, ScreenShadow.attempts);
+        assertClosed();
+    }
+
+    @Test public void skippedFinalActionConsumesBudgetAndPreservesLastObservation() throws Exception {
+        field(session.getClass(), "steps").setInt(session, 19);
+        ScreenShadow.current = frame(BUTTON.replace("提交", "新目标"));
+        String result = step(200, 200);
+        assertSkipped(result);
+        assertTrue(result, result.contains("剩余动作步数=0"));
+        assertEquals(0, ScreenShadow.attempts);
+        assertSame(ScreenShadow.current, field(session.getClass(), "frame").get(session));
+        assertEquals("PAUSE：目标已变化，尚未完成", step(new JSONObject().put("action", "ask_user")
+            .put("message", "目标已变化，尚未完成")));
+        assertClosed();
+    }
+
+    @Test public void fatalExecutionFailureClosesSessionWithoutOfferingRetry() throws Exception {
+        ScreenShadow.failure = new IllegalStateException("控屏执行失败");
+        try {
+            step(200, 200);
+            fail("Expected execution failure");
+        } catch (IllegalStateException stopped) {
+            assertEquals("控屏执行失败", stopped.getMessage());
+        }
+        assertEquals(1, ScreenShadow.attempts);
+        assertEquals(0, ScreenShadow.executions);
+        assertClosed();
+    }
+
+    @Test public void staleOrForeignContinuationCannotCloseCurrentSession() throws Exception {
+        String query = "MIAIPLUS:" + new JSONObject().put("session", "expired-session")
+            .put("action", new JSONObject().put("action", "wait"));
+        for (int owner : new int[]{OWNER, OWNER + 1}) {
+            try {
+                NativeSession.handle(new Config(Map.of()), query, owner);
+                fail("Expected stale session");
+            } catch (IllegalStateException stopped) {
+                assertTrue(stopped.getMessage(), stopped.getMessage().startsWith("控屏会话不存在或已过期，本轮已结束"));
+                assertFalse(stopped.getMessage(), stopped.getMessage().contains("请重新提交"));
+            }
+            assertSame(session, field(NativeSession.class, "active").get(null));
+            assertFalse(sessionRun.cancelled.get());
+        }
+        assertEquals(0, ScreenShadow.attempts);
+    }
+
+    @Test public void continuationPreflightIsReadOnlyAndRejectsExpiredOrCancelledSessions() throws Exception {
+        String query = "MIAIPLUS:" + new JSONObject().put("session", sessionRun.id)
+            .put("action", new JSONObject().put("action", "wait"));
+        NativeSession.verifyContinuation(query, OWNER, "");
+        assertEquals(0, field(session.getClass(), "steps").getInt(session));
+        long deadline = sessionRun.deadline;
+        long expired = android.os.SystemClock.elapsedRealtime();
+        sessionRun.deadline = expired;
+        assertPreflightRejected(query);
+        assertFalse(sessionRun.cancelled.get());
+        assertEquals(expired, sessionRun.deadline);
+        sessionRun.deadline = deadline;
+        sessionRun.cancelled.set(true);
+        assertPreflightRejected(query);
+        assertSame(session, field(NativeSession.class, "active").get(null));
+        assertEquals(0, ScreenShadow.attempts);
+    }
+
+    private void assertPreflightRejected(String query) throws Exception {
+        try {
+            NativeSession.verifyContinuation(query, OWNER, "");
+            fail("Expected expired session");
+        } catch (IllegalStateException stopped) {
+            assertTrue(stopped.getMessage(), stopped.getMessage().startsWith("控屏会话不存在或已过期，本轮已结束"));
+        }
+    }
+
     private String step(int x, int y) throws Exception {
         JSONObject action = new JSONObject().put("action", "tap").put("element", new JSONArray().put(x).put(y));
+        return step(action);
+    }
+    private String step(JSONObject action) throws Exception {
         String query = "MIAIPLUS:" + new JSONObject().put("session", sessionRun.id)
             .put("coordinate_space", "normalized").put("action", action);
         return NativeSession.handle(new Config(Map.of("maxSteps", 20)), query, OWNER);
+    }
+    private void assertClosed() throws Exception {
+        assertTrue(sessionRun.cancelled.get());
+        assertNull(field(NativeSession.class, "active").get(null));
+        assertFalse(NativeSession.hasActiveSession());
     }
     private void assertSkipped(String result) throws Exception {
         assertContinuing(result);
@@ -152,14 +271,16 @@ public final class NativeSessionReplanTest {
     public static final class ScreenShadow {
         static ScreenService.Frame current;
         static boolean rejectInjection;
+        static Exception failure;
         static int attempts, executions;
         static double[] lastPoint;
-        static void reset() { current = null; rejectInjection = false; attempts = executions = 0; lastPoint = null; }
+        static void reset() { current = null; rejectInjection = false; failure = null; attempts = executions = 0; lastPoint = null; }
         @Implementation protected ScreenService.Frame capture(RunState run) { run.check(); return current; }
         @Implementation protected void execute(Action action, ScreenService.Frame frame, RunState run) throws Exception {
             run.check();
             attempts++;
             if (rejectInjection) throw new ScreenService.ObservationChanged();
+            if (failure != null) throw failure;
             executions++;
             lastPoint = action.point("element");
         }

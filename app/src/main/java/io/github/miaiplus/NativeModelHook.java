@@ -37,6 +37,7 @@ public final class NativeModelHook {
     }
     public static void install(Context context, ClassLoader loader, List<HookCallback.Unhook> hooks) throws Exception {
         NativePhoneUseTool.install(context, loader, hooks);
+        NativeTurnLifecycle.install(context, loader, hooks);
         NativeIntentHook.install(context, loader, hooks);
         NativeReasoningHook.install(context, loader, hooks);
         NativeChatRoutingHook.install(context, loader, hooks);
@@ -90,7 +91,7 @@ public final class NativeModelHook {
                 }
             }
         }));
-        installTurnStop(loader, hooks, toolSuccess);
+        installTurnStop(context, loader, hooks, toolSuccess);
         Class<?> nativeConfig = Reflector.findClass("sm.a", loader);
         var configConstructor = configConstructor(loader);
         // Cover the dispatcher and every concrete OSBot transport, including callers
@@ -175,8 +176,9 @@ public final class NativeModelHook {
         }));
     }
     /** The pinned host consumes this decision for every result, including mixed parallel-tool batches. */
-    private static void installTurnStop(ClassLoader loader, List<HookCallback.Unhook> hooks, Class<?> success)
+    private static void installTurnStop(Context app, ClassLoader loader, List<HookCallback.Unhook> hooks, Class<?> success)
         throws Exception {
+        Class<?> failure = Reflector.findClass("com.aios.osbot.tools.ToolResult$Failure", loader);
         Class<?> context = Reflector.findClass("hj.e", loader);
         Class<?> continuation = Reflector.findClass("kotlin.coroutines.Continuation", loader);
         Object stop = Reflector.getStaticObjectField(Reflector.findClass("oj.b", loader), "STOP");
@@ -186,11 +188,14 @@ public final class NativeModelHook {
             Reflector.findClass("com.aios.osbot.tools.ToolResult", loader), continuation);
         hooks.add(Hooks.hookMethod(gate, new HookCallback() {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
-                if (!success.isInstance(p.args[2])) return;
-                String text = (String)Reflector.callMethod(p.args[2], "getResult");
-                if (!ForegroundConsent.endsNativeTurn(text)) return;
+                boolean failed = failure.isInstance(p.args[2]);
+                if (!failed && !success.isInstance(p.args[2])) return;
+                String text = (String)Reflector.callMethod(p.args[2], failed ? "getError" : "getResult");
                 String name = (String)Reflector.callMethod(p.args[1], "getName");
                 Object arguments = Reflector.callMethod(p.args[1], "getArguments");
+                if (!ForegroundConsent.isPhoneTool(name, String.valueOf(arguments))) return;
+                if (p.args[0] != null) NativeTurnLifecycle.observe(app,
+                    Reflector.callMethod(p.args[0], "getExecutionContext"), text);
                 if (ForegroundConsent.endsNativeToolTurn(name, String.valueOf(arguments), text)) p.setResult(stopAfterTool);
             }
         }));

@@ -2,14 +2,18 @@
 
 后台虚拟屏让控屏任务在一块独立屏幕上运行，用户继续使用手机主屏。模型通过独立工具 `miaiplus_background_phone_use` 发起虚拟屏任务，前台工具 `miaiplus_phone_use` 操作主屏。兼容入口的默认屏幕设置仅影响旧入口和直接测试的新任务。
 
-本文记录的是实机验证过的行为与已知限制。设备为 Xiaomi 17（xuanyuan，`CP2A.260605.016`，API 37），开启 KernelSU root 并解锁。其他 ROM 未测。
+本文区分当前实现、历史实机证据与已知限制。历史设备为 Xiaomi 17（xuanyuan，`CP2A.260605.016`，API 37），开启 KernelSU root 并解锁。其他 ROM 未测。
+
+2026-10-18 针对主屏键盘被挤掉，后台屏改为独立窗口焦点且禁止抢顶层焦点，并在启动应用前设置、回读 `HIDE` 输入法策略。生产任务与能力探测共用初始化。下方历史 app 焦点／任务／输入隔离结果未覆盖主屏已打开键盘，不能当作本次键盘修复的设备验收；本次新增持续键盘检查，实际运行结果见 [验证记录](validation.md)。
 
 2026-10-17 当前版本实机新增通过：两个原生模型工具在两种兼容默认设置下的独立路由、错误工具续调拒绝、真实虚拟屏点击/滑动送达、主屏焦点/触摸/输入隔离，以及正常结束后的 helper/display 释放。真实灵动岛同意/拒绝和首次自动转前台也已通过；拒绝验证包括 direct answer 与宿主 STOP gate 的直接调用，未覆盖真实模型混合工具批次。完成岛返回会话也已用两条本地测试对话验证。以上为确定动作设备测试，不代表真实模型规划成功率。下方原有实机表格保留为历史证据，其他 ROM 未测。
 
 ## 开关与前置条件
 
 - 模块私有设置中的“兼容入口默认使用虚拟屏”默认关闭，不覆盖两个模型工具各自的屏幕选择。
+- 虚拟屏画布宽、高和密度可在设置页自定义，默认 `1080x1920@320`；宽高范围为 320–4096 像素，密度范围为 80–1000 dpi。设置页可读取本机物理屏当前的完整像素尺寸与密度并一键填入，再点击「保存」生效。参数只影响之后创建的新会话，能力探测也使用保存的画布。该配置用于减少主屏／虚拟屏几何差异，不保证修复应用已缓存的布局异常；本轮未进行自定义画布的实机验收。
 - 需要 root 授权模块 UID（`io.github.miaiplus`）。小爱进程本身拿不到 `su`，所以 helper 由模块 UID 启动。
+- 平台必须实现 `OWN_FOCUS` 与 `STEAL_TOP_FOCUS_DISABLED`，并回读确认有效显示标志；缺少能力时拒绝建屏，不用猜测的位值继续。AOSP Android 14 起具有这两个标志，未回移植此能力的 Android 13 只支持模块的前台功能。
 - 需要解锁状态。锁屏时不创建屏幕，任务报 `DEVICE_LOCKED` 并停止。
 - 不写静默回退：后台链路任何一步失败，任务停止并说明原因，不会改到主屏继续执行。
 - 用户指定的应用冲突交接是例外：首次目标就是主屏当前应用时明确转前台；中途需要当前应用则先通过灵动岛授权。同意前不操作主屏，拒绝或 60 秒未答复则暂停并结束本轮。
@@ -30,16 +34,15 @@ helper 的 stdin 就是命令通道，所以模块**不能**关闭它；该流�
 
 ## 屏幕创建
 
-`createVirtualDisplay` 使用的标志（`0xadcb`）除 AOSP 常量外由运行时反射取值，未在 ROM 上定义的名称才回退到字面值：
+`createVirtualDisplay` 使用以下标志。普通标志由运行时反射取值，未定义才回退到 AOSP 字面值；隔离所需的两个焦点标志必须由平台真实提供，不能回退：
 
-`PUBLIC | PRESENTATION | OWN_CONTENT_ONLY | SUPPORTS_TOUCH | ROTATES_WITH_CONTENT | DESTROY_CONTENT_ON_REMOVAL | TRUSTED | OWN_DISPLAY_GROUP | TOUCH_FEEDBACK_DISABLED | DEVICE_DISPLAY_GROUP`
+`PUBLIC | PRESENTATION | OWN_CONTENT_ONLY | SUPPORTS_TOUCH | ROTATES_WITH_CONTENT | DESTROY_CONTENT_ON_REMOVAL | TRUSTED | OWN_DISPLAY_GROUP | TOUCH_FEEDBACK_DISABLED | DEVICE_DISPLAY_GROUP | OWN_FOCUS | STEAL_TOP_FOCUS_DISABLED`
 
-两个标志是刻意不加的：
+`OWN_FOCUS` 允许后台屏独立维护窗口焦点，按 display id 注入的触摸和按键才能在不抢主屏的情况下送达。`STEAL_TOP_FOCUS_DISABLED` 必须与它配合，阻止后台启动／触摸将该屏变为顶层焦点屏。系统 IME client 只允许顶层焦点屏绑定，因此这也是防止主屏输入法被解绑的关键；仅指定事件的 display id 或使用 `LOCAL` 策略都不能替代此约束。
 
-- **`ALWAYS_UNLOCKED`**：scrcpy 用它让镜像在锁屏下可用。对本项目来说那等于让助手操作一台用户认为已锁定的手机，所以创建屏幕时若已锁屏会失败；运行中锁屏按用户要求继续任务。
-- **`OWN_FOCUS`**：实机加它会让物理屏 `mCurrentFocus` 变 `null`。该症状在去掉它之后依然存在（见下），所以不是它的锅，但后台屏本来也不需要顶焦：输入都带 display id 注入，不靠“当前焦点是谁”。不加它让状态更接近默认。
+后台屏另外使用并回读 `IME_POLICY_HIDE=2`，不创建软键盘；文字输入继续通过目标屏已聚焦编辑框的 `ACTION_SET_TEXT` 和精确回读。旧 `LOCAL` 仅决定键盘显示位置，仍可能争用系统输入法。策略或焦点校验失败会释放屏幕并停止，不回退主屏。
 
-后台屏不需要 `STEAL_TOP_FOCUS_DISABLED` 作为补偿，原因同上。
+刻意不加 **`ALWAYS_UNLOCKED`**：scrcpy 用它让镜像在锁屏下可用。本项目创建屏幕时若已锁屏会失败；运行中锁屏按已有用户要求处理。
 
 ## 实机验证结果
 
@@ -77,7 +80,7 @@ helper 的 stdin 就是命令通道，所以模块**不能**关闭它；该流�
 
 **2. 写入被接受却报成失败（回读时机与过期句柄）。** `ACTION_SET_TEXT` 返回 `true` 只代表视图接受了请求，值在下一帧才生效；而回读复用了写之前拿到的窗口对象，视图重建后它可能仍报旧值。实测两者叠加：树里已经出现新文本，`setTextOnDisplay` 仍返回 `false`。改为写完之后在调用线程上、用**每次重新枚举**的窗口对象做有界重试（最多 1.2 秒），并且不把等待放在无障碍服务主线程上。回读仍然读不到就判失败——"接受"依旧不等于"生效"。
 
-`focusIsolation` 的一个细节值得写清楚：另一块屏存在时，主屏的 `mCurrentFocus` 会读成 `null`，从**创建那一刻**就是这样，与是否 launch 无关。但它同时满足：`mFocusedApp` 仍指向用户原应用、`dumpsys input` 里 `FocusedDisplayId: 0` 仍在、且实测向 display 0 注入 HOME 只改变 display 0 的栈顶（后台屏的 calculator 不动）。所以这是**上报形态**，不是主屏失效。判定因此以 app 焦点与栈顶任务为准，窗口焦点只作为证据记录。
+历史 `focusIsolation` 曾记录：另一块屏存在时，主屏 `mCurrentFocus` 从创建时读成 `null`，而 `mFocusedApp`、栈顶任务与按屏定向 HOME 仍正常。旧版本据此仅比较 app 焦点和栈顶任务。此证据不能排除窗口失焦或键盘被挤掉，2026-10-18 起不再将它解释为键盘隔离正常；当前探针也应保守对待窗口焦点变化，主屏键盘必须单独持续验证。
 
 ## 截图路径
 
@@ -139,6 +142,8 @@ helper 的 stdin 就是命令通道，所以模块**不能**关闭它；该流�
 | `TASK_IN_USE` | 目标应用已在用户屏幕上，拒绝启动 |
 | `TASK_STOLEN` | 启动未落在后台屏，任务停止 |
 | `CAPTURE_FAILED` | 后台截图失败，任务停止 |
+| `FOCUS_ISOLATION_FAILED` | 平台不支持或未落实独立焦点／禁止抢顶层焦点，任务停止 |
+| `IME_ISOLATION_FAILED` | 无法设置或回读 HIDE 输入法策略，任务停止 |
 | `BACKEND_DIED` | helper 进程退出或无响应 |
 
 ## 能力探测
@@ -184,7 +189,7 @@ content call --uri content://io.github.miaiplus.bridge --method background_displ
 - 原生会话停止立即取消，随后异步释放本会话的后台屏；旧会话的清理不能关闭替换后的新会话。每次接受步骤同步续期 deadline 和 watchdog，旧计时回调不能误停新预算。
 - 帧节流保留最新待复制图像，空闲时仍完成最终帧复制，观察时刷新待复制图像；不再永久丢失 200ms 内最后一次重绘。
 - 输入只写目标屏上已聚焦、可见、非密码的 editable 节点；回读原窗口与原节点，完整值精确匹配。没有焦点、节点消失、值不可读或替换未生效均不报成功。
-- tap、long_press、swipe、key 的拒绝/缺失确认向上传播。手势共享 downTime，eventTime 使用实际 uptime，按目标时间调度；输入法策略必须设置并回读确认为 LOCAL 后才能就绪。
+- tap、long_press、swipe、key 的拒绝/缺失确认向上传播。手势共享 downTime，eventTime 使用实际 uptime，按目标时间调度；当时输入法策略设置并回读确认为 LOCAL 后才就绪，2026-10-18 改为 HIDE 并配合焦点隔离。
 - 主动语音/快捷键/蓝牙唤醒及桌面启动可解除收尾静默；没有新唤醒时继续抑制旧结果拉起小爱。探针缺少稳定主屏基线时先判空，相关隔离项记为 untested。
 
 本轮未修改审查中的问题1、2和暂不确定事项；问题5接受页面不保留，未增加任务恢复。审查另列的三项设备验收漏检仍需专项复验：滚动位移、真实触摸隔离、强制清理前的 helper 正常退出；历史 PASS 不代表这些负例已覆盖。

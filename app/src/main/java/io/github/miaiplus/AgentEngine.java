@@ -49,7 +49,7 @@ public final class AgentEngine {
             // Cancellation during setup must release the display just like cancellation during model work.
             if (background) {
                 run.progress = "正在准备后台显示";
-                display = BackgroundDisplay.open(screen, run);
+                display = BackgroundDisplay.open(screen, run, config);
             }
             boolean auto = config.protocol.equals("autoglm");
             JSONArray messages = new JSONArray().put(ModelClient.message("system", RULES

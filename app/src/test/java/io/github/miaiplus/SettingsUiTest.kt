@@ -71,7 +71,48 @@ class SettingsUiTest {
         compose.onNodeWithText("最大步数").performClick()
         compose.onNodeWithText("步数").performTextReplacement("0")
         compose.onNodeWithText("保存", useUnmergedTree = true).performClick()
-        compose.onAllNodesWithText("步数需在 1–80 之间").assertAny(hasText("步数需在 1–80 之间"))
+        compose.onAllNodesWithText("步数需在 1–200 之间").assertAny(hasText("步数需在 1–200 之间"))
+        compose.onNodeWithText("步数").performTextReplacement("201")
+        compose.onNodeWithText("保存", useUnmergedTree = true).performClick()
+        compose.onAllNodesWithText("步数需在 1–200 之间").assertAny(hasText("步数需在 1–200 之间"))
+        compose.onNodeWithText("步数").performTextReplacement("200")
+        compose.onNodeWithText("保存", useUnmergedTree = true).performClick()
+        compose.onNodeWithText("200 步").assertExists()
+        val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
+        assertEquals(200, state.config.maxSteps)
+    }
+
+    @Test fun conversationTimeoutSavesMinutesRejectsInvalidValuesAndCanBeDisabled() {
+        val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
+        compose.onNodeWithText("闲置 15 分钟后").assertExists()
+        compose.onNodeWithText("自动新建对话").performScrollTo().performClick()
+        compose.onNodeWithText("时长（分钟）").performTextReplacement("1441")
+        compose.onNodeWithText("保存", useUnmergedTree = true).performClick()
+        compose.runOnIdle { assertEquals(15, state.config.conversationTimeoutMinutes) }
+        compose.onAllNodesWithText("时长需在 0–1440 分钟之间，0 表示关闭").assertAny(
+            hasText("时长需在 0–1440 分钟之间，0 表示关闭"))
+        compose.onNodeWithText("时长（分钟）").performTextReplacement("1440")
+        compose.onNodeWithText("保存", useUnmergedTree = true).performClick()
+        compose.onNodeWithText("闲置 1440 分钟后").assertExists()
+        compose.activityRule.scenario.recreate()
+        val recreatedState = ViewModelProvider(compose.activity)[SettingsState::class.java]
+        compose.onNodeWithText("闲置 1440 分钟后").assertExists()
+        compose.runOnIdle {
+            assertEquals(1440, io.github.miaiplus.Config(
+                recreatedState.getApplication<Application>()).conversationTimeoutMinutes)
+        }
+        compose.onNodeWithText("自动新建对话").performScrollTo().performClick()
+        compose.onNodeWithText("时长（分钟）").performTextReplacement("0")
+        compose.onNodeWithText("保存", useUnmergedTree = true).performClick()
+        compose.runOnIdle {
+            assertEquals(0, recreatedState.config.conversationTimeoutMinutes)
+            assertEquals(0, io.github.miaiplus.Config(
+                recreatedState.getApplication<Application>()).conversationTimeoutMinutes)
+            assertEquals(false, recreatedState.setConversationTimeoutMinutes(-1))
+            assertEquals(0, recreatedState.config.conversationTimeoutMinutes)
+            assertEquals(true, recreatedState.setConversationTimeoutMinutes(1))
+            assertEquals(1, recreatedState.config.conversationTimeoutMinutes)
+        }
     }
 
     @Test fun profileDraftRequiresExplicitSaveAndCanBeDiscarded() {
@@ -108,7 +149,7 @@ class SettingsUiTest {
 
     @Test fun secondaryPagesAnimateBothWaysAndReturnToTheirParent() {
         compose.mainClock.autoAdvance = false
-        compose.onNodeWithText("运行状态").performClick()
+        compose.onNodeWithText("运行状态").performScrollTo().performClick()
         compose.mainClock.advanceTimeBy(80)
         compose.onNodeWithTag("page-Home").assertExists()
         compose.onNodeWithTag("page-Status").assertExists()
@@ -137,7 +178,7 @@ class SettingsUiTest {
     @Test fun switchingTabsDuringSecondaryNavigationReleasesThePreviousPagesImmediately() {
         compose.mainClock.autoAdvance = false
         try {
-            compose.onNodeWithText("运行状态").performClick()
+            compose.onNodeWithText("运行状态").performScrollTo().performClick()
             compose.mainClock.advanceTimeBy(80)
             compose.onNodeWithTag("page-Home").assertExists()
             compose.onNodeWithTag("page-Status").assertExists()
@@ -231,6 +272,33 @@ class SettingsUiTest {
             state.refresh()
         }
         compose.onNodeWithText("上次注入异常").assertExists()
+    }
+
+    @Test fun virtualCanvasSavesCustomGeometryAndFillsCurrentDeviceValues() {
+        val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
+        val device = state.currentDisplayGeometry()
+        compose.onNodeWithTag("tab-Control").performClick()
+        compose.onNodeWithText("虚拟屏").performClick()
+        compose.onNodeWithText("自定义分辨率").performClick()
+        compose.onNodeWithText("宽度（像素）").performTextReplacement("1440")
+        compose.onNodeWithText("高度（像素）").performTextReplacement("3200")
+        compose.onNodeWithText("密度（dpi）").performTextReplacement("560")
+        capture("virtual-canvas-light")
+        compose.onNodeWithText("保存", useUnmergedTree = true).performClick()
+        compose.onNodeWithText("1440×3200 @ 560 dpi").assertExists()
+        compose.onNodeWithText("自定义分辨率").performClick()
+        compose.onNodeWithText("填入本机分辨率").performClick()
+        compose.onNodeWithText("宽度（像素）").assertTextContains(device.width.toString())
+        compose.onNodeWithText("高度（像素）").assertTextContains(device.height.toString())
+        compose.onNodeWithText("密度（dpi）").assertTextContains(device.density.toString())
+        // Filling is a draft operation; the user still explicitly saves it.
+        compose.runOnIdle { assertEquals(1440, state.config.displayWidth) }
+        compose.onNodeWithText("保存", useUnmergedTree = true).performClick()
+        compose.runOnIdle {
+            assertEquals(device.width, state.config.displayWidth)
+            assertEquals(device.height, state.config.displayHeight)
+            assertEquals(device.density, state.config.displayDensity)
+        }
     }
 
     @Test fun backgroundCheckIsExplicitAndSurvivesStatusRefresh() {
@@ -372,7 +440,7 @@ class SettingsUiTest {
         checkDirectTestHandoff(background = true, screen = true, expectedHandoffs = 0)
     }
 
-    @Test fun physicalDirectTestYieldsTheSecureSettingsWindow() {
+    @Test fun physicalDirectTestYieldsSettingsWindowToTargetApp() {
         checkDirectTestHandoff(background = false, screen = true, expectedHandoffs = 1)
     }
 

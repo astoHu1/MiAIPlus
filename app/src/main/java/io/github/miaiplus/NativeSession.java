@@ -78,23 +78,31 @@ public final class NativeSession {
                 scheduleWatchdog(scheduled);
                 if (s.background) {
                     s.run.progress = "正在准备后台显示";
-                    s.display = BackgroundDisplay.open(screen, s.run);
+                    s.display = BackgroundDisplay.open(screen, s.run, config);
                 }
                 s.run.pause(800);
                 availableApps = "可启动应用（launch 使用包名）：\n" + screen.apps();
             } else {
                 JSONObject request = new JSONObject(query.substring(9));
-                if (s == null || s.run.owner != owner || !s.id.equals(request.optString("session")))
-                    throw new IllegalStateException("控屏会话不存在或已过期，请重新提交完整任务");
-                PhoneUseRouting.verifyContinuation(s.sourceTool, sourceTool);
+                verifyContinuation(s, request, owner, sourceTool);
                 ownsStep = true;
                 if (caller != null) cancellation = bindCaller(s, caller);
                 extendBudget(s);
                 s.run.check();
+                JSONObject actionData = request.optJSONObject("action");
+                String actionName = actionData == null ? "" : actionData.optString("action")
+                    .toLowerCase(java.util.Locale.ROOT).replace(' ', '_');
+                boolean ending = actionData != null && (actionData.optString("_metadata").equals("finish")
+                    || Set.of("finish", "take_over", "ask_user").contains(actionName));
+                // The final observation is still available for finish/takeover. Any further data action
+                // fails on the budget before coordinate parsing and can never consume a max+1 step.
+                if (s.steps >= s.maxSteps && !ending)
+                    throw new IllegalStateException("达到最大步数，任务未确认完成；本轮控屏已结束。不要重试或重新发起任务，请向用户说明未完成部分");
                 // Use the encoded JPEG's real size, not a recomputed one: both backends downscale slightly
                 // differently, and an image_pixels coordinate must match the picture the model actually saw.
-                Action action = new Action(Coordinates.normalize(request.getJSONObject("action"), request.optString("coordinate_space", "normalized"),
-                    s.frame.width(), s.frame.height(), s.frame.imageWidth(), s.frame.imageHeight()));
+                Action action = ending ? new Action(actionData)
+                    : new Action(Coordinates.normalize(request.getJSONObject("action"), request.optString("coordinate_space", "normalized"),
+                        s.frame.width(), s.frame.height(), s.frame.imageWidth(), s.frame.imageHeight()));
                 String intent = TaskProgress.intent(action);
                 s.run.progress = intent;
                 if (action.name.equals("finish")) {
@@ -103,7 +111,7 @@ public final class NativeSession {
                 if (Set.of("take_over", "ask_user").contains(action.name)) {
                     String result = "PAUSE：" + action.data.optString("message", "需要用户接管"); close(); return result;
                 }
-                if (++s.steps > s.maxSteps) throw new IllegalStateException("达到最大步数，请重新发起任务");
+                s.steps++;
                 handoffPackage = s.background
                     ? BackgroundActions.foregroundHandoff(s.display, action, s.run, s.launchPolicy) : null;
                 if (handoffPackage != null) {
@@ -173,7 +181,11 @@ public final class NativeSession {
                 : tree.substring(0, Math.min(12000, tree.length()));
             return "CONTINUE：控屏尚未完成。由你（小爱当前主模型）根据新截图/无障碍树选择下一步，不需要外部模型。\n"
                 + (skipped.isEmpty() ? "" : skipped + "\n")
-                + "会话=" + s.id + "；目标=" + s.goal + "；步数=" + s.steps + "/" + s.maxSteps + "\n"
+                + "会话=" + s.id + "；目标=" + s.goal + "；步数=" + s.steps + "/" + s.maxSteps
+                + "；剩余动作步数=" + (s.maxSteps - s.steps) + "\n"
+                + (s.steps >= s.maxSteps
+                    ? "动作预算已耗尽，本次为最后观察；下一次只允许finish、take_over或ask_user。只有本次观察确认目标完成才finish，否则说明未完成部分并交还用户；禁止继续操作或自动重启任务。\n"
+                    : "每个操作（包括未执行的重新规划步骤）消耗一个动作步数；预算不足以完成时请take_over或ask_user说明未完成部分，不要自动重启任务。\n")
                 + "执行屏幕=" + (s.background ? "background" : "foreground") + "；会话工具=" + (s.sourceTool.isEmpty() ? "voiceassist__controlApp" : s.sourceTool) + "\n"
                 + (handoffPackage == null ? "" : "执行器已切换到前台控屏模式；旧后台截图和坐标已作废，只能根据本次新观察规划下一步。\n")
                 + (s.background
@@ -200,6 +212,18 @@ public final class NativeSession {
         } finally {
             if (cancellation != null) cancellation.close();
         }
+    }
+    /** Read-only preflight before the provider reserves UI/job state; never acquire the session monitor here. */
+    static void verifyContinuation(String query, int owner, String sourceTool) throws Exception {
+        if (query == null || !query.startsWith("MIAIPLUS:"))
+            throw new IllegalArgumentException("缺少控屏会话动作");
+        verifyContinuation(active, new JSONObject(query.substring(9)), owner, sourceTool);
+    }
+    private static void verifyContinuation(State s, JSONObject request, int owner, String sourceTool) {
+        if (s == null || s.run.cancelled.get() || android.os.SystemClock.elapsedRealtime() >= s.run.deadline
+            || s.run.owner != owner || !s.id.equals(request.optString("session")))
+            throw new IllegalStateException("控屏会话不存在或已过期，本轮已结束；不要继续调用或自动重启，请向用户说明任务未确认完成");
+        PhoneUseRouting.verifyContinuation(s.sourceTool, sourceTool);
     }
     private static RunState.CancellationBinding bindCaller(State state, RunState caller) {
         return caller.onCancel(() -> {
@@ -291,6 +315,11 @@ public final class NativeSession {
     public static boolean hasActiveSession() {
         State s = active;
         return s != null && !s.run.cancelled.get() && android.os.SystemClock.elapsedRealtime() < s.run.deadline;
+    }
+    static String activeSessionId(int owner) {
+        State s = active;
+        return s != null && s.run.owner == owner && !s.run.cancelled.get()
+            && android.os.SystemClock.elapsedRealtime() < s.run.deadline ? s.id : "";
     }
     public static boolean hasPendingOperation() { return executing || hasActiveSession() || closing; }
     public static String progress() { State s = active; return s == null ? "" : s.run.progress; }

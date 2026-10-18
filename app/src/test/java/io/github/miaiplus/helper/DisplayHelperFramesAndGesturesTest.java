@@ -153,6 +153,31 @@ public class DisplayHelperFramesAndGesturesTest {
         assertTrue(verdict.getString("reason").contains("baseline"));
     }
 
+    @Test public void losingPhysicalWindowFocusFailsEvenWhenAppAndTaskStayUnchanged() throws Exception {
+        Class<?> mainState = Class.forName(DisplayHelper.class.getName() + "$MainState");
+        var constructor = mainState.getDeclaredConstructor(String.class, String.class, String.class);
+        constructor.setAccessible(true);
+        Object baseline = constructor.newInstance("com.example/.Main", "com.example/.Main", "42");
+        JSONArray samples = new JSONArray().put(new JSONObject().put("step", "afterLaunch")
+            .put("windowFocus", "").put("appFocus", "com.example/.Main").put("task", "42"));
+        JSONObject verdict = (JSONObject) invoke("probeFocusIsolation",
+            new Class<?>[] { mainState, JSONArray.class }, baseline, samples);
+        assertEquals("unsupported", verdict.getString("status"));
+        assertEquals("afterLaunch", verdict.getString("windowFocusChangedDuring"));
+    }
+
+    @Test public void missingBaselineWindowFocusCannotClaimKeyboardIsolation() throws Exception {
+        Class<?> mainState = Class.forName(DisplayHelper.class.getName() + "$MainState");
+        var constructor = mainState.getDeclaredConstructor(String.class, String.class, String.class);
+        constructor.setAccessible(true);
+        Object baseline = constructor.newInstance("", "com.example/.Main", "42");
+        JSONArray samples = new JSONArray().put(new JSONObject().put("step", "afterCreate")
+            .put("windowFocus", "").put("appFocus", "com.example/.Main").put("task", "42"));
+        JSONObject verdict = (JSONObject) invoke("probeFocusIsolation",
+            new Class<?>[] { mainState, JSONArray.class }, baseline, samples);
+        assertEquals("untested", verdict.getString("status"));
+    }
+
     private void assertGesture(long duration, int count) {
         assertEquals(count, sink.events.size());
         Event first = sink.events.get(0), last = sink.events.get(count - 1);

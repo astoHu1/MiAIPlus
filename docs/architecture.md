@@ -32,11 +32,21 @@ flowchart TD
 
 新版主聊天页为 `MainNavigatorActivity`，普通 `onNewIntent` 不再直接消费旧会话 extra。模块生成的返回 Intent 显式标记自己的导航请求，在页面初始化后调用原生 `navigateToDetail`；无话题入口调用原生主对话导航。任务运行及静默窗口内不导航，完成通知通过本任务 token 解除静默。导航数据在宿主异步消费 Intent 前捕获，页面回调由 `InteractionUi` 跟踪，重载时一并清理；首次对话定位、独立 PendingIntent 和跨工具步绑定保持不变。
 
+Phone Use 的 `maxSteps` 可设置范围为 1–200，默认 30。对话空闲时长由独立 `conversationTimeoutMinutes` 配置管理，默认 15 分钟，范围 1–1440，0 关闭；不依赖控屏开关或模型 API 配置。宿主通过经 UID 校验的 `conversation_settings` 读取时长及控屏忙状态，不接收模型凭证或屏幕内容。全屏与浮窗共用用户操作时间；回复及工具结果不延长空闲时间，自动换话题只在用户再次唤醒时发生。
+
+`NativeConversationHook` 在真实语音／启动器唤醒入口判断空闲；语音在宿主完成界面重置、开始识别或提交之前选择话题，桌面图标／原生快捷方式在聊天 Activity 完成恢复后应用，避免旧 PAGE 覆盖新话题。只保存原生话题身份和用户操作时间，不复制聊天正文。原生空话题复用保护阻止超时新建时，调用其完整的新会话初始化路径；仅当宿主 Activity 的原生 Lifecycle 确为 `RESUMED` 时同步全屏 Navigator，防止退到后台后过渡滞后的屏幕标志将浮窗唤醒改回全屏；浮窗继续使用原生系统窗口。真实触摸、按键、文字提交及最终识别结果更新计时，显式历史／通知返回优先于自动选择。控屏忙碌、配置关闭／不可读或过期时丢弃待处理导航，重载释放回调；删除所选话题会清除保存身份。
+
+`NativeConversationLimitsHook` 对 `osbot.main`／`osbot.chat`／`osbot.overlayassistant` 移除原生 `IterationGuard` 的计数停止及 `beginIteration` 的普通 60／复杂 1000 轮硬门槛。原始轮次、事件和会话 ID 保持真实；超过原门槛时保留事件 channel 的挂起、失败和取消语义。实际强制禁用工具、工具 Failure、取消、时限与上下文压缩继续生效，其他专项 Agent 保留原限制。侧栏创建第 101 个历史话题的检查独立移除，不修改 DAO 计数、分页或删除记录；历史话题数量与单次请求执行轮数是两项不同限制。
+
 ## 默认官方模型控屏
 
 `NativeSession` 在模块 UID 维护四分钟以内的会话、最近观察、最大步数和停止状态。首次请求返回 `CONTINUE`、会话号和观察；模型可调用注册到原生 ToolRegistry 的两个函数：`miaiplus_phone_use` 前台控屏、`miaiplus_background_phone_use` 虚拟屏控屏。首次通过所选工具提交 `goal`，后续沿用同一工具提交 `session` 和 `action`；两者不受兼容入口默认屏幕开关影响；兼容入口接收 `MIAIPLUS:{session,action}`。结构化函数默认按实际 JPEG 像素接收坐标，也支持显式物理屏幕像素与0..1000；统一换算后再交给执行器。旧入口默认归一化坐标。结构化函数只在启用本机原生规划时加入模型工具列表，执行时再次校验配置。每步只执行一个数据动作，之后重新观察。对包含模块 CONTINUE 和截图 token 的 ToolResult.Success，清除直接答案标记与内部 CLI 直接答案 metadata，确保原 Agent 把中间观察回送模型；其他工具结果保持原行为。结束/接管显式关闭会话。
 
 无外部端点配置也可工作，`AgentEngine` 在该模式下不调用 `ModelClient`。截图由 `FrameStore` 存入短期内存，以随机、一次性、调用 UID 绑定的 token 经 Provider 管道读取。`NativeModelHook` 优先在 ToolResult.Success 中附加 `ImageContent`，使原生 CLI 与消息历史复制保留图片；TOOL Message 构造 Hook 提供兼容读取。图片元数据采用实际 JPEG 尺寸，执行坐标仍以原屏归一化。截图不以 Base64 进入工具返回字符串或 Binder Bundle。
+
+控屏动作预算在每次观察中显式报告；最后一个动作仍返回新观察，此后只允许 `finish`／`take_over`／`ask_user`，超额动作在解析坐标和注入之前终止。错误不再要求模型重开任务。`NativePhoneUseTool` 保留 `AppResult.isError()`，返回不可重试且 `terminateAgent=true` 的原生 `ToolResult.Failure`；`STOP：MiAIPlus 控屏已停止。` 与所有顶层 `PAUSE：` 都结束原生工具轮次。停止 gate 同时处理 Success／Failure 和精确兼容 CLI 入口，不从页面文字中搜索终止指令；页面变化的 `CONTINUE` 仍回送模型重新规划。
+
+Provider 在创建任务或收起界面前校验续调的会话、UID、期限和来源工具，过期续调不会新建 `screen_task` 或覆盖已结束通知。`NativeTurnLifecycle` 将有效 CONTINUE 的会话绑定到宿主执行身份、请求 ID 和模块任务 token，核对观察会话与 Provider 当前会话一致。宿主硬轮次上限或本轮退出只清理对应的未完成控屏；Provider 再次校验 token，旧请求不能取消新任务。缺少可靠请求身份时不猜测归属，保留原 watchdog。灵动岛收尾后的短暂静默同时覆盖宿主启动和 Activity 恢复；用户主动唤醒或点击有效返回通知立即解除静默。
 
 `PageGuard` 按动作目标检查新旧观察：点击、双击和长按比较坐标覆盖的控件、祖先与遮挡节点，输入比较唯一的已聚焦编辑框；同时校验前台应用、显示实例和几何尺寸。目标区域外的动态文字变化不使动作失效。覆盖目标的父容器仅汇总文字变化时，保留其身份、位置、状态和覆盖顺序检查，再由 `VisualRegion` 比较整个目标及周边画面；目标自身文字、资源 ID、启用或焦点变化仍拒绝。无可访问目标的纯图片区域，以及没有非空文字／描述的可点击容器，改为比较点击点附近画面，区域外的广告轮播不要求停止。明确描述为“搜索”或“暂停视频”的控件仍以稳定语义锚定，允许背后视频继续播放。
 
@@ -131,11 +141,15 @@ Hook 仅安装在精确校验的小爱版本：工具入口、描述构造、Pro
 
 分工：`helper/DisplayHelper` 是 root 侧、独占持有屏幕的进程，只接受类型化 RPC（`<token> <verb> <args>`），唯一的子进程是固定 argv 的 `am`/`screencap`/`input`/`dumpsys`，任何输入都不会被拼成 shell 字符串。`BackgroundDisplay` 是模块侧会话，启动 helper、收发命令、读回帧。`DisplaySession` 记录一次运行的屏幕身份（逻辑 id、SurfaceFlinger token、几何、generation），generation 用于拒绝旧屏的迟到请求——系统会复用 display id。`BackgroundActions` 只在该屏上执行动作，不做全局动作、不查默认屏。
 
-两处设计取舍来自实机失败，不是推测：一是另一块屏存在时主屏的 `mCurrentFocus` 会读成 `null`（从建屏那一刻起），但它仍在收自己的输入，所以隔离判定以 app 焦点和栈顶任务为准，窗口焦点只作证据；二是多数应用是 `singleTask`，让它在后台屏“启动”会被系统实现为把用户正在看的任务搬走，命令还报成功，所以启动前先查可见任务并拒绝。
+虚拟屏生产会话与能力探测的宽、高和密度来自模块私有配置（默认 1080×1920@320），随对应 RPC 传给 root helper。设置页可读取默认物理屏当前的完整像素尺寸与密度，一键填入编辑框后点击「保存」生效；参数仅用于后续新建的虚拟屏，不调整进行中的会话。
+
+后台屏使用 `TRUSTED | OWN_FOCUS | STEAL_TOP_FOCUS_DISABLED`：保有自己的窗口焦点以接收按屏定向的输入，同时禁止启动应用和触摸把该屏提升为系统顶层焦点。输入法设为 `HIDE` 并回读验证；后台文字仍经该屏可编辑节点的 `ACTION_SET_TEXT` 写入，不争用主屏输入法。生产建屏和能力探测共用同一初始化路径，在启动应用前完成校验；平台缺少标志、未落实焦点属性或拒绝输入法策略时停止并销毁后台屏。无相关回移植的 AOSP Android 13 不具备这两个焦点标志，只拒绝后台屏能力，模块前台功能仍支持 Android 13。
+
+此前只比较主屏 app 焦点和栈顶任务，并把 `mCurrentFocus=null` 当作上报形态，不能证明用户的键盘保留；键盘隔离需要另外检查窗口焦点、输入连接及输入法持续可见。另一个独立问题是多数应用使用 `singleTask`，后台“启动”可能搬走主屏任务，因此仍在启动前查询并保护其他屏的可见任务。
 
 2026-10-17 按用户要求调整冲突处理：任务查询读取系统 TaskInfo 的真实组件与 task identity；首次目标就是主屏当前应用时转前台，中途则由 `ForegroundConsent` 经 Provider 暴露绑定 UID/任务/token 的请求，`InteractionUi` 仅以灵动岛按钮收集同意或拒绝。同意后重新验证主屏归属、释放后台屏并作废旧观察，下一步从新的主屏观察规划；拒绝/超时暂停并结束本轮。后台故障仍停止，不触发此交接。完整探针与准备、执行、原生跨步间隔及收尾互斥，状态查询单独持有缓存目录。
 
-取消清理绑定具体 NativeSession/BackgroundDisplay 实例，异步等待执行退出；步骤续期同步更新 deadline 与 watchdog。后台输入定位原焦点节点并精确回读原节点值，helper 拒绝输入或不能验证 LOCAL 输入法策略时停止。帧节流保留最终待复制图像，手势使用同一 downTime 与实际注入时刻。上述当前实现的新增设备验收尚未完成，不继承此前版本的实测通过结论。
+取消清理绑定具体 NativeSession/BackgroundDisplay 实例，异步等待执行退出；步骤续期同步更新 deadline 与 watchdog。后台输入定位原焦点节点并精确回读原节点值，helper 拒绝输入或不能验证 HIDE 输入法策略时停止。帧节流保留最终待复制图像，手势使用同一 downTime 与实际注入时刻。上述当前实现的新增设备验收尚未完成，不继承此前版本的实测通过结论。
 
 `NativeSession` 和 `AgentEngine` 共用同一后端。后台敏感操作仍返回 PAUSE，交给用户手动接管；具体行为、错误码与已验证项见 [后台虚拟屏](background-display.md)。
 

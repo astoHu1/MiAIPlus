@@ -13,26 +13,13 @@ final class ForegroundConsent {
         Paused(String message) { super(TERMINAL_PREFIX + (message.startsWith("PAUSE：") ? message.substring(6) : message)); }
     }
     static boolean endsNativeTurn(String text) {
-        if (text == null) return false;
-        if (text.startsWith(TERMINAL_PREFIX)) return true;
-        // The compatibility CLI unwraps only its known response envelope, never arbitrary page/tree fields.
-        if (!text.startsWith("{")) return false;
-        try {
-            org.json.JSONObject value = new org.json.JSONObject(text);
-            Object data = value.opt("data");
-            if (value.optInt("__envelope__") == 1 && value.optBoolean("ok")) {
-                if (data instanceof String plain) return plain.startsWith(TERMINAL_PREFIX);
-                if (data instanceof org.json.JSONObject result) return terminalTextResult(result);
-            }
-            return terminalTextResult(value);
-        } catch (org.json.JSONException invalid) { return false; }
-    }
-    private static boolean terminalTextResult(org.json.JSONObject result) {
-        return result.optString("type").equals("text") && result.opt("text") instanceof String plain
-            && plain.startsWith(TERMINAL_PREFIX);
+        return PhoneUseResult.endsNativeTurn(text);
     }
     static boolean endsNativeToolTurn(String name, String arguments, String text) {
         if (!endsNativeTurn(text)) return false;
+        return isPhoneTool(name, arguments);
+    }
+    static boolean isPhoneTool(String name, String arguments) {
         if (NativePhoneUseTool.NAME.equals(name) || NativePhoneUseTool.BACKGROUND_NAME.equals(name)
             || "voiceassist__controlApp".equals(name)) return true;
         if (!"cli".equals(name)) return false;

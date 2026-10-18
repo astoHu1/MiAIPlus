@@ -86,6 +86,10 @@ public final class HookSmokeProbe {
                     RobustScreenProbe.signalReady();
                     return;
                 }
+                if ("MIAIPLUS_PHONE_USE_TERMINAL_READY".equals(intent.getStringExtra("frame"))) {
+                    PhoneUseTerminalProbe.signalReady();
+                    return;
+                }
                 if ("MIAIPLUS_FOREGROUND_CONSENT_READY".equals(intent.getStringExtra("frame"))) {
                     ForegroundConsentProbe.signalReady();
                     return;
@@ -107,7 +111,9 @@ public final class HookSmokeProbe {
                             : "MIAIPLUS_DUAL_TOOLS".equals(token) ? dualTools(context, loader)
                             : "MIAIPLUS_ACTION_CONFIRMATION".equals(token) ? ActionConfirmationProbe.run(context, loader)
                             : "MIAIPLUS_ROBUST_SCREEN".equals(token) ? RobustScreenProbe.run(context, loader)
+                            : "MIAIPLUS_PHONE_USE_TERMINAL".equals(token) ? PhoneUseTerminalProbe.run(context, loader)
                             : "MIAIPLUS_CONVERSATION_RETURN".equals(token) ? ConversationReturnProbe.run(context, loader)
+                            : "MIAIPLUS_CONVERSATION_CONTINUITY".equals(token) ? ConversationContinuityProbe.run(context, loader)
                             : "MIAIPLUS_REPLY_ACTIONS".equals(token) ? ReplyActionsProbe.run(context, loader)
                             : "MIAIPLUS_FOREGROUND_CONSENT".equals(token) ? ForegroundConsentProbe.run(context, loader)
                             : "MIAIPLUS_TRANSPORT_FAILURE".equals(token) ? transportFailures(loader)
@@ -261,7 +267,8 @@ public final class HookSmokeProbe {
         CompletableFuture<Object> completed = new CompletableFuture<>();
         Object result = await(loader, invoke(tool, "execute", NativePhoneUseTool.json(loader, request.toString()), null,
             continuation(loader, completed)), completed);
-        String text = String.valueOf(invoke(result, "getResult"));
+        String text = String.valueOf(invoke(result,
+            Reflector.findClass("com.aios.osbot.tools.ToolResult$Failure", loader).isInstance(result) ? "getError" : "getResult"));
         if (text.startsWith("CONTINUE")) {
             List<?> images = (List<?>)invoke(result, "getImages");
             if (images == null || images.isEmpty()) throw new AssertionError("native tool observation has no attached image");

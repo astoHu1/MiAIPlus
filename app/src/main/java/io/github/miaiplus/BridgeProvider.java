@@ -24,6 +24,7 @@ public final class BridgeProvider extends ContentProvider {
     // Reserved under JOBS before creating a probe display; start uses the same monitor.
     private static boolean backgroundProbeRunning;
     private static volatile String screenResult = "";
+    private static String screenStopReason = "";
     // A task spans all native CONTINUE calls, including the idle model-planning gaps.
     private static String screenTaskId;
     private static boolean screenTaskActive;
@@ -65,6 +66,23 @@ public final class BridgeProvider extends ContentProvider {
             return b;
         }
         if (method.equals("stop_screen")) { cancelActive(); return b; }
+        if (method.equals("model_exhausted") || method.equals("model_finished")) {
+            synchronized (JOBS) {
+                refreshScreenTask();
+                // A late result from another host turn must never cancel a replacement screen task.
+                boolean matches = arg != null && arg.equals(screenTaskId) && screenTaskActive;
+                if (matches) {
+                    screenStopReason = PhoneUseResult.stopped(method.equals("model_exhausted")
+                        ? "小爱主模型已达到最大执行轮次，无法继续调用控屏工具"
+                        : "小爱主模型已结束本轮，未提交控屏完成确认");
+                    screenResult = screenStopReason;
+                    cancelActive();
+                    refreshScreenTask();
+                }
+                b.putBoolean("accepted", matches);
+            }
+            return b;
+        }
         if (method.equals("foreground_consent") || method.equals("action_confirmation")) {
             synchronized (JOBS) {
                 boolean current = screenTaskActive && java.util.Objects.equals(arg, screenTaskId)
@@ -82,6 +100,7 @@ public final class BridgeProvider extends ContentProvider {
                 b.putBoolean("active", matches && screenTaskActive);
                 b.putBoolean("completed", matches && screenTaskId != null && !screenTaskActive);
                 b.putString("screen_task", screenTaskId);
+                b.putString("native_session", matches ? NativeSession.activeSessionId(Binder.getCallingUid()) : "");
                 b.putString("result", matches ? screenResult : "控屏任务已更换");
                 String progress = NativeSession.progress();
                 RunState current = active;
@@ -98,6 +117,15 @@ public final class BridgeProvider extends ContentProvider {
             b.putBoolean("enabled", config.enabled);
             b.putBoolean("nativePlanner", config.planner.equals("native"));
             b.putBoolean("accessibility", ScreenService.isHealthy());
+            return b;
+        }
+        if (method.equals("conversation_settings")) {
+            b.putInt("conversationTimeoutMinutes", config.conversationTimeoutMinutes);
+            synchronized (JOBS) {
+                refreshScreenTask();
+                b.putBoolean("screenBusy", screenTaskActive || NativeSession.hasPendingOperation()
+                    || (active != null && active.screen));
+            }
             return b;
         }
         if (method.equals("set_reasoning")) {
@@ -146,6 +174,13 @@ public final class BridgeProvider extends ContentProvider {
                     && (BackgroundDisplay.active() != null || NativeSession.hasPendingOperation())) {
                     b.putString("error", "上一控屏任务仍在清理，请等待结束"); return b;
                 }
+                // A stale continuation is a rejected call, not a new screen task. Reserving a task here
+                // would reopen the focus island and hide/show the chat on every model retry.
+                if (mode.equals("screen") && config.planner.equals("native")
+                    && query != null && query.startsWith("MIAIPLUS:")) {
+                    try { NativeSession.verifyContinuation(query, Binder.getCallingUid(), route.sourceTool()); }
+                    catch (Exception invalid) { b.putString("error", PhoneUseResult.stopped(publicError(invalid))); return b; }
+                }
                 JOBS.entrySet().removeIf(e -> !e.getValue().status.equals("running")
                     && android.os.SystemClock.elapsedRealtime() > e.getValue().deadline + 300_000);
                 if (JOBS.size() >= 16) JOBS.values().stream().filter(r -> !r.status.equals("running"))
@@ -155,7 +190,7 @@ public final class BridgeProvider extends ContentProvider {
                 run.preparingScreen = run.screen && query != null && !query.startsWith("MIAIPLUS:");
                 if (run.screen) run.progress = run.preparingScreen ? "正在检查无障碍连接" : "正在判断下一步";
                 if (run.screen && !NativeSession.hasActiveSession()) {
-                    screenTaskId = run.id; screenTaskActive = true; screenResult = "";
+                    screenTaskId = run.id; screenTaskActive = true; screenResult = ""; screenStopReason = "";
                 }
                 if (!run.screen || extras == null || !extras.getBoolean("screen_ui")) run.screenReady.countDown();
                 active = run; JOBS.put(run.id, run);
@@ -176,11 +211,13 @@ public final class BridgeProvider extends ContentProvider {
                     }
                     catch (Exception e) {
                         // Keep exception details out of IPC to avoid echoing API bodies or typed content.
-                        run.result = run.cancelled.get() ? "任务已停止或超时" : publicError(e); run.status = "error";
+                        String reason = run.cancelled.get() ? "任务已停止或超时" : publicError(e);
+                        run.result = run.screen ? PhoneUseResult.stopped(reason) : reason;
+                        run.status = "error";
                     } finally {
                         timeout.cancel(false);
                         synchronized (JOBS) {
-                            if (run.screen) screenResult = run.result;
+                            if (run.screen) screenResult = screenStopReason.isEmpty() ? run.result : screenStopReason;
                             active = null;
                             refreshScreenTask();
                         }

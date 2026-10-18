@@ -48,9 +48,12 @@ GitHub Actions 在 main 推送、PR 和手动触发时执行测试、Lint 与构
 ## TODO
 - 在模型耗尽步数/Phone Use遇到错误后返回合适的错误信息
 - 优化Phone Use的工作效率
+- 为Phone Use设计Bypass Permission/YOLO
 - 为虚拟屏添加更多画布分辨率支持
 - 减少错误提示的Phone Use失败灵动岛事件
 - 为x-opencode-session请求头提供兼容
+- 快捷浮窗唤出小爱时开启新对话
+- 去除小爱的轮数限制
 - You tell me
 
 ## 更多说明

@@ -40,7 +40,7 @@ public final class ForegroundConsentTest {
         assertFalse(ForegroundConsent.endsNativeTurn("CONTINUE：控屏尚未完成。目标=" + pause.getMessage()));
         assertFalse(ForegroundConsent.endsNativeTurn("CONTINUE：控屏尚未完成。无障碍树text=" + pause.getMessage()));
         assertFalse(ForegroundConsent.endsNativeTurn("{\"data\":\"" + pause.getMessage() + "\"}"));
-        assertFalse(ForegroundConsent.endsNativeTurn("PAUSE：需要你接管手机"));
+        assertTrue(ForegroundConsent.endsNativeTurn("PAUSE：需要你接管手机"));
     }
 
     @Test public void nativeStopDecisionIsLimitedToOurPhoneToolAndExactCompatibilityCommand() throws Exception {

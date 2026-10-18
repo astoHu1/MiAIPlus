@@ -63,13 +63,27 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
      * used to pull XiaoAi forward — so suppressing only while {@link #running} would let the jump come back on the
      * last step. Explicit user wake-up and launcher entries end this window immediately.
      */
-    private volatile long hostQuietUntil;
+    private final HostQuietWindow quietWindow = new HostQuietWindow();
     /**
      * Short by design. The final tool result is rendered by the host within a second of the task ending, so a few
      * seconds cover it. User wake-up is recognized at the host's service entry, before the UI guards, so even an
      * immediate new request can open the assistant without letting old tool-result updates reopen it on their own.
      */
     private static final long HOST_QUIET_AFTER_FINISH_MS = 10_000;
+    static final class HostQuietWindow {
+        private volatile long until;
+        boolean active(boolean running) {
+            return running || android.os.SystemClock.elapsedRealtime() < until;
+        }
+        void finished() {
+            until = android.os.SystemClock.elapsedRealtime() + HOST_QUIET_AFTER_FINISH_MS;
+        }
+        boolean userEntered(boolean running) {
+            if (running) return false;
+            until = 0;
+            return true;
+        }
+    }
     /** Host entry points that could not be hooked on this build; empty means every known path is guarded. */
     final java.util.List<String> missingGuards = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
     private java.util.concurrent.ScheduledExecutorService watcher;
@@ -155,8 +169,7 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
                     method.equals("onCreate") ? Bundle.class : Intent.class, new HookCallback() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) throws Exception {
                             Intent intent = method.equals("onCreate") ? ((Activity)p.thisObject).getIntent() : (Intent)p.args[0];
-                            if (!running && intent != null && returnToken != null
-                                && returnToken.equals(intent.getStringExtra(RETURN_TOKEN))) userEnteredHost();
+                            if (isCompletionEntry(running, intent, returnToken)) userEnteredHost();
                         }
                         @Override protected void afterHookedMethod(MethodHookParam p) {
                             Activity activity = (Activity)p.thisObject;
@@ -175,7 +188,7 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
         // Keep native streaming UI updates from reattaching that window over the app being operated.
         Reflector.findAndHookMethod("com.xiaomi.voiceassistant.UiManager", loader, "start", Intent.class, new HookCallback() {
             @Override protected void beforeHookedMethod(MethodHookParam p) throws Exception {
-                if (running) { p.setResult(null); return; }
+                if (hostQuiet()) { p.setResult(null); return; }
                 if (!running && overlayHidden) MainThread.call(() -> { releaseOverlay(); return null; });
             }
         });
@@ -493,7 +506,11 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
     }
     /** Whether the host must not bring its own UI forward right now. */
     private boolean hostQuiet() {
-        return running || android.os.SystemClock.elapsedRealtime() < hostQuietUntil;
+        return quietWindow.active(running);
+    }
+    static boolean isCompletionEntry(boolean running, Intent intent, String token) {
+        return !running && intent != null && token != null
+            && token.equals(intent.getStringExtra(RETURN_TOKEN));
     }
     private static boolean isUserWakeAction(String action) {
         return "com.miui.voiceassist.ACTION_VOICE_START_VOICEASSIST".equals(action)
@@ -504,8 +521,7 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
     private void userEnteredHost() throws Exception {
         MainThread.call(() -> {
             // A new request must not take the screen away from an active control task.
-            if (!running) {
-                hostQuietUntil = 0;
+            if (quietWindow.userEntered(running)) {
                 if (overlayHidden) releaseOverlay();
             }
             return null;
@@ -533,7 +549,7 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
         clearConsentActions(); consentToken = null; shownConsentToken = null;
         // Hold the host UI back until its own result rendering has finished. Without this, the final tool result
         // is drawn on the user's screen a moment after the task ends, which is the same jump, just later.
-        hostQuietUntil = android.os.SystemClock.elapsedRealtime() + HOST_QUIET_AFTER_FINISH_MS;
+        quietWindow.finished();
         if (restore && !app.getSystemService(KeyguardManager.class).isKeyguardLocked()) {
             try {
                 publish(completionTitle(result), completionText(result), false);
@@ -587,9 +603,10 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
     @Override public void onActivityResumed(Activity activity) {
         resumed = new WeakReference<>(activity);
         // Native tool-result rendering may resume the chat after each CONTINUE.
-        // Keep the original task in the background until its terminal acknowledgement.
-        if (running) activity.moveTaskToBack(true);
-        if (!running && overlayHidden) releaseOverlay();
+        // Keep the original task in the background through the final result's quiet window as well.
+        boolean quiet = hostQuiet();
+        if (quiet) activity.moveTaskToBack(true);
+        if (!quiet && overlayHidden) releaseOverlay();
     }
     @Override public void onActivityPaused(Activity activity) { if (resumed.get() == activity) resumed.clear(); }
     @Override public void onActivityCreated(Activity activity, Bundle state) {}

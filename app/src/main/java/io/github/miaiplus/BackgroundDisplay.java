@@ -31,8 +31,8 @@ public final class BackgroundDisplay implements AutoCloseable {
     public static final String ERROR_CAPTURE_FAILED = "CAPTURE_FAILED";
     public static final String ERROR_INPUT_FAILED = "INPUT_FAILED";
     public static final String ERROR_IME_ISOLATION = "IME_ISOLATION_FAILED";
+    public static final String ERROR_FOCUS_ISOLATION = "FOCUS_ISOLATION_FAILED";
 
-    private static final int DEFAULT_WIDTH = 1080, DEFAULT_HEIGHT = 1920, DEFAULT_DENSITY = 320;
     private static final long COMMAND_TIMEOUT_MS = 25_000;
     private static final Object LOCK = new Object();
     private static volatile BackgroundDisplay active;
@@ -53,10 +53,12 @@ public final class BackgroundDisplay implements AutoCloseable {
      * display is torn down inside the helper even when a step fails.
      */
     public static JSONObject capability(Context context, String component, RunState run) throws Exception {
+        Config config = new Config(context);
         BackgroundDisplay display = start(context.getApplicationContext());
         try {
             display.request(run, "probe", null);
-            return display.request(run, "capability", component == null ? "" : component);
+            return display.request(run, "capability", config.displayWidth + " " + config.displayHeight + " "
+                + config.displayDensity + (component == null || component.isEmpty() ? "" : " " + component));
         } finally {
             display.close();
         }
@@ -111,7 +113,7 @@ public final class BackgroundDisplay implements AutoCloseable {
      * Starts the helper and opens the display. Fails closed with a coded error; the caller never receives a
      * session that could later act on the wrong screen.
      */
-    public static BackgroundDisplay open(Context context, RunState run) throws Exception {
+    public static BackgroundDisplay open(Context context, RunState run, Config config) throws Exception {
         synchronized (LOCK) {
             if (active != null && active.isOpen()) return active;
             if (active != null) active.close();
@@ -125,12 +127,12 @@ public final class BackgroundDisplay implements AutoCloseable {
                 if ("true".equals(probe.optString("keyguardLocked")))
                     throw new IllegalStateException(ERROR_DEVICE_LOCKED + "：请先解锁手机再使用后台显示");
                 JSONObject created = display.request(run, "create",
-                    DEFAULT_WIDTH + " " + DEFAULT_HEIGHT + " " + DEFAULT_DENSITY);
+                    config.displayWidth + " " + config.displayHeight + " " + config.displayDensity);
                 DisplaySession createdSession = new DisplaySession(created.getInt("displayId"), created.optString("surfaceFlingerId"),
-                    DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_DENSITY, 0);
-                // Keep the IME off the physical screen; the agent types through accessibility, not the keyboard.
+                    config.displayWidth, config.displayHeight, config.displayDensity, 0);
+                // Creation already verified no-steal focus and HIDE; recheck without reapplying a ready policy.
                 JSONObject ime = display.request(run, "ime", null);
-                if (!"LOCAL".equals(ime.optString("policy")) || !"true".equals(ime.optString("verified")))
+                if (!"HIDE".equals(ime.optString("policy")) || !"true".equals(ime.optString("verified")))
                     throw new IllegalStateException(ERROR_IME_ISOLATION + "：无法确认后台屏输入法隔离，任务已停止");
                 display.session = createdSession;
                 run.progress = "后台显示已就绪";

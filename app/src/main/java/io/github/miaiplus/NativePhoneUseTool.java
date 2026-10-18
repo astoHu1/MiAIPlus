@@ -12,7 +12,7 @@ import java.util.Map;
 public final class NativePhoneUseTool {
     public static final String NAME = PhoneUseRouting.FOREGROUND_TOOL;
     public static final String BACKGROUND_NAME = PhoneUseRouting.BACKGROUND_TOOL;
-    private static final String DESCRIPTION = "本机手机控屏。start时传goal取得session和观察；然后每次传session及一个action对象，按新观察继续调用直到finish。无需额外API，由你逐步规划。默认使用截图JPEG像素坐标(image_pixels)，不是0..1000；也可显式选screen_pixels或normalized，必须匹配观察尺寸。不要复述CONTINUE或用自然语言替代action。系统专用工具优先。";
+    private static final String DESCRIPTION = "本机手机控屏。start时传goal取得session和观察；然后每次传session及一个action对象，按新观察继续调用直到finish。剩余动作预算为0时只能finish/take_over/ask_user。STOP、PAUSE或错误表示本轮结束，不得重试或重新提交goal；向用户如实说明未完成和原因。无需额外API，由你逐步规划。默认使用截图JPEG像素坐标(image_pixels)，不是0..1000；也可显式选screen_pixels或normalized，必须匹配观察尺寸。不要复述CONTINUE或用自然语言替代action。系统专用工具优先。";
     private static final String SCHEMA = """
         {"type":"object","properties":{
           "goal":{"type":"string","description":"仅首次开始时填写完整任务"},
@@ -96,8 +96,13 @@ public final class NativePhoneUseTool {
                         try (var origin = ConversationReturn.bind(args[1])) {
                             Object result = Reflector.callMethod(service, "controlApp", query);
                             text = String.valueOf(Reflector.callMethod(result, "getText"));
+                            NativeTurnLifecycle.observe(context, args[1], text);
+                            if (Boolean.TRUE.equals(Reflector.callMethod(result, "isError")))
+                                yield failure(loader, text);
                         }
-                    } catch (Exception e) { text = "控屏停止：" + (e instanceof org.json.JSONException ? "缺少goal或session/action参数" : e.getMessage()); }
+                    } catch (Exception e) {
+                        yield failure(loader, e instanceof org.json.JSONException ? "缺少goal或session/action参数" : "控屏工具调用失败");
+                    }
                     boolean terminal = ForegroundConsent.endsNativeTurn(text);
                     yield Reflector.newInstance(Reflector.findClass("com.aios.osbot.tools.ToolResult$Success", loader), text,
                         terminal ? Map.of("cli_internal_direct_answer", true) : Map.of(), null, List.of(), terminal, null, false);
@@ -127,6 +132,12 @@ public final class NativePhoneUseTool {
         hooks.addAll(Hooks.hookAllConstructors(registry, new HookCallback() {
             @Override protected void afterHookedMethod(MethodHookParam p) { register(p.thisObject, tool); }
         }));
+    }
+    private static Object failure(ClassLoader loader, String reason) {
+        String text = PhoneUseResult.stopped(reason);
+        Object permanent = Reflector.getStaticObjectField(Reflector.findClass("com.aios.osbot.tools.FailureType", loader), "PERMANENT");
+        return Reflector.newInstance(Reflector.findClass("com.aios.osbot.tools.ToolResult$Failure", loader),
+            text, false, permanent, null, true, text, null);
     }
     static Object registry(Context context, ClassLoader loader) {
         if (!HostCompatibility.modern())

@@ -31,7 +31,7 @@ public final class XiaoAiHook extends XposedModule {
         + "每个控屏action附intent简短中文说明当前意图供灵动岛显示；不含隐私、坐标或推理过程，普通意图不要放入触发确认的message。"
         + "用户说『用第三方模型回答/对话』时调用 cli: voiceassist__controlApp \"模型对话：用户问题\"，原样返回结果。"
         + "普通对话、联网搜索、系统设置、智能家居仍使用现有主模型、路由和工具（主模型可由用户全局替换）。不要把这些任务改派到控屏。"
-        + "工具返回CONTINUE时必须按返回的session继续调用启动会话的同一个控屏工具；只有旧版voiceassist__controlApp会话继续使用MIAIPLUS:动作JSON，依据最新图片或无障碍树规划；此模式无需额外视觉模型。不要只复述观察后结束。工具报错不要重试、不要伪称完成；PAUSE 表示需要用户接管。\n";
+        + "工具返回CONTINUE时必须按返回的session继续调用启动会话的同一个控屏工具；只有旧版voiceassist__controlApp会话继续使用MIAIPLUS:动作JSON，依据最新图片或无障碍树规划；此模式无需额外视觉模型。不要只复述观察后结束。剩余动作预算为0时只能根据最后观察finish或take_over/ask_user，不能执行更多操作。STOP、PAUSE或工具报错表示本轮结束，不要重试、重新提交goal或改用其他工具重开同一任务；向用户说明未完成及原因，不要伪称完成。\n";
 
     @Override public void onModuleLoaded(ModuleLoadedParam param) {
         Hooks.initialize(this);
@@ -57,6 +57,7 @@ public final class XiaoAiHook extends XposedModule {
             Hooks.log(failure);
             android.util.Log.e("MiAIPlus", "Host hook initialization failed", failure);
             Hooks.unhookAll(); installed.clear();
+            try { NativeConversationHook.dispose(); } catch (Exception ignored) { }
             if (interaction != null && !interaction.isRunning()) try { interaction.dispose(); } catch (Exception ignored) { }
             report("hook failed, rolled back: " + failure.getClass().getSimpleName());
         }
@@ -68,6 +69,8 @@ public final class XiaoAiHook extends XposedModule {
             // UI listeners and host tool proxies also retain the old module classloader.
             NativeReasoningHook.dispose();
             NativePhoneUseTool.dispose();
+            NativeTurnLifecycle.dispose();
+            NativeConversationHook.dispose();
             NativeModelHook.dispose();
             try { Class.forName("io.github.miaiplus.HookSmokeProbe").getMethod("dispose", Context.class).invoke(null, context); }
             catch (ClassNotFoundException expected) { }
@@ -108,10 +111,10 @@ public final class XiaoAiHook extends XposedModule {
             @Override protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                 if (!enabled()) return;
                 if (Looper.myLooper() == Looper.getMainLooper()) {
-                    param.setResult(error.invoke(null, "控屏工具不可在主线程执行")); return;
+                    param.setResult(error.invoke(null, PhoneUseResult.stopped("控屏工具不可在主线程执行"))); return;
                 }
                 String query = (String)param.args[0];
-                if (query == null || query.isBlank()) { param.setResult(error.invoke(null, "缺少 query")); return; }
+                if (query == null || query.isBlank()) { param.setResult(error.invoke(null, PhoneUseResult.stopped("缺少 query"))); return; }
                 boolean chat = query.startsWith("模型对话：") || query.startsWith("模型对话:");
                 if (chat) query = query.substring(5).trim();
                 String id = null;
@@ -136,7 +139,9 @@ public final class XiaoAiHook extends XposedModule {
                         if (state == null || state.containsKey("error")) throw new IllegalStateException("模块任务已丢失，请检查模块进程");
                         String status = state.getString("status");
                         if ("done".equals(status) || "error".equals(status)) {
-                            param.setResult(("done".equals(status) ? success : error).invoke(null, state.getString("result")));
+                            String text = state.getString("result");
+                            if (!chat && "error".equals(status)) text = PhoneUseResult.stopped(text);
+                            param.setResult(("done".equals(status) ? success : error).invoke(null, text));
                             return;
                         }
                         Thread.sleep(400);
@@ -148,7 +153,7 @@ public final class XiaoAiHook extends XposedModule {
                     if (id != null) try { context.getContentResolver().call(BridgeProvider.URI, "cancel", id, null); } catch (Throwable ignored) { }
                     if (e instanceof InterruptedException) Thread.currentThread().interrupt();
                     String text = e instanceof IllegalStateException ? e.getMessage() : "MiAIPlus 桥接失败：" + e.getClass().getSimpleName();
-                    param.setResult(error.invoke(null, text));
+                    param.setResult(error.invoke(null, chat ? text : PhoneUseResult.stopped(text)));
                 }
             }
         }));
@@ -175,6 +180,8 @@ public final class XiaoAiHook extends XposedModule {
                 }
             }));
         }
+        NativeConversationLimitsHook.install(context, loader, installed);
+        NativeConversationHook.install(context, loader, installed);
         NativeModelHook.install(context, loader, installed);
         // The optional diagnostic class exists only in debug APKs, never release artifacts.
         try { Class.forName("io.github.miaiplus.HookSmokeProbe").getMethod("install", Context.class, ClassLoader.class).invoke(null, context, loader); }

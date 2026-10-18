@@ -4,7 +4,6 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
-import android.view.WindowManager
 import android.view.View
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -61,7 +60,6 @@ import top.yukonga.miuix.kmp.theme.lightColorScheme
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
         enableEdgeToEdge()
         val state = ViewModelProvider(this)[SettingsState::class.java]
@@ -227,6 +225,8 @@ private fun PageTransition(page: SettingsPage, modifier: Modifier, content: @Com
 
 @Composable
 private fun HomePage(state: SettingsState, openStatus: () -> Unit) {
+    var editConversationTimeout by remember { mutableStateOf(false) }
+    var conversationTimeout by remember { mutableStateOf("") }
     val reported = state.hookRecordedAt > 0L
     val ready = reported && state.hookReport.startsWith("ready:")
     val status = when { !reported -> "暂无注入报告"; ready -> "工作正常"; else -> "上次注入异常" }
@@ -260,8 +260,30 @@ private fun HomePage(state: SettingsState, openStatus: () -> Unit) {
         BasicComponent(title = "规划模型", summary = if (state.config.planner == "external")
             state.profiles?.active()?.model?.ifBlank { "未选择" } ?: "未配置" else "小爱当前模型")
     }
+    Section("对话") {
+        ArrowPreference(title = "自动新建对话", summary = if (state.config.conversationTimeoutMinutes == 0)
+            "已关闭" else "闲置 ${state.config.conversationTimeoutMinutes} 分钟后",
+            onClick = {
+                conversationTimeout = state.config.conversationTimeoutMinutes.toString()
+                state.error = null
+                editConversationTimeout = true
+            })
+    }
     Spacer(Modifier.height(16.dp))
     Group { ArrowPreference(title = "运行状态", summary = "连接与诊断", onClick = openStatus) }
+    OverlayDialog(show = editConversationTimeout, title = "自动新建对话",
+        summary = "距上次操作超过设定时长，再次唤醒时新建对话；时长内继续同一对话。全屏和浮窗共用。支持 0–${Config.MAX_CONVERSATION_TIMEOUT_MINUTES} 分钟，0 关闭，默认 ${Config.DEFAULT_CONVERSATION_TIMEOUT_MINUTES} 分钟。",
+        onDismissRequest = { editConversationTimeout = false; state.error = null }) {
+        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Input("时长（分钟）", conversationTimeout, { conversationTimeout = it }, type = KeyboardType.Number)
+            state.error?.let { Hint(it) }
+            DialogButtons("保存", {
+                val value = conversationTimeout.toIntOrNull()
+                if (value == null) state.error = "请输入 0–${Config.MAX_CONVERSATION_TIMEOUT_MINUTES} 之间的整数"
+                else if (state.setConversationTimeoutMinutes(value)) editConversationTimeout = false
+            }, { editConversationTimeout = false; state.error = null })
+        }
+    }
 }
 
 @Composable
@@ -408,13 +430,13 @@ private fun ControlPage(state: SettingsState, openSettings: (Boolean) -> Unit, o
             checked = state.guardEnabled, enabled = !state.guardChanging, onCheckedChange = { state.setGuard(it) })
         ArrowPreference(title = "应用权限", summary = "后台弹出界面", onClick = { openSettings(true) })
     }
-    OverlayDialog(show = editSteps, title = "最大步数", summary = "设置 1–80 步，默认 30 步。", onDismissRequest = { editSteps = false }) {
+    OverlayDialog(show = editSteps, title = "最大步数", summary = "设置 1–${Config.MAX_PHONE_USE_STEPS} 步，默认 30 步。", onDismissRequest = { editSteps = false }) {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Input("步数", steps, { steps = it }, type = KeyboardType.Number)
             state.error?.let { Hint(it) }
             DialogButtons("保存", {
                 val value = steps.toIntOrNull()
-                if (value == null) state.error = "请输入 1–80 之间的整数"
+                if (value == null) state.error = "请输入 1–${Config.MAX_PHONE_USE_STEPS} 之间的整数"
                 else if (state.setOption("maxSteps", value)) editSteps = false
             }, { editSteps = false; state.error = null })
         }
@@ -442,12 +464,28 @@ private fun StatusPage(state: SettingsState, openSettings: (Boolean) -> Unit, op
 private fun VirtualScreenPage(state: SettingsState) {
     val screen = state.virtualScreen
     var confirmProbe by remember { mutableStateOf(false) }
+    var editCanvas by remember { mutableStateOf(false) }
+    var canvasWidth by remember { mutableStateOf("") }
+    var canvasHeight by remember { mutableStateOf("") }
+    var canvasDensity by remember { mutableStateOf("") }
+    var canvasError by remember { mutableStateOf<String?>(null) }
     var appQuery by remember { mutableStateOf("") }
     var detail by remember { mutableStateOf<DisplayProbeItem?>(null) }
     Group {
         SwitchPreference(title = "兼容入口默认使用虚拟屏", checked = state.config.backgroundDisplay,
             summary = "旧控屏入口 · 不可用时停止而非转主屏",
             enabled = !screen.busy, onCheckedChange = { state.setOption("backgroundDisplay", it) })
+    }
+    Section("画布") {
+        ArrowPreference(title = "自定义分辨率",
+            summary = "${state.config.displayWidth}×${state.config.displayHeight} @ ${state.config.displayDensity} dpi",
+            onClick = {
+                canvasWidth = state.config.displayWidth.toString()
+                canvasHeight = state.config.displayHeight.toString()
+                canvasDensity = state.config.displayDensity.toString()
+                canvasError = null
+                editCanvas = true
+            })
     }
     Section("检查") {
         ArrowPreference(title = if (screen.checking) "正在检查…" else "检查前置条件",
@@ -476,6 +514,40 @@ private fun VirtualScreenPage(state: SettingsState) {
             else "会在虚拟屏打开「${screen.selectedApp!!.name}」，发送点击和按键，结束后关闭。请选择无个人数据的测试应用，期间请勿操作主屏。",
         confirm = "开始", onDismiss = { confirmProbe = false },
         onConfirm = { confirmProbe = false; screen.probe() })
+    OverlayDialog(show = editCanvas, title = "虚拟屏画布分辨率",
+        summary = "宽高支持 ${Config.MIN_DISPLAY_SIZE}–${Config.MAX_DISPLAY_SIZE} 像素，密度支持 ${Config.MIN_DISPLAY_DENSITY}–${Config.MAX_DISPLAY_DENSITY} dpi。修改仅应用于新任务。",
+        onDismissRequest = { editCanvas = false; canvasError = null }) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Input("宽度（像素）", canvasWidth, { canvasWidth = it }, type = KeyboardType.Number)
+            Input("高度（像素）", canvasHeight, { canvasHeight = it }, type = KeyboardType.Number)
+            Input("密度（dpi）", canvasDensity, { canvasDensity = it }, type = KeyboardType.Number)
+            TextButton("填入本机分辨率", {
+                try {
+                    val geometry = state.currentDisplayGeometry()
+                    canvasWidth = geometry.width.toString()
+                    canvasHeight = geometry.height.toString()
+                    canvasDensity = geometry.density.toString()
+                    canvasError = null
+                } catch (failure: Exception) {
+                    canvasError = failure.message ?: "无法读取本机屏幕分辨率"
+                }
+            }, Modifier.fillMaxWidth())
+            canvasError?.let { Hint(it) }
+            DialogButtons("保存", {
+                val width = canvasWidth.toIntOrNull()
+                val height = canvasHeight.toIntOrNull()
+                val density = canvasDensity.toIntOrNull()
+                if (width == null || height == null || density == null) {
+                    canvasError = "请输入有效的宽度、高度和密度"
+                } else if (state.setDisplayGeometry(width, height, density)) {
+                    canvasError = null
+                    editCanvas = false
+                } else {
+                    canvasError = state.error ?: "画布参数无效"
+                }
+            }, { editCanvas = false; canvasError = null })
+        }
+    }
     OverlayDialog(show = screen.apps != null, title = "测试应用", onDismissRequest = { screen.dismissApps() }) {
         Column {
             Input("搜索", appQuery, { appQuery = it })

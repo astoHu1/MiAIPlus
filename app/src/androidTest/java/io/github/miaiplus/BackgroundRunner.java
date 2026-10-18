@@ -16,8 +16,8 @@ import java.util.regex.Pattern;
  * would move that top task, change that focus, or deliver a synthetic touch to the fixture — all three are
  * asserted against. Comparing screenshot hashes would prove nothing, because the user's own screen changes anyway.
  *
- * <p>The host places the user's fixture before this runs (see {@code scripts/background_display_test.py}), so the
- * baseline here is already the state that must be held, and this runner never launches anything on display 0.
+ * <p>Before measuring, the runner places the user's fixture and opens its keyboard. A continuous guard latches
+ * any loss of IME visibility, window/field focus or the served input connection, even if it recovers later.
  *
  * <p>Runs the native planner with direct action JSON: no model, endpoint, key or network request is involved, so
  * this measures the display backend rather than a model's choices.
@@ -28,7 +28,7 @@ final class BackgroundRunner {
     private static final Pattern SESSION = Pattern.compile("会话=([a-f0-9-]{36})");
     private static final Pattern FOREGROUND = Pattern.compile("前台=([^；\\n]*)");
     private static final Pattern GEOMETRY = Pattern.compile("屏幕=(\\d+x\\d+)");
-    /** What the helper always creates; a physical capture would report the panel's own size instead. */
+    /** This runner's explicit canvas; a physical capture would report the panel's own size instead. */
     private static final String BACKGROUND_GEOMETRY = "1080x1920";
     /** Typed only on the background screen, so a leak into the user's window would be visible. */
     private static final String CANARY = "后台输入隔离标记";
@@ -42,6 +42,7 @@ final class BackgroundRunner {
         Bundle report = new Bundle();
         int code = Activity.RESULT_CANCELED;
         var notes = new StringBuilder();
+        PhysicalImeGuard keyboard = null;
         try {
             // Enabling the service happens host-side in response to this signal; wait for the connection instead
             // of asserting it, because connecting is setup and does not move the physical display's top task.
@@ -62,12 +63,15 @@ final class BackgroundRunner {
             // Native planner, no model configuration: the display backend is what is under test here.
             prefs.edit().putBoolean("enabled", true).putBoolean("backgroundDisplay", true)
                 .putString("planner", "native").putString("endpoint", "").putString("apiKey", "").putString("model", "")
-                .putInt("maxSteps", 8).commit();
+                .putInt("maxSteps", 8)
+                .putInt("displayWidth", 1080).putInt("displayHeight", 1920).putInt("displayDensity", 320).commit();
 
             String taskBefore = physicalTask(), focusBefore = physicalFocus();
             var displaysBefore = displayIds();
             check(taskBefore.startsWith("io.github.miaiplus/"), "fixture is not the user's screen: " + taskBefore);
             FixtureActivity.lastTouch = "none";
+            keyboard = PhysicalImeGuard.start(test);
+            keyboard.assertHeld("native-create");
 
             Bundle started = start(test, "screen", "在后台屏幕打开计算器，输入一段中文并确认页面，然后结束");
             String id = started.getString("id");
@@ -77,6 +81,7 @@ final class BackgroundRunner {
             var sessionMatcher = SESSION.matcher(first);
             check(sessionMatcher.find(), "no background session in observation: " + TaskProgress.compact(first));
             String session = sessionMatcher.group(1);
+            keyboard.assertHeld("native-launch");
             // The first observation must describe the background screen. The user's screen is the fixture, so the
             // observation naming it as the foreground means the backend fell through to display 0. Checked on the
             // parsed field, not on a substring: the text also lists launchable apps, which legitimately includes
@@ -96,11 +101,13 @@ final class BackgroundRunner {
             // closed, so back and finish must run before anything that can be refused.
             String launched = stepResult(test, session, step(session, "launch", "app", "com.miui.calculator"), "launch");
             check(launched.startsWith("CONTINUE"), "launch did not keep the background session alive: " + launched);
+            keyboard.assertHeld("native-back");
             notes.append("launch=ok; ");
 
             // Back exercises a display-bound key rather than a global navigation action.
             String backed = stepResult(test, session, step(session, "back", null, null), "back");
             check(backed.startsWith("CONTINUE"), "back did not keep the background session alive: " + backed);
+            keyboard.assertHeld("native-finish");
             notes.append("back=ok; ");
 
             // The launch observation answers the tree question for a populated screen: a freshly created
@@ -111,6 +118,7 @@ final class BackgroundRunner {
 
             String finished = stepResult(test, session, step(session, "finish", "message", "后台任务结束"), "finish");
             check(finished.contains("模型报告任务完成"), "finish did not end the task: " + finished);
+            keyboard.assertHeld("typing-create");
             notes.append("finish=ok; ");
 
             // Typing gets its own page and its own display session: the calculator has no editable field, so
@@ -118,13 +126,26 @@ final class BackgroundRunner {
             // agent uses — BackgroundActions, which resolves the display's own foreground and writes to that
             // page's editable node — rather than calling the setter directly.
             RunState typingRun = new RunState("background-typing", android.os.Process.myUid());
-            try (BackgroundDisplay typing = BackgroundDisplay.open(context, typingRun)) {
+            try (BackgroundDisplay typing = BackgroundDisplay.open(context, typingRun, new Config(context))) {
+                keyboard.assertHeld("typing-launch");
                 typing.launch(typingRun, "io.github.miaiplus.test/io.github.miaiplus.TypingFixtureActivity");
                 ScreenService.Frame typingFrame = typing.observe(typingRun);
                 notes.append("typingTree=").append(typingFrame.tree().isEmpty() ? "empty" : "present").append("; ");
                 check(!typingFrame.tree().isEmpty(), "no accessibility tree for an app on the background display");
                 check(typingFrame.tree().contains("EditText"), "the typing page has no editable node to write to");
                 notes.append("typingForeground=").append(typingFrame.foreground()).append("; ");
+
+                // Tapping a real editor exercises the app's own request to show a keyboard. Launch alone and
+                // ACTION_SET_TEXT alone do not cover the single-IME migration reported by users.
+                keyboard.assertHeld("typing-tap-editor");
+                android.graphics.Rect editor = editableBounds(test, typing.session().displayId);
+                DisplaySession canvas = typing.session();
+                Action tap = new Action(new org.json.JSONObject().put("action", "tap").put("element",
+                    new org.json.JSONArray().put(editor.exactCenterX() * 1000.0 / canvas.width)
+                        .put(editor.exactCenterY() * 1000.0 / canvas.height)));
+                BackgroundActions.execute(typing, tap, typingRun, new Config(context));
+                Thread.sleep(400);
+                keyboard.assertHeld("typing-set-text");
 
                 // Goes through the product's own action path, so what is measured is what the agent would get.
                 Action type = new Action(new org.json.JSONObject().put("action", "type").put("text", CANARY));
@@ -138,7 +159,48 @@ final class BackgroundRunner {
                 check(afterWrite.contains(CANARY), "the typed text did not reach the background page: "
                     + afterWrite.substring(0, Math.min(300, afterWrite.length())));
                 notes.append("typeVerified=inBackgroundTree; ");
+
+                // With the background IME hidden, BACK must leave the background page, rather than dismiss
+                // the user's keyboard. Both effects are checked; injection acceptance alone proves neither.
+                keyboard.assertHeld("typing-back");
+                BackgroundActions.execute(typing,
+                    new Action(new org.json.JSONObject().put("action", "back")), typingRun, new Config(context));
+                long backDeadline = SystemClock.uptimeMillis() + 5000;
+                while (typing.foregroundPackage(typingRun).startsWith("io.github.miaiplus.test/")
+                    && SystemClock.uptimeMillis() < backDeadline) {
+                    keyboard.assertHeld("typing-back");
+                    Thread.sleep(100);
+                }
+                check(!typing.foregroundPackage(typingRun).startsWith("io.github.miaiplus.test/"),
+                    "background BACK did not leave the typing fixture; it may have dismissed an IME instead");
+                keyboard.assertHeld("typing-teardown");
             }
+            Thread.sleep(400);
+            keyboard.assertHeld("after-teardown");
+
+            // The settings capability probe owns a separate helper and creation path. Run it only after both
+            // product sessions have closed, while the same physical keyboard is still being monitored.
+            check(BackgroundDisplay.active() == null || !BackgroundDisplay.active().isOpen(),
+                "product display is still active before capability probe");
+            check(displayIds().equals(displaysBefore), "product display leaked before capability probe");
+            keyboard.assertHeld("capability-create-launch-input-teardown");
+            org.json.JSONObject capability = BackgroundDisplay.capability(context,
+                "io.github.miaiplus.test/io.github.miaiplus.TypingFixtureActivity",
+                new RunState("background-ime-capability", android.os.Process.myUid()));
+            org.json.JSONArray items = new org.json.JSONArray(capability.getString("items"));
+            org.json.JSONObject creation = null;
+            for (int index = 0; index < items.length(); index++) {
+                org.json.JSONObject item = items.getJSONObject(index);
+                if (item.optString("item").equals("createOwnDisplay")) creation = item;
+            }
+            check(creation != null && creation.optString("status").equals("supported"),
+                "capability probe did not create a real isolated display: " + items);
+            check("HIDE".equals(creation.optString("imePolicy")),
+                "capability probe did not verify HIDE IME policy: " + creation);
+            Thread.sleep(400);
+            keyboard.assertHeld("after-capability-teardown");
+            check(displayIds().equals(displaysBefore), "capability probe left a display behind");
+            notes.append("capabilityCreate=verified; capabilityIme=HIDE; ");
 
             // The invariant: the user's screen is exactly where they left it.
             String taskAfter = physicalTask(), focusAfter = physicalFocus();
@@ -155,13 +217,18 @@ final class BackgroundRunner {
             // Teardown: no display the module created may outlive the task.
             var displaysAfter = displayIds();
             check(displaysAfter.equals(displaysBefore), "displays changed after the task: " + displaysBefore + " -> " + displaysAfter);
+            keyboard.assertHeld("final-check");
+            keyboard.close();
+            notes.append(keyboard.evidence());
 
             report.putString("stream", "PASS: background task with the user's screen held at " + taskBefore
                 + "; no touch or text reached it; displays " + displaysAfter + "; " + notes + "\n");
             code = Activity.RESULT_OK;
         } catch (Throwable e) {
+            if (keyboard != null) notes.append(keyboard.evidence());
             report.putString("stream", "FAIL: " + e + "\n" + android.util.Log.getStackTraceString(e) + "\nnotes: " + notes);
         } finally {
+            if (keyboard != null) keyboard.close();
             BridgeProvider.cancelActive();
             BackgroundDisplay.closeActive();
             var edit = prefs.edit().clear();
@@ -178,6 +245,21 @@ final class BackgroundRunner {
     }
 
     private static void check(boolean ok, String message) { if (!ok) throw new AssertionError(message); }
+    private static android.graphics.Rect editableBounds(Instrumentation test, int displayId) {
+        android.graphics.Rect bounds = new android.graphics.Rect();
+        test.runOnMainSync(() -> {
+            var windows = ScreenService.instance.getWindowsOnAllDisplays().get(displayId);
+            check(windows != null, "background typing display has no accessibility windows");
+            for (var window : windows) {
+                var root = window.getRoot();
+                if (root == null || !"io.github.miaiplus.test".equals(String.valueOf(root.getPackageName()))) continue;
+                var editable = findEditable(root);
+                if (editable != null) { editable.getBoundsInScreen(bounds); break; }
+            }
+            check(!bounds.isEmpty(), "could not locate the background editor for a real tap");
+        });
+        return bounds;
+    }
     /** Mirrors the product's search so the probe measures the same node the action would pick. */
     private static android.view.accessibility.AccessibilityNodeInfo findEditable(
         android.view.accessibility.AccessibilityNodeInfo node) {

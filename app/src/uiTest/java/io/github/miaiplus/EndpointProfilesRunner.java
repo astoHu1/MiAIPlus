@@ -75,13 +75,13 @@ final class EndpointProfilesRunner {
             onMain(() -> {
                 check(activity.hasWindowFocus() && activity.getWindow().getDecorView().isShown(),
                     "Background test hid or unfocused the physical settings page");
-                check((activity.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE) != 0,
-                    "Direct test removed the secure settings flag");
+                check((activity.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE) == 0,
+                    "Settings unexpectedly blocked screenshots");
             });
             click("停止任务");
             waitFor(() -> state.getJob() == null && BackgroundDisplay.active() == null,
                 "Stop did not finish the job and release the display");
-            result.putString("stream", "PASS: actual Start/Stop UI created a background display while secure settings "
+            result.putString("stream", "PASS: actual Start/Stop UI created a background display while settings "
                 + "remained focused and visible on the physical screen; stop released the display. Local mock only.\n");
             code = Activity.RESULT_OK;
         } catch (Throwable failure) {
@@ -262,13 +262,13 @@ final class EndpointProfilesRunner {
                 check(!new Config(context).backgroundDisplay, "Background display default changed");
                 click("最大步数");
                 edit("30", "0"); click("保存");
-                waitFor(() -> "步数需在 1–80 之间".equals(state.getError()), "Lower bound accepted");
-                edit("0", "81"); click("保存");
+                waitFor(() -> "步数需在 1–200 之间".equals(state.getError()), "Lower bound accepted");
+                edit("0", "201"); click("保存");
                 check(new Config(context).maxSteps == 30, "Invalid steps persisted");
-                edit("81", "1"); click("保存");
+                edit("201", "1"); click("保存");
                 waitFor(() -> new Config(context).maxSteps == 1, "Minimum step not saved");
-                click("最大步数"); edit("1", "80"); click("保存");
-                waitFor(() -> new Config(context).maxSteps == 80, "Maximum step not saved");
+                click("最大步数"); edit("1", "200"); click("保存");
+                waitFor(() -> new Config(context).maxSteps == 200, "Maximum step not saved");
                 capture("control");
                 click("首页");
                 click("运行状态");
@@ -289,7 +289,7 @@ final class EndpointProfilesRunner {
                 click("返回");
                 click("返回");
                 check(state.getJob() == null, "UI checks started a model job");
-                result.putString("stream", "PASS: physical-device Compose navigation, legacy migration, draft/recreation/discard, keyboard/save visibility, save/create/switch/delete, API persistence, step limits 0/81/1/80, background status result, direct-test navigation. No model requests.\n");
+                result.putString("stream", "PASS: physical-device Compose navigation, legacy migration, draft/recreation/discard, keyboard/save visibility, save/create/switch/delete, API persistence, step limits 0/201/1/200, background status result, direct-test navigation. No model requests.\n");
             }
             code = Activity.RESULT_OK;
         } catch (Throwable failure) {
@@ -519,21 +519,16 @@ final class EndpointProfilesRunner {
     }
 
     private void capture(String name) throws Exception {
-        // Only fixture data is visible. Production FLAG_SECURE stays enabled outside this capture.
-        onMain(() -> activity.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE));
-        try {
-            settle();
-            SystemClock.sleep(2000); // Let confirmation toasts disappear.
-            Bitmap bitmap = ui.takeScreenshot();
-            check(bitmap != null, "Fixture screenshot failed");
-            File directory = new File(test.getTargetContext().getExternalFilesDir(null), "settings-ui-test");
-            check(directory.isDirectory() || directory.mkdirs(), "Screenshot directory unavailable");
-            try (var output = new FileOutputStream(new File(directory, name + ".png"))) {
-                check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output), "Screenshot write failed");
-            } finally { bitmap.recycle(); }
-        } finally {
-            onMain(() -> activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE));
-        }
+        // Capture the production window policy with fixture data visible.
+        settle();
+        SystemClock.sleep(2000); // Let confirmation toasts disappear.
+        Bitmap bitmap = ui.takeScreenshot();
+        check(bitmap != null, "Fixture screenshot failed");
+        File directory = new File(test.getTargetContext().getExternalFilesDir(null), "settings-ui-test");
+        check(directory.isDirectory() || directory.mkdirs(), "Screenshot directory unavailable");
+        try (var output = new FileOutputStream(new File(directory, name + ".png"))) {
+            check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output), "Screenshot write failed");
+        } finally { bitmap.recycle(); }
     }
 
     private static void check(boolean condition, String message) { if (!condition) throw new AssertionError(message); }

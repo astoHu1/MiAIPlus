@@ -201,7 +201,10 @@ final class ActionConfirmationProbe {
         return match.group(1);
     }
     private static JSONObject step(String session, JSONObject action) throws Exception { return new JSONObject().put("session", session).put("action", action); }
-    private static String text(Object result) { return String.valueOf(call(result, "getResult")); }
+    private static String text(Object result) {
+        return String.valueOf(call(result, result.getClass().getName().equals("com.aios.osbot.tools.ToolResult$Failure")
+            ? "getError" : "getResult"));
+    }
     private static Object call(Object receiver, String method, Object... args) { return Reflector.callMethod(receiver, method, args); }
     private static void stage(Context context, String name) throws Exception {
         CountDownLatch waiting = new CountDownLatch(1); ready = waiting;
