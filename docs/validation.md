@@ -29,7 +29,7 @@
 
 ## OpenCode Go 请求头、全局规划联动与下拉窗口（2026-10-18）
 
-联网查阅 [OpenCode Go 官方文档](https://opencode.ai/docs/go/#where-can-i-use-it)，为独立与原生外部 Chat／Responses 请求补充客户端 User-Agent 和 `x-opencode-session`。独立循环按任务稳定；原生按消息身份关联，重复／续轮与部分历史裁剪复用，不按提问内容合并不同会话。记忆和路由按辅助请求 ID 分组，缺失时使用单次 UUID，尚未与主对话统一；全部关联消息被压缩掉或缓存淘汰后可能产生新标识。接入地址、模型列表路径差异及协议范围见 [接入说明](opencode-go.md)。
+联网查阅 [OpenCode Go 官方文档](https://opencode.ai/docs/go/#where-can-i-use-it)，为独立与原生外部 Chat／Responses 请求补充客户端 User-Agent 和 `x-opencode-session`。独立循环按任务稳定；原生按消息身份关联，重复／续轮与部分历史裁剪复用，不按提问内容合并不同会话。记忆和路由按辅助请求 ID 分组，缺失时使用单次 UUID，尚未与主对话统一；全部关联消息被压缩掉或缓存淘汰后可能产生新标识。接入地址、模型列表路径差异及协议范围见 [接入说明](architecture.md#opencode-go-接入)。
 
 全局外部模型开启时强制原生控屏规划，开启设置时同步保存 `planner=native`，旧配置读取也遵守约束；界面显示「小爱当前模型」并禁用选择。关闭全局替换后保持原生规划，可再手动选独立外部规划。API 协议等五类下拉选择关闭背景压暗，保留 Miuix 定位、勾选、动画和外部点击关闭；确认／编辑对话框保持原有行为。
 
@@ -343,7 +343,7 @@ Debug、Release、AndroidTest 构建与 88 项 JUnit（含 5 项 Robolectric Com
 
 ## 已通过的验证
 
-- 2026-10-16 后台虚拟屏实机：83 项 JUnit 通过；debug/release/AndroidTest 构建通过，两套 Lint 均 0 errors。固定目标 `com.miui.calculator/.cal.CalculatorActivity` 的 capability 探针：`createOwnDisplay`、`capture`、`launch`、`pointer`、`text/key`、`focusIsolation`、`teardownIsolation` 七项 supported；`tree` 如实报 untested 并说明应到无障碍服务侧测。build `CP2A.260605.016`，helper uid 0。机器可读结果见 [能力报告](virtual-display-capability-report.json)。
+- 2026-10-16 后台虚拟屏实机：83 项 JUnit 通过；debug/release/AndroidTest 构建通过，两套 Lint 均 0 errors。固定目标 `com.miui.calculator/.cal.CalculatorActivity` 的 capability 探针：`createOwnDisplay`、`capture`、`launch`、`pointer`、`text/key`、`focusIsolation`、`teardownIsolation` 七项 supported；`tree` 如实报 untested 并说明应到无障碍服务侧测。build `CP2A.260605.016`，helper uid 0。后续独立无障碍服务侧的 tree 结果及各项证据见 [后台虚拟屏实机验证](background-display.md#实机验证结果)。
 - 2026-10-16 后台虚拟屏隔离证据：① 向 display 0 注入 HOME，只有 display 0 的栈顶变为桌面，虚拟屏上的 calculator 任务不动 —— 输入按屏定向；② 目标应用已在主屏可见时启动被拒（`TASK_IN_USE`），前后对比主屏前台应用未变 —— 未抢用户窗口；③ 探针全程主屏 app 焦点与栈顶任务与基线一致，销毁后仍一致。
 - 2026-10-16 后台虚拟屏截图路径改为读该屏自身输出：helper 建屏时创建的 `ImageReader` 现在由消费线程持续取帧（旧实现从不读，buffer 队列满后生产者阻塞、屏幕会停止绘制），截图直接复制该帧并缩放（`source=imagereader`），不再依赖 `screencap -d <SurfaceFlinger token>` 的存在。own-content 屏未启动任何应用时不合成帧，此时回退 `screencap`（`source=screencap`）。实机：空屏 `screencap`、启动后 `imagereader`（frames 10→97 持续增长）。
 - 2026-10-16 后台虚拟屏输入路径改为进程内注入：触摸与按键都经 `InputManager.injectInputEvent` 反射调用，事件的 display id 与 source 在事件上设置（`SOURCE_TOUCHSCREEN` / `SOURCE_KEYBOARD`），反射句柄缓存一次而非每事件重解析；`key` 报 `source=inputmanager`、`delivered=true`。旧路径每次按键都 `input -d` 起一个进程。

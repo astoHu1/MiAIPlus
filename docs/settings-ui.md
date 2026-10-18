@@ -1,6 +1,6 @@
 # 模块配置界面
 
-界面在 `ui/miuix-settings` 分支开发，现与 main 工作区的最新后台虚拟屏源码完成集成。历史手机验证与本轮本地验证分别记录。
+设置界面使用 Compose 与 Miuix，连接模块现有配置、Hook 和后台虚拟屏后端。历史验证按日期记录，当前版本的检查结果以 [验证记录](validation.md) 为准。
 
 ## 页面
 
@@ -76,10 +76,6 @@ API 协议、当前配置、规划模型、动作协议和测试类型等小型�
 
 ![深色首页](images/settings-dark.png)
 
-
-| 虚拟屏 | 深色虚拟屏 |
-| --- | --- |
-| ![虚拟屏](images/settings-virtual.png) | ![深色虚拟屏](images/settings-virtual-dark.png) |
 
 运行虚拟屏专项（须有已授权、无活动控屏任务的设备及独立测试应用）：
 

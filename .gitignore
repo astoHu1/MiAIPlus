@@ -28,6 +28,7 @@ signing.properties
 *.key
 
 # Local investigation, device data, and agent settings
+/docs/promo/
 /work/
 /recon/
 /.claude/

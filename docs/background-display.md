@@ -164,7 +164,7 @@ content call --uri content://io.github.miaiplus.bridge --method background_displ
 
 完整探针与控屏任务互斥：包含准备阶段、原生两次工具调用间隔和收尾阶段；探针运行中拒绝新任务。探针启动应用也拒绝其他任意屏的可见任务冲突。轻量状态查询使用自己的截图目录，不删除活动任务的帧。
 
-两份方法都限制为模块 UID 或 root。探针输出机器可读 JSON；一次实机结果见 [能力报告](virtual-display-capability-report.json)。
+两份方法都限制为模块 UID 或 root。探针输出机器可读 JSON；已归纳的实机结果与证据见上文「实机验证结果」；helper 探针与独立无障碍服务侧验证的范围不同。
 
 ## 长任务会话（滚动采集）
 

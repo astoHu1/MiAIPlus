@@ -16,7 +16,7 @@ if preview.is_file():
     shutil.copyfile(preview, dist / f'MiAIPlus-{version}-preview.apk')
 files = ['.gitignore', 'AGENTS.md', 'README.md', 'LICENSE', 'NOTICE', 'settings.gradle', 'build.gradle', 'gradle.properties', 'gradlew', 'gradlew.bat', 'app/build.gradle', 'app/proguard-rules.pro']
 for folder in ['app/src', 'gradle/wrapper', 'docs', 'scripts', 'third_party']:
-    files.extend(str(p.relative_to(root)) for p in (root / folder).rglob('*') if p.is_file() and '__pycache__' not in p.parts and p.suffix != '.pyc')
+    files.extend(str(p.relative_to(root)) for p in (root / folder).rglob('*') if p.is_file() and '__pycache__' not in p.parts and p.suffix != '.pyc' and not p.is_relative_to(root / 'docs/promo'))
 with zipfile.ZipFile(dist / f'MiAIPlus-{version}-source.zip', 'w', zipfile.ZIP_DEFLATED) as archive:
     for name in sorted(files):
         archive.write(root / name, f'MiAIPlus-{version}/{name}')
