@@ -136,21 +136,23 @@ public class DisplayHelperFramesAndGesturesTest {
         assertEquals(220f, sink.events.get(12).y, 0f);
     }
 
-    @Test public void rejectedTapReleaseStillAttemptsToCancelThePressedPointer() throws Exception {
+    @Test public void rejectedGestureReleaseStillAttemptsToCancelThePressedPointer() throws Exception {
         sink.rejectUp = true;
-        invoke("tap", new Class<?>[] { long.class, String.class }, 1L, "10 20");
-        assertEquals(List.of(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL), actions());
-        assertEquals(sink.events.get(0).downTime, sink.events.get(2).downTime);
-        assertFocusSafeEvents();
-    }
-
-    @Test public void rejectedSwipeReleaseStillAttemptsToCancelThePressedPointer() throws Exception {
-        sink.rejectUp = true;
-        invoke("swipe", new Class<?>[] { long.class, String.class }, 1L, "10 20 110 220 60");
-        assertEquals(14, sink.events.size());
-        assertEquals(MotionEvent.ACTION_CANCEL, sink.events.get(13).action);
-        assertEquals(sink.events.get(0).downTime, sink.events.get(13).downTime);
-        assertFocusSafeEvents();
+        for (String gesture : List.of("tap", "swipe")) {
+            sink.events.clear();
+            invoke(gesture, new Class<?>[] { long.class, String.class }, 1L,
+                gesture.equals("tap") ? "10 20" : "10 20 110 220 60");
+            if (gesture.equals("tap")) {
+                assertEquals(gesture,
+                    List.of(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL), actions());
+            } else {
+                assertEquals(gesture, 14, sink.events.size());
+            }
+            Event cancel = sink.events.get(sink.events.size() - 1);
+            assertEquals(gesture, MotionEvent.ACTION_CANCEL, cancel.action);
+            assertEquals(gesture, sink.events.get(0).downTime, cancel.downTime);
+            assertFocusSafeEvents();
+        }
     }
 
     @Test public void touchesStopBeforeInjectionWhenFocusIsolationIsUnavailable() throws Exception {
@@ -171,16 +173,22 @@ public class DisplayHelperFramesAndGesturesTest {
             () -> DisplayHelper.requiredNoFocusChangeFlag(InvalidMotionFlags.class));
     }
 
-    @Test public void unreadableBaselineReportsUntestedEvenWithLaterReadableSamples() throws Exception {
+    @Test public void missingBaselineOrBaselineWindowFocusCannotClaimKeyboardIsolation() throws Exception {
         JSONArray samples = new JSONArray()
             .put(new JSONObject().put("step", "baseline"))
-            .put(new JSONObject().put("step", "afterCreate").put("appFocus", "com.example/.Main").put("task", "42"));
+            .put(new JSONObject().put("step", "afterCreate").put("windowFocus", "")
+                .put("appFocus", "com.example/.Main").put("task", "42"));
         Class<?> mainState = Class.forName(DisplayHelper.class.getName() + "$MainState");
-        JSONObject verdict = (JSONObject) invoke("probeFocusIsolation",
-            new Class<?>[] { mainState, JSONArray.class }, null, samples);
-        assertEquals("untested", verdict.getString("status"));
-        assertEquals("focusIsolation", verdict.getString("item"));
-        assertTrue(verdict.getString("reason").contains("baseline"));
+        var constructor = mainState.getDeclaredConstructor(String.class, String.class, String.class);
+        constructor.setAccessible(true);
+        for (Object baseline : new Object[] { null, constructor.newInstance("", "com.example/.Main", "42") }) {
+            String scenario = baseline == null ? "unreadable baseline" : "missing physical window focus";
+            JSONObject verdict = (JSONObject) invoke("probeFocusIsolation",
+                new Class<?>[] { mainState, JSONArray.class }, baseline, samples);
+            assertEquals(scenario, "untested", verdict.getString("status"));
+            assertEquals(scenario, "focusIsolation", verdict.getString("item"));
+            assertTrue(scenario, verdict.getString("reason").contains("baseline"));
+        }
     }
 
     @Test public void losingPhysicalWindowFocusFailsEvenWhenAppAndTaskStayUnchanged() throws Exception {
@@ -194,18 +202,6 @@ public class DisplayHelperFramesAndGesturesTest {
             new Class<?>[] { mainState, JSONArray.class }, baseline, samples);
         assertEquals("unsupported", verdict.getString("status"));
         assertEquals("afterLaunch", verdict.getString("windowFocusChangedDuring"));
-    }
-
-    @Test public void missingBaselineWindowFocusCannotClaimKeyboardIsolation() throws Exception {
-        Class<?> mainState = Class.forName(DisplayHelper.class.getName() + "$MainState");
-        var constructor = mainState.getDeclaredConstructor(String.class, String.class, String.class);
-        constructor.setAccessible(true);
-        Object baseline = constructor.newInstance("", "com.example/.Main", "42");
-        JSONArray samples = new JSONArray().put(new JSONObject().put("step", "afterCreate")
-            .put("windowFocus", "").put("appFocus", "com.example/.Main").put("task", "42"));
-        JSONObject verdict = (JSONObject) invoke("probeFocusIsolation",
-            new Class<?>[] { mainState, JSONArray.class }, baseline, samples);
-        assertEquals("untested", verdict.getString("status"));
     }
 
     private void assertGesture(long duration, int count) {

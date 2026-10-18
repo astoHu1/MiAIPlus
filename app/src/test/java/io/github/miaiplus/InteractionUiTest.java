@@ -7,6 +7,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.os.Looper;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.Test;
@@ -14,10 +15,13 @@ import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.Shadows;
+import org.robolectric.shadows.ShadowSystemClock;
 
 @RunWith(RobolectricTestRunner.class)
 @org.robolectric.annotation.Config(sdk = 33, application = Application.class)
-public final class ForegroundConsentBroadcastTest {
+public final class InteractionUiTest {
+    private static final String RETURN_TOKEN = "io.github.miaiplus.RETURN_CONVERSATION";
+
     @Test public void bothForegroundAndSensitiveActionDecisionsReachReceiverWithoutOpeningAnActivity() {
         Application app = RuntimeEnvironment.getApplication();
         List<Intent> received = new ArrayList<>();
@@ -49,8 +53,6 @@ public final class ForegroundConsentBroadcastTest {
         Intent allow = InteractionUi.consentIntent("com.miui.voiceassist", "task-a", "token-a", true);
         Intent deny = InteractionUi.consentIntent("com.miui.voiceassist", "task-a", "token-a", false);
         Intent later = InteractionUi.consentIntent("com.miui.voiceassist", "task-b", "token-b", true);
-        assertFalse(allow.filterEquals(deny));
-        assertFalse(allow.filterEquals(later));
         Intent confirm = InteractionUi.consentIntent("com.miui.voiceassist", "task-a", "token-a", true, true);
         Intent reject = InteractionUi.consentIntent("com.miui.voiceassist", "task-a", "token-a", false, true);
         Intent nextAction = InteractionUi.consentIntent("com.miui.voiceassist", "task-a", "token-b", true, true);
@@ -65,5 +67,41 @@ public final class ForegroundConsentBroadcastTest {
         IntentFilter stopFilter = new IntentFilter(stop.getAction());
         assertTrue(stopFilter.matchData(null, stop.getScheme(), stop.getData()) >= 0);
         assertTrue(InteractionUi.consentFilter().matchData(null, stop.getScheme(), stop.getData()) < 0);
+    }
+
+    @Test public void terminalResultKeepsHostQuietUntilItsBoundedWindowExpires() {
+        InteractionUi.HostQuietWindow window = new InteractionUi.HostQuietWindow();
+        assertFalse(window.active(false));
+        assertTrue(window.active(true));
+        window.finished();
+        assertTrue(window.active(false));
+        ShadowSystemClock.advanceBy(Duration.ofMillis(9_999));
+        assertTrue(window.active(false));
+        ShadowSystemClock.advanceBy(Duration.ofMillis(1));
+        assertFalse(window.active(false));
+    }
+
+    @Test public void userWakeCannotReleaseHostWhileControlStillRuns() {
+        InteractionUi.HostQuietWindow window = new InteractionUi.HostQuietWindow();
+        window.finished();
+        assertFalse(window.userEntered(true));
+        assertTrue(window.active(true));
+        assertTrue(window.active(false));
+    }
+
+    @Test public void onlyCurrentCompletionCardCanReleaseQuietWindow() {
+        InteractionUi.HostQuietWindow window = new InteractionUi.HostQuietWindow();
+        window.finished();
+        for (Intent entry : new Intent[]{null, new Intent(),
+            new Intent().putExtra(RETURN_TOKEN, "previous-task")}) {
+            if (InteractionUi.isCompletionEntry(false, entry, "current-task")) window.userEntered(false);
+            assertTrue(window.active(false));
+        }
+        Intent current = new Intent().putExtra(RETURN_TOKEN, "current-task");
+        assertFalse(InteractionUi.isCompletionEntry(true, current, "current-task"));
+        assertFalse(InteractionUi.isCompletionEntry(false, current, null));
+        assertTrue(InteractionUi.isCompletionEntry(false, current, "current-task"));
+        assertTrue(window.userEntered(false));
+        assertFalse(window.active(false));
     }
 }

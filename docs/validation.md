@@ -1,5 +1,15 @@
 # MiAIPlus 1.0.0-preview 实现与验证状态
 
+## 测试集精简（2026-10-18）
+
+在 `452e104` 基础上审计单元测试、设备 runner 与主机脚本：JVM／Robolectric 测试方法从 334 合并为 274（减少 60，约 18%），测试类从 50 合并为 47；无障碍主机测试从 9 个方法合为 5 个契约测试，保留全部 10 个输入场景。方法数按 JUnit 报告统计，输入矩阵的每行仍实际执行，不能把方法数减少解释为删除同等数量的行为场景。
+
+同契约输入改用带场景标签的矩阵，配置规范化、会话路由及交互通知测试集中到对应类；两项纯 Bundle 解析从 Compose 页面夹具移到轻量 Robolectric 类。删除的等价重复包括旧请求 token 退役、显示 generation 唯一性、画布 tap 正反例和已由独立拒绝测试覆盖的确认等待。保留原 SDK 配置、三种页面交接的独立 Activity／ViewModel、新会话零执行历史下的重规划取消，以及权限、超时、注入边界、一次性令牌与后台触摸焦点隔离断言。
+
+`LiveProbeRunner` 原有 live／configure／text 路径合入 `DeviceTestRunner`，设备与 UI runner 文件合计 17→16，保留分派优先级和全部设备场景。后台主机脚本删除 instrumentation 启动前的重复任务检查；测量仍由 runner 在测试页与键盘就绪后采集真实基线，持续检查焦点／IME 隔离。
+
+本地 274 项 JVM／Robolectric 测试全部通过（0 failures／errors／skipped）；`:app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest` 通过，Debug Lint 为 0 errors、35 warnings。无障碍主机测试 5 项通过，两份修改脚本的 Python 语法及 `git diff --check` 通过。本轮未执行设备测试、真实模型请求、Release 构建或 Release Lint；设备 runner 的合并仅完成编译验证。未修改生产代码，未提交、推送或发布。
+
 ## 前台输入法隔离实机复验（2026-10-18）
 
 用户反馈虚拟屏打开应用／点击时前台键盘仍被挤掉，并指定当前连接设备进行复验。比对设备已安装 APK 与本地修复包：原安装包不含 `createIsolatedDisplay` 和 `VIRTUAL_DISPLAY_FLAG_STEAL_TOP_FOCUS_DISABLED`，确认设备尚未运行上一轮的修复代码。先安装上一轮仅包含显示焦点／HIDE 修复的 Debug 与 AndroidTest，完整后台回归通过，主屏实际键盘持续监测 2058 次、`physicalImeLoss=null`。因此不能把此次用户反馈直接归因为这些标志在该 ROM 上无效。

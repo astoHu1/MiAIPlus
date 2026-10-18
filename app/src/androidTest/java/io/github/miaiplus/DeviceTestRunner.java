@@ -5,10 +5,11 @@ import android.app.Instrumentation;
 import android.content.Intent;
 import android.os.Bundle;
 import android.os.SystemClock;
+import android.view.accessibility.AccessibilityNodeInfo;
 import java.util.Map;
 
 /** Instrumented end-to-end test against scripts/mock_model.py, no paid model required. */
-public final class DeviceTestRunner extends LiveProbeRunner {
+public final class DeviceTestRunner extends HookProbeRunner {
     @Override public void finish(int resultCode, Bundle results) {
         // UI probes put a fixture behind XiaoAi. Never leave it as the next app to resume.
         runOnMainSync(() -> {
@@ -24,7 +25,9 @@ public final class DeviceTestRunner extends LiveProbeRunner {
     private String transportApi;
     private boolean replyActionsMode, replyActionsCurrentConfig, actionConfirmationMode, realPageGuardMode, phoneUseTerminalMode, conversationContinuityMode;
     private String replyActionsApi;
+    private Bundle arguments;
     @Override public void onCreate(Bundle arguments) {
+        this.arguments = arguments;
         conversationContinuityMode = "true".equals(arguments.getString("conversation_continuity"));
         phoneUseTerminalMode = "true".equals(arguments.getString("phone_use_terminal"));
         realPageGuardMode = "true".equals(arguments.getString("real_page_guard"));
@@ -87,8 +90,10 @@ public final class DeviceTestRunner extends LiveProbeRunner {
         if (reloadMode) { ReloadProbeRunner.run(this, true); return; }
         // The focus and launch probes live in the parent runner; without this dispatch they fell through to the
         // default mock-model case and failed on a connection the probe never needed.
-        if (focusMode || launchMode || conversationMode) { super.onStart(); return; }
-        if (hookMode || liveMode) { super.onStart(); return; }
+        if (focusMode || launchMode || conversationMode || hookMode || liveMode) {
+            if (liveMode) runLive(); else super.onStart();
+            return;
+        }
         Bundle report = new Bundle();
         int resultCode = Activity.RESULT_CANCELED;
         var prefs = Config.prefs(getTargetContext()); Map<String, ?> original = prefs.getAll();
@@ -170,5 +175,36 @@ public final class DeviceTestRunner extends LiveProbeRunner {
             edit.commit();
         }
         finish(resultCode, report);
+    }
+
+    /** Explicit host-driven live helper; it does not log personal UI or need model credentials. */
+    private void runLive() {
+        Bundle result = new Bundle(); int code = Activity.RESULT_CANCELED;
+        try {
+            if ("true".equals(arguments.getString("configure"))) {
+                Config.prefs(getTargetContext()).edit().putBoolean("enabled", true).putBoolean("globalModel", false)
+                    .putString("planner", "native").putString("endpoint", "").putString("apiKey", "").putString("model", "").commit();
+            }
+            signal("MIAIPLUS_CONNECT_SERVICE");
+            long end = SystemClock.elapsedRealtime() + 15000;
+            while (ScreenService.instance == null && SystemClock.elapsedRealtime() < end) Thread.sleep(100);
+            if (ScreenService.instance == null) throw new IllegalStateException("service unavailable");
+            String text = arguments.getString("text");
+            if (text != null) {
+                boolean[] ok = {false};
+                runOnMainSync(() -> {
+                    var root = ScreenService.instance.getRootInActiveWindow();
+                    if (root == null || !"com.miui.voiceassist".contentEquals(root.getPackageName())) return;
+                    var input = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
+                    if (input == null || !input.isEditable() || input.isPassword()) return;
+                    Bundle b = new Bundle(); b.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text);
+                    ok[0] = input.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, b);
+                });
+                if (!ok[0]) throw new IllegalStateException("editable focus unavailable");
+                result.putString("stream", "LIVE INPUT SET\n");
+            } else result.putString("stream", "LIVE CONFIG READY\n");
+            code = Activity.RESULT_OK;
+        } catch (Throwable e) { result.putString("stream", "LIVE FAIL: " + e.getClass().getSimpleName() + ": " + e.getMessage()); }
+        finish(code, result);
     }
 }

@@ -5,15 +5,17 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class ActionTest {
-    @Test public void upstreamTapAndChineseType() throws Exception {
+    @Test public void upstreamTapPreservesCoordinates() throws Exception {
         Action tap = Action.parseAutoGlm("<think>点击搜索</think><answer>do(action=\"Tap\", element=[500, 125])</answer>");
         assertEquals("tap", tap.name); assertArrayEquals(new double[]{500,125}, tap.point("element"), .001);
-        Action type = Action.parseAutoGlm("do(action='Type', text='你好,世界（A=B）')");
-        assertEquals("你好,世界（A=B）", type.data.getString("text"));
     }
-    @Test public void escapedQuotesAndBracketsAreData() throws Exception {
-        Action type = Action.parseAutoGlm("do(action=\"Type\", text=\"a, [b] \\\"c\\\" = d\")");
-        assertEquals("a, [b] \"c\" = d", type.data.getString("text"));
+    @Test public void literalTextPreservesUnicodeAndEscapedDelimiters() throws Exception {
+        for (String[] sample : new String[][]{
+            {"do(action='Type', text='你好,世界（A=B）')", "你好,世界（A=B）"},
+            {"do(action=\"Type\", text=\"a, [b] \\\"c\\\" = d\")", "a, [b] \"c\" = d"}
+        }) {
+            assertEquals(sample[0], sample[1], Action.parseAutoGlm(sample[0]).data.getString("text"));
+        }
     }
     @Test public void finishAndConfirm() throws Exception {
         assertEquals("finish", Action.parseAutoGlm("finish(message=\"已打开\")").name);

@@ -114,12 +114,9 @@ public class DisplayHelperTaskTest {
         assertEquals(12, DisplayHelper.visibleTaskDisplay(tasks, "example.target", 9));
     }
 
-    @Test public void queryFailureAndIncompleteSnapshotsCannotBecomeNoConflict() {
+    @Test public void failedIncompleteOrUnownedTaskSnapshotsCannotBecomeNoConflict() throws Exception {
         assertThrows(Exception.class, () -> DisplayHelper.queryTasks(new FailedTaskService()));
         assertThrows(Exception.class, () -> DisplayHelper.queryTasks(new TaskServiceFixture(List.of())));
-    }
-
-    @Test public void unknownVisibleTaskOwnershipFailsClosed() throws Exception {
         TaskFixture unknown = task(5, 0, true, "example.target", "");
         unknown.baseActivity = null;
         unknown.topActivity = null;
@@ -144,24 +141,16 @@ public class DisplayHelperTaskTest {
         return new JSONObject(captured.toString().strip());
     }
 
-    @Test public void unsupportedImePolicyIsAnErrorInsteadOfReady() throws Exception {
-        JSONObject reply = imeReply(new RejectedImePolicy());
-        assertEquals(42L, reply.getLong("token"));
-        assertEquals("error", reply.getString("status"));
-        assertEquals("IME_ISOLATION_FAILED", reply.getString("code"));
-        assertTrue(!reply.optBoolean("verified", false));
-    }
-
-    @Test public void ignoredImePolicyFailsReadbackInsteadOfReportingReady() throws Exception {
-        JSONObject reply = imeReply(new IgnoredImePolicy());
-        assertEquals("error", reply.getString("status"));
-        assertEquals("IME_ISOLATION_FAILED", reply.getString("code"));
-        assertTrue(!reply.optBoolean("verified", false));
-    }
-    @Test public void localImePolicyCannotMasqueradeAsKeyboardIsolation() throws Exception {
-        JSONObject reply = imeReply(new LocalImePolicy());
-        assertEquals("error", reply.getString("status"));
-        assertEquals("IME_ISOLATION_FAILED", reply.getString("code"));
+    @Test public void rejectedIgnoredLocalOrMissingImePolicyCannotReportIsolationReady() throws Exception {
+        for (Object policy : List.of(new RejectedImePolicy(), new IgnoredImePolicy(),
+                new LocalImePolicy(), new Object())) {
+            String scenario = policy.getClass().getSimpleName();
+            JSONObject reply = imeReply(policy);
+            assertEquals(scenario, 42L, reply.getLong("token"));
+            assertEquals(scenario, "error", reply.getString("status"));
+            assertEquals(scenario, "IME_ISOLATION_FAILED", reply.getString("code"));
+            assertTrue(scenario, !reply.optBoolean("verified", false));
+        }
     }
 
     @Test public void hidePolicyIsVerifiedAndRecheckingDoesNotReconfigureDisplay() throws Exception {
@@ -172,12 +161,6 @@ public class DisplayHelperTaskTest {
         assertEquals(1, policy.writes);
         assertEquals("HIDE", imeReply(policy).getString("policy"));
         assertEquals(1, policy.writes);
-    }
-
-    @Test public void missingImePolicyApiCannotReportReady() throws Exception {
-        JSONObject reply = imeReply(new Object());
-        assertEquals("error", reply.getString("status"));
-        assertEquals("IME_ISOLATION_FAILED", reply.getString("code"));
     }
 
     @Test public void platformMustExposeBothRequestAndEffectiveFocusCapabilities() throws Exception {

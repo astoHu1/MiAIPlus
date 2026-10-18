@@ -39,17 +39,6 @@ public final class NativeTurnLifecycleTest {
         assertEquals("other-task", bindings.retire(other));
     }
 
-    @Test public void lateBudgetCallbackKeepsCapturedTaskToken() {
-        NativeTurnLifecycle.Bindings bindings = new NativeTurnLifecycle.Bindings();
-        var old = NativeTurnLifecycle.Turn.of("chat-a", "old-request");
-        var current = NativeTurnLifecycle.Turn.of("chat-a", "new-request");
-        bindings.record(old, "old-task");
-        bindings.record(current, "replacement-task");
-        // The provider must receive the old immutable token, never whichever task is active now.
-        assertEquals("old-task", bindings.retire(old));
-        assertEquals("replacement-task", bindings.retire(current));
-    }
-
     @Test public void completedTurnAndDisposeRemoveOnlyIntendedBindings() {
         NativeTurnLifecycle.Bindings bindings = new NativeTurnLifecycle.Bindings();
         var finished = NativeTurnLifecycle.Turn.of("chat-a", "request-a");

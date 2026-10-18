@@ -67,24 +67,19 @@ elif name == 'sleep' and os.environ['GUARD_TEST_STOP_UNBIND'] == 'true':
                                     timeout=10, capture_output=True, text=True)
             return result.returncode, json.loads((base / 'settings.json').read_text()), (base / 'calls').read_text()
 
-    def test_false_on_rebinds_only_module_and_exits_after_connection(self):
-        code, data, calls = self.run_preflight(OTHERS + ':' + COMPONENT)
-        self.assertEqual(0, code)
-        self.assertEqual(OTHERS + ':' + COMPONENT, data['services'])
-        self.assertIn('put secure enabled_accessibility_services ' + OTHERS + '\n', calls)
-        self.assertNotIn('put secure accessibility_enabled 0', calls)
-        self.assertNotIn('accessibility_recover', calls)
-        self.assertEqual(5, sum(line.startswith('content ') for line in calls.splitlines()))
-
-    def test_short_alias_is_not_duplicated(self):
-        code, data, _ = self.run_preflight(OTHERS + ':io.github.miaiplus/.ScreenService')
-        self.assertEqual(0, code)
-        self.assertEqual(OTHERS + ':' + COMPONENT, data['services'])
-
-    def test_null_setting_enables_only_module(self):
-        code, data, _ = self.run_preflight('null')
-        self.assertEqual(0, code)
-        self.assertEqual(COMPONENT, data['services'])
+    def test_false_on_normalizes_services_and_rebinds_only_module(self):
+        for name, services, remaining in [
+                ('full component', OTHERS + ':' + COMPONENT, OTHERS),
+                ('short component', OTHERS + ':io.github.miaiplus/.ScreenService', OTHERS),
+                ('empty setting', 'null', '')]:
+            with self.subTest(services=name):
+                code, data, calls = self.run_preflight(services)
+                self.assertEqual(0, code)
+                self.assertEqual(':'.join(filter(None, [remaining, COMPONENT])), data['services'])
+                self.assertIn('put secure enabled_accessibility_services ' + remaining + '\n', calls)
+                self.assertNotIn('put secure accessibility_enabled 0', calls)
+                self.assertNotIn('accessibility_recover', calls)
+                self.assertEqual(5, sum(line.startswith('content ') for line in calls.splitlines()))
 
     def test_healthy_binder_exits_without_settings_changes_or_waiting(self):
         code, _, calls = self.run_preflight(OTHERS + ':' + COMPONENT, connected=True)
@@ -93,22 +88,17 @@ elif name == 'sleep' and os.environ['GUARD_TEST_STOP_UNBIND'] == 'true':
         self.assertNotIn('sleep ', calls)
         self.assertEqual(1, sum(line.startswith('content ') for line in calls.splitlines()))
 
-    def test_running_task_is_never_cancelled_or_rebound(self):
-        code, _, calls = self.run_preflight(OTHERS + ':' + COMPONENT, busy=True)
-        self.assertEqual(5, code)
-        self.assertNotIn('put secure', calls)
-        self.assertNotIn('accessibility_recover', calls)
-
-    def test_disabled_option_cannot_repair(self):
-        code, _, calls = self.run_preflight(OTHERS + ':' + COMPONENT, enabled=False)
-        self.assertEqual(5, code)
-        self.assertNotIn('put secure', calls)
-
-    def test_cancelled_or_stale_preflight_cannot_repair(self):
-        for options in [dict(preparing=False), dict(stale_id=True)]:
-            code, _, calls = self.run_preflight(OTHERS + ':' + COMPONENT, **options)
-            self.assertEqual(5, code)
-            self.assertNotIn('put secure', calls)
+    def test_invalid_preflight_cannot_repair_or_cancel_tasks(self):
+        for name, options in [
+                ('executing task', dict(busy=True)),
+                ('disabled option', dict(enabled=False)),
+                ('cancelled preparation', dict(preparing=False)),
+                ('stale ticket', dict(stale_id=True))]:
+            with self.subTest(state=name):
+                code, _, calls = self.run_preflight(OTHERS + ':' + COMPONENT, **options)
+                self.assertEqual(5, code)
+                self.assertNotIn('put secure', calls)
+                self.assertNotIn('accessibility_recover', calls)
 
     def test_cancel_during_unbind_does_not_reenable_module(self):
         code, data, _ = self.run_preflight(OTHERS + ':' + COMPONENT, stop_during_unbind=True)

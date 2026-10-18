@@ -43,21 +43,21 @@ public class ScreenServiceTextInputTest {
         ScreenService.instance = null;
     }
 
-    @Test public void shorterReplacementMustNotAcceptTheOldLongerValue() throws Exception {
-        assertFalse(matches("12345", "123"));
-        assertTrue(matches("123", "123"));
-    }
-
-    @Test public void clearingRequiresAnActuallyEmptyReadableValue() throws Exception {
-        assertFalse(matches("12345", ""));
-        assertFalse(matches(null, ""));
-        assertTrue(matches("", ""));
-    }
-
-    @Test public void formattedOrPartialValuesRemainUnverified() throws Exception {
-        assertFalse(matches("prefix目标suffix", "目标"));
-        assertFalse(matches("123 456", "123456"));
-        assertTrue(matches("中文目标", "中文目标"));
+    @Test public void textVerificationRequiresAnExactReadableReplacementIncludingClearing() throws Exception {
+        record Sample(String actual, String expected, boolean matches) { }
+        Sample[] cases = {
+            new Sample("12345", "123", false),
+            new Sample("123", "123", true),
+            new Sample("12345", "", false),
+            new Sample(null, "", false),
+            new Sample("", "", true),
+            new Sample("prefix目标suffix", "目标", false),
+            new Sample("123 456", "123456", false),
+            new Sample("中文目标", "中文目标", true)
+        };
+        for (Sample sample : cases) {
+            assertEquals(sample.toString(), sample.matches(), matches(sample.actual(), sample.expected()));
+        }
     }
 
     @Test public void writingWithoutInputFocusDoesNotOverwriteTheFirstEditableField() {

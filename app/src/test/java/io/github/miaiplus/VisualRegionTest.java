@@ -21,49 +21,28 @@ public class VisualRegionTest {
     private static final String ROOT = "android.widget.FrameLayout [0,0][1000,1000] window=3 id=root enabled=true";
     private static final String BUTTON = "android.widget.Button [100,100][300,300] window=3 id=submit enabled=true clickable text=提交\n";
 
-    @Test public void animatedAdAwayFromCanvasTargetDoesNotBlockTheTap() throws Exception {
-        assertTrue(PageGuard.canExecute(tap(200, 200), frame(image(0, Color.WHITE, 80), ""),
-            frame(image(1, Color.WHITE, 80), "")));
+    @Test public void containersWithoutNonemptyLabelsNeedStableLocalPixels() throws Exception {
+        String original = image(0, Color.WHITE, 80), unrelated = image(1, Color.WHITE, 80), local = image(2, Color.WHITE, 80);
+        for (String node : new String[]{"android.widget.FrameLayout [100,100][700,700] window=3 id=ad enabled=true clickable\n",
+                "android.widget.TextView [100,100][700,700] window=3 enabled=true text= description=\n"}) {
+            String container = ROOT + "\n" + node;
+            assertTrue(node, PageGuard.canExecute(tap(200, 200), frame(original, container), frame(unrelated, container)));
+            assertFalse(node, PageGuard.canExecute(tap(200, 200), frame(original, container), frame(local, container)));
+        }
     }
 
-    @Test public void changedPixelsAtCanvasTargetRequireReplanning() throws Exception {
-        assertFalse(PageGuard.canExecute(tap(200, 200), frame(image(0, Color.WHITE, 80), ""),
-            frame(image(2, Color.WHITE, 80), "")));
-    }
-
-    @Test public void unlabeledClickableAdContainerAlsoNeedsStableLocalPixels() throws Exception {
-        String container = ROOT + "\nandroid.widget.FrameLayout [100,100][700,700] window=3 id=ad enabled=true clickable\n";
-        assertTrue(PageGuard.canExecute(tap(200, 200), frame(image(0, Color.WHITE, 80), container),
-            frame(image(1, Color.WHITE, 80), container)));
-        assertFalse(PageGuard.canExecute(tap(200, 200), frame(image(0, Color.WHITE, 80), container),
-            frame(image(2, Color.WHITE, 80), container)));
-    }
-
-    @Test public void emptyTextAndDescriptionDoNotTurnAVisualContainerIntoALabeledControl() throws Exception {
-        String container = ROOT + "\nandroid.widget.TextView [100,100][700,700] window=3 enabled=true text= description=\n";
-        assertTrue(PageGuard.canExecute(tap(200, 200), frame(image(0, Color.WHITE, 80), container),
-            frame(image(1, Color.WHITE, 80), container)));
-        assertFalse(PageGuard.canExecute(tap(200, 200), frame(image(0, Color.WHITE, 80), container),
-            frame(image(2, Color.WHITE, 80), container)));
-    }
-
-    @Test public void changedPixelsNearThePointAlsoInvalidateTheAction() throws Exception {
-        assertFalse(PageGuard.canExecute(tap(200, 200), frame(image(0, Color.WHITE, 80), ""),
-            frame(image(3, Color.WHITE, 80), "")));
-    }
-
-    @Test public void aSmallNewIconCannotBeHiddenByWholeRegionAveraging() throws Exception {
-        assertFalse(PageGuard.canExecute(tap(200, 200), frame(image(0, Color.WHITE, 80), ""),
-            frame(image(4, Color.WHITE, 80), "")));
+    @Test public void nearbyChangesAndTinyIconsCannotBeHiddenByRegionAveraging() throws Exception {
+        ScreenService.Frame before = frame(image(0, Color.WHITE, 80), "");
+        for (int change : new int[]{3, 4})
+            assertFalse("image change=" + change, PageGuard.canExecute(tap(200, 200), before,
+                frame(image(change, Color.WHITE, 80), "")));
     }
 
     @Test public void aggregatedParentAdTextUsesStablePixelsAroundTheWholeButton() throws Exception {
-        assertTrue(PageGuard.canExecute(tap(200, 200), frame(image(0, Color.WHITE, 80), ROOT + " description=广告一\n" + BUTTON),
+        ScreenService.Frame before = frame(image(0, Color.WHITE, 80), ROOT + " description=广告一\n" + BUTTON);
+        assertTrue(PageGuard.canExecute(tap(200, 200), before,
             frame(image(1, Color.WHITE, 80), ROOT + " description=广告二\n" + BUTTON)));
-    }
-
-    @Test public void parentTextRelaxationCannotHideAChangeElsewhereInsideTheButton() throws Exception {
-        assertFalse(PageGuard.canExecute(tap(200, 200), frame(image(0, Color.WHITE, 80), ROOT + " description=广告一\n" + BUTTON),
+        assertFalse(PageGuard.canExecute(tap(200, 200), before,
             frame(image(5, Color.WHITE, 80), ROOT + " description=广告二\n" + BUTTON)));
     }
 
@@ -94,11 +73,14 @@ public class VisualRegionTest {
     }
 
     @Test public void allPointActionsUseTheSameLocalGuard() throws Exception {
+        ScreenService.Frame before = frame(image(0, Color.WHITE, 80), "");
+        ScreenService.Frame unrelated = frame(image(1, Color.WHITE, 80), "");
+        ScreenService.Frame local = frame(image(2, Color.WHITE, 80), "");
         for (String name : new String[]{"tap", "double_tap", "long_press"}) {
             Action action = tap(200, 200);
             action = new Action(action.data.put("action", name));
-            assertTrue(PageGuard.canExecute(action, frame(image(0, Color.WHITE, 80), ""), frame(image(1, Color.WHITE, 80), "")));
-            assertFalse(PageGuard.canExecute(action, frame(image(0, Color.WHITE, 80), ""), frame(image(2, Color.WHITE, 80), "")));
+            assertTrue(name, PageGuard.canExecute(action, before, unrelated));
+            assertFalse(name, PageGuard.canExecute(action, before, local));
         }
     }
 

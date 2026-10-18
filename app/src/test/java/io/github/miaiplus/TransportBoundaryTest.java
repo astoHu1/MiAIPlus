@@ -10,18 +10,16 @@ public class TransportBoundaryTest {
     private static final class InvocationTargetError extends Error {
         InvocationTargetError(Throwable cause) { super(cause); }
     }
-    @Test public void cancelledReflectedRequestRemainsTheSameIoException() {
+    @Test public void ioFailuresRemainIdenticalThroughReflectionAndProxyWrappers() {
         IOException cancelled = new IOException("stream was reset: CANCEL");
-        IOException result = assertThrows(IOException.class, () -> TransportBoundary.execute(() -> {
-            throw new InvocationTargetError(cancelled);
-        }));
-        assertSame(cancelled, result);
-    }
-    @Test public void nestedProxyAndReflectionWrappersAreUnwrapped() {
         IOException disconnect = new java.net.SocketException("connection reset");
-        assertSame(disconnect, assertThrows(IOException.class, () -> TransportBoundary.execute(() -> {
-            throw new UndeclaredThrowableException(new InvocationTargetException(new InvocationTargetError(disconnect)));
-        })));
+        for (IOException original : new IOException[]{cancelled, disconnect}) {
+            for (Throwable wrapped : new Throwable[]{new InvocationTargetError(original),
+                new UndeclaredThrowableException(new InvocationTargetException(new InvocationTargetError(original)))}) {
+                assertSame(wrapped.getClass().getSimpleName(), original,
+                    assertThrows(IOException.class, () -> TransportBoundary.execute(() -> { throw wrapped; })));
+            }
+        }
     }
     @Test public void conversionFailureBecomesSanitizedIoFailure() {
         IOException result = assertThrows(IOException.class, () -> TransportBoundary.execute(() -> {

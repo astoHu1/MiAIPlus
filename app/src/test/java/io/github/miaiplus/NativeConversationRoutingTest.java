@@ -3,15 +3,17 @@ package io.github.miaiplus;
 import android.app.Application;
 import android.content.Intent;
 import android.os.Bundle;
+import androidx.activity.ComponentActivity;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.robolectric.Robolectric;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 import static org.junit.Assert.*;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 35, application = Application.class)
-public final class NativeConversationHookIntentTest {
+public final class NativeConversationRoutingTest {
     private static final String[] WAKE_ACTIONS = {
         "com.miui.voiceassist.ACTION_VOICE_START_VOICEASSIST",
         "com.miui.voicetrigger.ACTION_VOICE_TRIGGER_START_VOICEASSIST",
@@ -92,6 +94,38 @@ public final class NativeConversationHookIntentTest {
         assertFalse(NativeConversationHook.hasExplicitRoute(null));
     }
 
+
+    @Config(sdk = 33)
+    @Test public void homePauseCannotNavigateOldChatEvenWhileNativeScreenFlagIsStale() {
+        var controller = Robolectric.buildActivity(ComponentActivity.class).setup();
+        ComponentActivity activity = controller.get();
+        assertTrue(NativeConversationHook.isResumedConversationHost(activity, activity.getLifecycle()));
+        controller.pause();
+        assertFalse(NativeConversationHook.isResumedConversationHost(activity, activity.getLifecycle()));
+        controller.resume();
+        assertTrue(NativeConversationHook.isResumedConversationHost(activity, activity.getLifecycle()));
+        controller.pause().stop().destroy();
+        assertFalse(NativeConversationHook.isResumedConversationHost(activity, activity.getLifecycle()));
+    }
+
+    @Config(sdk = 33)
+    @Test public void finishingChatCannotReceiveAnAutomaticWakeRoute() {
+        var controller = Robolectric.buildActivity(ComponentActivity.class).setup();
+        ComponentActivity activity = controller.get();
+        activity.finish();
+        assertFalse(NativeConversationHook.isResumedConversationHost(activity, activity.getLifecycle()));
+        controller.pause().stop().destroy();
+    }
+
+    @Config(sdk = 33)
+    @Test public void unavailableConversationHostOrLifecycleDoesNotInferFullscreen() {
+        var controller = Robolectric.buildActivity(ComponentActivity.class).setup();
+        ComponentActivity activity = controller.get();
+        assertFalse(NativeConversationHook.isResumedConversationHost(null, activity.getLifecycle()));
+        assertFalse(NativeConversationHook.isResumedConversationHost(activity, null));
+        assertFalse(NativeConversationHook.isResumedConversationHost(new Object(), activity.getLifecycle()));
+        controller.pause().stop().destroy();
+    }
     private static Intent conversationReturn(String action) {
         // The host navigation object is unavailable in JVM tests; the routing marker is sufficient
         // to exercise the same exclusion used by completion notifications and explicit history.
@@ -99,4 +133,5 @@ public final class NativeConversationHookIntentTest {
         page.putString("chatId", "owned-conversation");
         return new Intent(action).putExtra("page_navigation_data", page);
     }
+
 }

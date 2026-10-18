@@ -81,26 +81,21 @@ public class BridgeProviderProbeTest {
         }
     }
 
-    @Test public void nativeSessionCleanupRejectsProbeUntilDisplayIsReleased() throws Exception {
-        field(NativeSession.class, "closing").setBoolean(null, true);
-        assertFalse(NativeSession.hasActiveSession());
-
-        Bundle result = provider.call("background_display_probe", null, null);
-
-        assertTrue(result.getString("error", "").contains("已有任务"));
-        assertFalse(field(BridgeProvider.class, "backgroundProbeRunning").getBoolean(null));
-    }
-
-    @Test public void nativeCleanupRejectsNewScreenAndChatWork() throws Exception {
+    @Test public void nativeExecutionAndCleanupRejectProbeAndNewScreenOrChatWork() throws Exception {
         for (String phase : new String[]{"closing", "executing"}) {
             field(NativeSession.class, phase).setBoolean(null, true);
+            assertFalse(phase, NativeSession.hasActiveSession());
+            Bundle probe = provider.call("background_display_probe", null, null);
+            assertTrue(phase, probe.getString("error", "").contains("已有任务"));
+            assertFalse(phase, field(BridgeProvider.class, "backgroundProbeRunning").getBoolean(null));
             for (String mode : new String[]{"screen", "chat"}) {
                 Bundle request = new Bundle();
                 request.putString("mode", mode); request.putString("query", "test");
                 Bundle result = provider.call("start", null, request);
-                assertTrue(result.getString("error", "").contains("仍在清理"));
-                assertFalse(result.containsKey("id"));
-                assertNull(field(BridgeProvider.class, "active").get(null));
+                String label = phase + "/" + mode;
+                assertTrue(label, result.getString("error", "").contains("仍在清理"));
+                assertFalse(label, result.containsKey("id"));
+                assertNull(label, field(BridgeProvider.class, "active").get(null));
             }
             field(NativeSession.class, phase).setBoolean(null, false);
         }

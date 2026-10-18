@@ -86,6 +86,8 @@ public final class BridgeProviderConversationSettingsTest {
 
     @Test public void nativeSessionBetweenStepsStaysBusyUntilActualFinish() throws Exception {
         Object session = activateNativeSession();
+        assertFalse(field(BridgeProvider.class, "screenTaskActive").getBoolean(null));
+        assertTrue("native session is busy even without a notification task", settings().getBoolean("screenBusy"));
         field(BridgeProvider.class, "screenTaskId").set(null, "native-task");
         field(BridgeProvider.class, "screenTaskActive").setBoolean(null, true);
         field(BridgeProvider.class, "screenResult").set(null, "CONTINUE：等待模型下一步");
@@ -101,12 +103,6 @@ public final class BridgeProviderConversationSettingsTest {
         assertFalse(NativeSession.hasPendingOperation());
         assertFalse(settings().getBoolean("screenBusy"));
         assertFalse(field(BridgeProvider.class, "screenTaskActive").getBoolean(null));
-    }
-
-    @Test public void nativeSessionWithoutNotificationTaskStillPreventsWakeRollover() throws Exception {
-        activateNativeSession();
-        assertFalse(field(BridgeProvider.class, "screenTaskActive").getBoolean(null));
-        assertTrue(settings().getBoolean("screenBusy"));
     }
 
     @Test public void reservedScreenStepStaysBusyThroughCancellationUntilWorkerUnwinds() throws Exception {

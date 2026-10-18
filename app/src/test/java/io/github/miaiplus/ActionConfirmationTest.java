@@ -27,22 +27,14 @@ public final class ActionConfirmationTest {
     private RunState run;
     private FutureTask<Boolean> waiting;
 
-    @Test public void explicitConfirmationWithBlankMessageKeepsAnOperationDescription() throws Exception {
+    @Test public void confirmationDescriptionUsesIntentOrActionFallbackAndPreservesSuppliedText() throws Exception {
         Action action = new Action(new org.json.JSONObject().put("action", "back")
             .put("requires_confirmation", true).put("message", " \n ").put("intent", "返回订单页"));
         assertEquals("返回订单页", ActionConfirmation.message(action));
         action.data.remove("intent");
         assertEquals("返回上一页", ActionConfirmation.message(action));
-        ActionConfirmation.Request request = startWaiting(ActionConfirmation.message(action));
-        assertFalse(waiting.isDone());
-        assertTrue(answer("task-a", request.token, false));
-        finishWaiting();
-        assertFalse(waiting.get(1, TimeUnit.SECONDS));
-    }
-
-    @Test public void suppliedConfirmationDescriptionIsPreservedInFull() throws Exception {
         String message = "确认发送给指定收件人：\n" + "完整操作说明".repeat(50);
-        Action action = new Action(new org.json.JSONObject().put("action", "back").put("message", message));
+        action.data.put("message", message);
         assertEquals(message, ActionConfirmation.message(action));
     }
 
@@ -72,16 +64,20 @@ public final class ActionConfirmationTest {
         field(BridgeProvider.class, "screenTaskActive").setBoolean(null, false);
     }
 
-    @Test public void approvalRequiresMatchingOwnerTaskAndTokenAndCannotBeReplayed() {
-        ActionConfirmation.Request request = request();
-        long now = SystemClock.elapsedRealtime();
-        assertFalse(request.respond("task-a", run.owner + 1, request.token, true, now));
-        assertFalse(request.respond("task-b", run.owner, request.token, true, now));
-        assertFalse(request.respond("task-a", run.owner, "old-token", true, now));
-        assertNull(request.answer());
-        assertTrue(request.respond("task-a", run.owner, request.token, true, now));
-        assertFalse(request.respond("task-a", run.owner, request.token, false, now));
-        assertEquals(Boolean.TRUE, request.answer());
+    @Test public void eachDecisionRequiresMatchingOwnerTaskAndTokenAndCannotBeReplayed() {
+        for (boolean allow : new boolean[]{true, false}) {
+            String scenario = "allow=" + allow;
+            ActionConfirmation.Request request = request();
+            long now = SystemClock.elapsedRealtime();
+            assertFalse(scenario, request.respond("task-a", run.owner + 1, request.token, allow, now));
+            assertFalse(scenario, request.respond("task-b", run.owner, request.token, allow, now));
+            assertFalse(scenario, request.respond("task-a", run.owner, "old-token", allow, now));
+            assertNull(scenario, request.answer());
+            assertTrue(scenario, request.respond("task-a", run.owner, request.token, allow, now));
+            assertFalse(scenario, request.respond("task-a", run.owner, request.token, !allow, now));
+            assertEquals(scenario, Boolean.valueOf(allow), request.answer());
+            assertNotEquals(scenario, request.token, request().token);
+        }
     }
 
     @Test public void expiryCancellationAndStepDeadlineEachRejectApproval() {
@@ -97,15 +93,6 @@ public final class ActionConfirmationTest {
         assertNull(expired.answer());
         assertNull(deadline.answer());
         assertNull(cancelled.answer());
-    }
-
-    @Test public void denialCannotBeReplacedByAReplayedApproval() {
-        ActionConfirmation.Request request = request();
-        long now = SystemClock.elapsedRealtime();
-        assertTrue(request.respond("task-a", run.owner, request.token, false, now));
-        assertFalse(request.respond("task-a", run.owner, request.token, true, now));
-        assertEquals(Boolean.FALSE, request.answer());
-        assertNotEquals(request.token, request().token);
     }
 
     @Test public void providerApprovalUnblocksOnlyThePendingActionAndClearsIt() throws Exception {

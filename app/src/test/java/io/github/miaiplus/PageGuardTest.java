@@ -35,20 +35,13 @@ public class PageGuardTest {
             frame("new screenshot", ROOT + BUTTON + clock + "10:01\n")));
     }
 
-    @Test public void changedTargetTextRequiresAnotherObservation() throws Exception {
-        assertFalse(PageGuard.canExecute(tap(), frame("image", ROOT + BUTTON),
-            frame("image", ROOT + BUTTON.replace("提交", "删除"))));
-    }
-
-    @Test public void movedTargetCannotReuseOldCoordinates() throws Exception {
-        assertFalse(PageGuard.canExecute(tap(), frame("image", ROOT + BUTTON),
-            frame("image", ROOT + BUTTON.replace("[100,100][300,300]", "[250,100][450,300]"))));
-    }
-
-    @Test public void changedTargetIdentityOrAvailabilityRequiresAnotherObservation() throws Exception {
-        for (String changed : new String[]{BUTTON.replace("id=submit", "id=delete"),
-                BUTTON.replace("enabled=true", "enabled=false"), BUTTON.replace(" clickable", "")})
-            assertFalse(PageGuard.canExecute(tap(), frame("image", ROOT + BUTTON), frame("image", ROOT + changed)));
+    @Test public void changedTargetSemanticsGeometryOrAvailabilityRequiresAnotherObservation() throws Exception {
+        ScreenService.Frame before = frame("image", ROOT + BUTTON);
+        for (String changed : new String[]{BUTTON.replace("提交", "删除"),
+                BUTTON.replace("[100,100][300,300]", "[250,100][450,300]"),
+                BUTTON.replace("id=submit", "id=delete"), BUTTON.replace("enabled=true", "enabled=false"),
+                BUTTON.replace(" clickable", "")})
+            assertFalse(changed, PageGuard.canExecute(tap(), before, frame("image", ROOT + changed)));
     }
 
     @Test public void disabledTargetsAreNeverInjectedEvenIfUnchanged() throws Exception {
@@ -56,27 +49,21 @@ public class PageGuardTest {
         assertFalse(PageGuard.canExecute(tap(), disabled, disabled));
     }
 
-    @Test public void newDialogOverAnUnchangedButtonRequiresAnotherObservation() throws Exception {
-        String dialog = "android.widget.FrameLayout [50,50][800,800] window=4 enabled=true\n";
-        assertFalse(PageGuard.canExecute(tap(), frame("image", ROOT + BUTTON), frame("image", ROOT + BUTTON + dialog)));
+    @Test public void newDialogOrTransparentInterceptorRequiresAnotherObservation() throws Exception {
+        ScreenService.Frame before = frame("image", ROOT + BUTTON);
+        for (String covering : new String[]{"android.widget.FrameLayout [50,50][800,800] window=4 enabled=true\n",
+                "android.view.View [0,0][1000,1000] window=3 enabled=true\n"})
+            assertFalse(covering, PageGuard.canExecute(tap(), before, frame("image", ROOT + BUTTON + covering)));
     }
 
-    @Test public void transparentContainerOverTargetAlsoRequiresAnotherObservation() throws Exception {
-        String interceptor = "android.view.View [0,0][1000,1000] window=3 enabled=true\n";
-        assertFalse(PageGuard.canExecute(tap(), frame("image", ROOT + BUTTON), frame("image", ROOT + BUTTON + interceptor)));
-    }
-
-    @Test public void ancestorChangeIsCheckedEvenWhenDeepestChildIsUnchanged() throws Exception {
+    @Test public void coveringNodeIdentityAndOrderMustRemainStable() throws Exception {
         assertFalse(PageGuard.canExecute(tap(), frame("image", ROOT + BUTTON),
             frame("image", ROOT.replace("id=root", "id=modal") + BUTTON)));
-    }
-
-    @Test public void coveringNodeOrderMustRemainStable() throws Exception {
         String label = "android.widget.TextView [100,100][300,300] window=3 enabled=true text=确认\n";
         assertFalse(PageGuard.canExecute(tap(), frame("image", ROOT + BUTTON + label), frame("image", ROOT + label + BUTTON)));
     }
 
-    @Test public void fullForegroundAndDisplayIdentityMustMatch() throws Exception {
+    @Test public void foregroundDisplayIdentityAndGeometryMustMatch() throws Exception {
         ScreenService.Frame before = frame("image", ROOT + BUTTON);
         assertFalse(PageGuard.canExecute(tap(), before,
             new ScreenService.Frame("image", before.tree(), 1000, 1000, "other.app", 500, 500, 0, "")));
@@ -84,10 +71,6 @@ public class PageGuardTest {
             new ScreenService.Frame("image", before.tree(), 1000, 1000, "app", 500, 500, 1, "")));
         assertFalse(PageGuard.canExecute(tap(), before,
             new ScreenService.Frame("image", before.tree(), 1000, 1000, "app", 500, 500, 0, "new generation")));
-    }
-
-    @Test public void displayAndEncodedImageGeometryMustMatch() throws Exception {
-        ScreenService.Frame before = frame("image", ROOT + BUTTON);
         assertFalse(PageGuard.canExecute(tap(), before,
             new ScreenService.Frame("image", before.tree(), 1000, 1100, "app", 500, 500, 0, "")));
         assertFalse(PageGuard.canExecute(tap(), before,

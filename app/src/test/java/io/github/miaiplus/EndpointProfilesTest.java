@@ -70,23 +70,31 @@ public class EndpointProfilesTest {
         assertEquals("", storage.values.get("apiKey"));
     }
 
-    @Test public void switchingRestoresCompleteSnapshotAndLeavesGlobalAndReasoningSettingsAlone() {
-        Storage storage = new Storage();
-        var first = service("a", "服务 A", "key-a", "alias-a", "responses");
-        var second = service("b", "服务 B", "key-b", "alias-b", "chat");
-        storage.values.put("globalModel", "unchanged");
-        storage.values.put(ReasoningPolicy.preferenceKey(first.endpoint, first.model, first.api), "low");
-        storage.save(first, true);
-        storage.save(second, false);
-        assertEquals(2, new EndpointProfiles(storage.prefs).profiles.size());
-        storage.save(new EndpointProfiles(storage.prefs).find(first.id), false);
-        assertEquals(first.id, new EndpointProfiles(storage.prefs).activeId);
-        assertEquals(first.endpoint, storage.values.get("endpoint"));
-        assertEquals(first.apiKey, storage.values.get("apiKey"));
-        assertEquals(first.model, storage.values.get("model"));
-        assertEquals(first.api, storage.values.get("api"));
-        assertEquals("unchanged", storage.values.get("globalModel"));
-        assertEquals("low", storage.values.get(ReasoningPolicy.preferenceKey(first.endpoint, first.model, first.api)));
+    @Test public void switchingRestoresCompleteProfilesOnSameOrDifferentEndpointsWithoutChangingOtherSettings() {
+        for (boolean sameEndpoint : new boolean[]{false, true}) {
+            String label = sameEndpoint ? "same endpoint" : "different endpoints";
+            Storage storage = new Storage();
+            var first = service("a", "服务 A", "key-a", "alias-a", sameEndpoint ? "auto" : "responses");
+            var second = new EndpointProfiles.Profile("b", "服务 B",
+                sameEndpoint ? first.endpoint : "https://b.example.com/v1", "key-b", "alias-b",
+                sameEndpoint ? "responses" : "chat");
+            storage.values.put("globalModel", "unchanged");
+            String reasoningKey = ReasoningPolicy.preferenceKey(first.endpoint, first.model, first.api);
+            storage.values.put(reasoningKey, "low");
+            storage.save(first, true);
+            storage.save(second, false);
+            assertEquals(label, 2, new EndpointProfiles(storage.prefs).profiles.size());
+            storage.save(new EndpointProfiles(storage.prefs).find(first.id), false);
+            var profiles = new EndpointProfiles(storage.prefs);
+            assertEquals(label, first.id, profiles.activeId);
+            assertEquals(label, first.endpoint, storage.values.get("endpoint"));
+            assertEquals(label, first.apiKey, storage.values.get("apiKey"));
+            assertEquals(label, first.model, storage.values.get("model"));
+            assertEquals(label, first.api, storage.values.get("api"));
+            assertEquals(label, second.encode(), profiles.find(second.id).encode());
+            assertEquals(label, "unchanged", storage.values.get("globalModel"));
+            assertEquals(label, "low", storage.values.get(reasoningKey));
+        }
     }
 
     @Test public void renameUpdatesInPlaceAndDuplicateNamesLeaveStorageUntouched() {
@@ -112,17 +120,6 @@ public class EndpointProfilesTest {
         var profiles = new EndpointProfiles(storage.prefs);
         assertEquals(1, profiles.profiles.size()); assertEquals(second.id, profiles.activeId);
         assertFalse(storage.values.toString().contains("unique-secret-a"));
-    }
-
-    @Test public void profilesOnSameEndpointKeepDistinctKeysModelsAndApiSelections() {
-        Storage storage = new Storage();
-        var first = service("a", "A", "key-a", "model-a", "auto");
-        var second = new EndpointProfiles.Profile("b", "B", first.endpoint, "key-b", "model-b", "responses");
-        storage.save(first, true); storage.save(second, false);
-        storage.save(new EndpointProfiles(storage.prefs).find(first.id), false);
-        assertEquals("key-a", storage.values.get("apiKey"));
-        assertEquals("auto", storage.values.get("api"));
-        assertEquals(second.encode(), new EndpointProfiles(storage.prefs).find(second.id).encode());
     }
 
     @Test public void switchDuringConfigReadKeepsUrlKeyModelAndProtocolFromOneSnapshot() {

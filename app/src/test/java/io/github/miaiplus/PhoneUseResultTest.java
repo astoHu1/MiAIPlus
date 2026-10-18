@@ -43,7 +43,7 @@ public final class PhoneUseResultTest {
         assertFalse(PhoneUseResult.endsNativeTurn("{invalid"));
     }
 
-    @Test public void knownCliEnvelopesPreserveTerminalSignalsIncludingFailedResults() throws Exception {
+    @Test public void onlyKnownTextEnvelopesPreserveTerminalSignalsIncludingFailedResults() throws Exception {
         for (String terminal : new String[]{PhoneUseResult.stopped("执行失败"), "PAUSE：需要你接管手机"}) {
             JSONObject text = new JSONObject().put("type", "text").put("text", terminal);
             assertTrue(PhoneUseResult.endsNativeTurn(text.toString()));
@@ -53,18 +53,16 @@ public final class PhoneUseResultTest {
                 assertTrue(PhoneUseResult.endsNativeTurn(new JSONObject().put("__envelope__", 1)
                     .put("ok", ok).put("data", text).toString()));
             }
+            for (JSONObject invalid : new JSONObject[]{
+                new JSONObject().put("data", terminal),
+                new JSONObject().put("__envelope__", 2).put("data", terminal),
+                new JSONObject().put("type", "image").put("text", terminal),
+                new JSONObject().put("__envelope__", 1)
+                    .put("data", new JSONObject().put("page", terminal))
+            }) {
+                assertFalse(invalid.toString(), PhoneUseResult.endsNativeTurn(invalid.toString()));
+            }
         }
-    }
-
-    @Test public void unknownEnvelopesAndNonTextResultsDoNotTerminate() throws Exception {
-        String stop = PhoneUseResult.stopped("失败");
-        assertFalse(PhoneUseResult.endsNativeTurn(new JSONObject().put("data", stop).toString()));
-        assertFalse(PhoneUseResult.endsNativeTurn(new JSONObject().put("__envelope__", 2)
-            .put("data", stop).toString()));
-        assertFalse(PhoneUseResult.endsNativeTurn(new JSONObject().put("type", "image")
-            .put("text", stop).toString()));
-        assertFalse(PhoneUseResult.endsNativeTurn(new JSONObject().put("__envelope__", 1)
-            .put("data", new JSONObject().put("page", stop)).toString()));
     }
 
     @Test public void terminalReplyStopsOnlyPhoneToolsAndExactCompatibilityCliEntry() throws Exception {

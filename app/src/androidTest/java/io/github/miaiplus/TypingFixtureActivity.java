@@ -18,13 +18,10 @@ import android.widget.TextView;
 public final class TypingFixtureActivity extends Activity {
     /** Set while this page is visible, so a test can read what the field actually contains. */
     public static volatile EditText input;
-    /** Records every touch this page receives, to show input addressed here never lands elsewhere. */
-    public static volatile String lastTouch = "none";
     private TextView title;
     private int editorTaps;
 
     @Override public boolean dispatchTouchEvent(android.view.MotionEvent event) {
-        lastTouch = event.getActionMasked() + ":" + event.getX() + "," + event.getY();
         boolean handled = super.dispatchTouchEvent(event);
         if (handled && event.getActionMasked() == android.view.MotionEvent.ACTION_UP
             && input != null && input.getContext() == this && input.hasFocus()) {
@@ -52,7 +49,6 @@ public final class TypingFixtureActivity extends Activity {
         input.setHint("后台输入测试框");
         root.addView(input);
         setContentView(root);
-        lastTouch = "none";
     }
 
     @Override public void onDestroy() {

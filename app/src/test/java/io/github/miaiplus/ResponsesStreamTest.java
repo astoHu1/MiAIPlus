@@ -54,36 +54,32 @@ public class ResponsesStreamTest {
             }
         }
     }
-    @Test public void completedTextWithoutDeltasIsReturnedOnce() throws Exception {
-        JSONObject response = textResult("ok");
-        try (var stream = new ResponsesStream(input(event(new JSONObject().put("type", "response.completed").put("response", response))), ignored -> {})) {
-            String wire = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
-            assertTrue(wire.contains("\"content\":\"ok\"")); assertTrue(wire.contains("\"finish_reason\":\"stop\""));
-        }
-    }
-    @Test public void commentsAndEmptyFramesReturnHeartbeatBeforeCompletion() throws Exception {
-        for (String activity : new String[]{": private upstream ping\r\n\r\n", "\r\n", "event: ping\r\ndata:\r\n\r\n"}) {
-            try (var stream = new ResponsesStream(input(activity), ignored -> fail("Heartbeat completed response"))) {
-                assertEquals(": keep-alive\n\n", readChunk(stream));
-                assertPrematureEnd(stream);
+    @Test public void completedTextIsReturnedOnceWithAbsentOrEmptyDeltas() throws Exception {
+        String emptyDelta = event(new JSONObject().put("type", "response.output_text.delta").put("delta", ""));
+        JSONObject done = new JSONObject().put("type", "response.completed").put("response", textResult("final text"));
+        for (String prefix : new String[]{"", emptyDelta}) {
+            try (var stream = new ResponsesStream(input(prefix + event(done)), ignored -> {})) {
+                if (!prefix.isEmpty()) assertEquals(": keep-alive\n\n", readChunk(stream));
+                String wire = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+                assertTrue(wire.contains("\"content\":\"final text\""));
+                assertEquals(1, wire.split("final text", -1).length - 1);
+                assertTrue(wire.contains("\"finish_reason\":\"stop\""));
+                assertTrue(wire.endsWith("data: [DONE]\n\n"));
             }
         }
     }
-    @Test public void ignoredProgressAndReasoningReturnOnlyHeartbeatBeforeCompletion() throws Exception {
-        for (String type : new String[]{"response.in_progress", "response.reasoning_text.delta", "response.reasoning_summary_text.delta"}) {
-            JSONObject activity = new JSONObject().put("type", type).put("delta", "private reasoning");
-            try (var stream = new ResponsesStream(input(event(activity)), ignored -> fail("Progress completed response"))) {
-                assertEquals(": keep-alive\n\n", readChunk(stream));
+    @Test public void nonContentFramesReturnOnlyHeartbeatBeforeCompletion() throws Exception {
+        var frames = new java.util.ArrayList<>(java.util.List.of(
+            ": private upstream ping\r\n\r\n", "\r\n", "event: ping\r\ndata:\r\n\r\n"));
+        for (String type : new String[]{"response.in_progress", "response.reasoning_text.delta", "response.reasoning_summary_text.delta"})
+            frames.add(event(new JSONObject().put("type", type).put("delta", "private reasoning")));
+        frames.add(event(new JSONObject().put("type", "response.output_item.done")
+            .put("item", result("completed").getJSONArray("output").get(0))));
+        for (String frame : frames) {
+            try (var stream = new ResponsesStream(input(frame), ignored -> fail("Nonterminal frame cached: " + frame))) {
+                assertEquals(frame, ": keep-alive\n\n", readChunk(stream));
                 assertPrematureEnd(stream);
             }
-        }
-    }
-    @Test public void completedToolItemOnlyKeepsAliveUntilValidatedResponse() throws Exception {
-        JSONObject added = new JSONObject().put("type", "response.output_item.done")
-            .put("item", result("completed").getJSONArray("output").get(0));
-        try (var stream = new ResponsesStream(input(event(added)), ignored -> fail("Partial tool cached"))) {
-            assertEquals(": keep-alive\n\n", readChunk(stream));
-            assertPrematureEnd(stream);
         }
     }
     @Test public void heartbeatDoesNotTurnTerminalErrorsIntoCompletion() throws Exception {
@@ -94,17 +90,6 @@ public class ResponsesStreamTest {
                 try { stream.readAllBytes(); fail("Accepted failed response"); }
                 catch (IOException expected) { assertEquals("Responses 请求失败或输出不完整", expected.getMessage()); }
             }
-        }
-    }
-    @Test public void emptyDeltaDoesNotSuppressCompletedText() throws Exception {
-        JSONObject empty = new JSONObject().put("type", "response.output_text.delta").put("delta", "");
-        JSONObject done = new JSONObject().put("type", "response.completed").put("response", textResult("final text"));
-        try (var stream = new ResponsesStream(input(event(empty) + event(done)), ignored -> {})) {
-            assertEquals(": keep-alive\n\n", readChunk(stream));
-            String wire = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
-            assertEquals(1, wire.split("final text", -1).length - 1);
-            assertTrue(wire.contains("\"finish_reason\":\"stop\""));
-            assertTrue(wire.endsWith("data: [DONE]\n\n"));
         }
     }
 }

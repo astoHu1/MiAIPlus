@@ -15,9 +15,12 @@ import static org.junit.Assert.*;
 public class PhoneUseRoutingTest {
     @After public void clearFakeSession() throws Exception { activeField().set(null, null); }
 
-    @Test public void eachToolOverridesBothLegacyDefaultsWithoutChangingThem() throws Exception {
+    @Test public void explicitToolsOverrideDefaultsWhileLegacyStartsKeepThem() throws Exception {
         for (boolean defaultBackground : new boolean[]{false, true}) {
             Config config = new Config(Map.of("backgroundDisplay", defaultBackground));
+            PhoneUseRouting.Request legacy = PhoneUseRouting.decode("test", config.backgroundDisplay);
+            assertEquals(defaultBackground, legacy.background());
+            assertEquals("", legacy.sourceTool());
             for (String tool : new String[]{PhoneUseRouting.FOREGROUND_TOOL, PhoneUseRouting.BACKGROUND_TOOL}) {
                 String encoded = PhoneUseRouting.encode(tool, new JSONObject().put("goal", "打开测试应用"));
                 PhoneUseRouting.Request route = PhoneUseRouting.decode(encoded, config.backgroundDisplay);
@@ -27,12 +30,6 @@ public class PhoneUseRoutingTest {
                 assertEquals(defaultBackground, config.backgroundDisplay);
             }
         }
-    }
-
-    @Test public void legacyStartsRetainConfiguredDefault() throws Exception {
-        assertTrue(PhoneUseRouting.decode("test", true).background());
-        assertFalse(PhoneUseRouting.decode("test", false).background());
-        assertEquals("", PhoneUseRouting.decode("test", false).sourceTool());
     }
 
     @Test public void continuationCarriesOriginalToolAndImageCoordinates() throws Exception {

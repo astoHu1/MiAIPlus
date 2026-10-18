@@ -2,34 +2,28 @@ package io.github.miaiplus;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
 import org.junit.Test;
 
 public class ConversationPolicyTest {
     private static final long NOW = 1_000_000L;
 
-    @Test public void initialWakeStartsNewConversation() {
-        assertEquals(ConversationPolicy.Decision.NEW, new ConversationPolicy(0, false).wake(NOW, 30, false));
-    }
-
-    @Test public void recentConversationContinuesAcrossSurfaces() {
-        ConversationPolicy policy = new ConversationPolicy(NOW, true);
-        assertEquals(ConversationPolicy.Decision.CONTINUE, policy.wake(NOW + 29 * 60_000L, 30, false));
-        assertEquals(ConversationPolicy.Decision.CONTINUE, policy.wake(NOW + 29 * 60_000L, 30, false));
-    }
-
-    @Test public void exactTimeoutStillContinues() {
-        assertEquals(ConversationPolicy.Decision.CONTINUE,
-            new ConversationPolicy(NOW, true).wake(NOW + 30 * 60_000L, 30, false));
-    }
-
-    @Test public void expiredConversationStartsNew() {
-        assertEquals(ConversationPolicy.Decision.NEW,
-            new ConversationPolicy(NOW, true).wake(NOW + 30 * 60_000L + 1, 30, false));
-    }
-
-    @Test public void clockRollbackStartsNewConversation() {
-        assertEquals(ConversationPolicy.Decision.NEW, new ConversationPolicy(NOW, true).wake(NOW - 1, 30, false));
+    @Test public void wakeChecksConversationPresenceAndIdleTimeBoundaries() {
+        record WakeCase(String name, long lastActivity, boolean selected, long now, int timeoutMinutes,
+                        ConversationPolicy.Decision expected) {}
+        WakeCase[] cases = {
+            new WakeCase("initial wake", 0, false, NOW, 30, ConversationPolicy.Decision.NEW),
+            new WakeCase("recent touch without conversation", NOW, false, NOW + 1, 30, ConversationPolicy.Decision.NEW),
+            new WakeCase("within timeout", NOW, true, NOW + 29 * 60_000L, 30, ConversationPolicy.Decision.CONTINUE),
+            new WakeCase("exact timeout", NOW, true, NOW + 30 * 60_000L, 30, ConversationPolicy.Decision.CONTINUE),
+            new WakeCase("expired timeout", NOW, true, NOW + 30 * 60_000L + 1, 30, ConversationPolicy.Decision.NEW),
+            new WakeCase("clock rollback", NOW, true, NOW - 1, 30, ConversationPolicy.Decision.NEW),
+            new WakeCase("timeout clamped to one day", NOW, true, NOW + 1440 * 60_000L + 1,
+                Integer.MAX_VALUE, ConversationPolicy.Decision.NEW)
+        };
+        for (WakeCase test : cases) {
+            assertEquals(test.name(), test.expected(), new ConversationPolicy(test.lastActivity(), test.selected())
+                .wake(test.now(), test.timeoutMinutes(), false));
+        }
     }
 
     @Test public void disabledDoesNotMutateActivityOrConversation() {
@@ -63,34 +57,23 @@ public class ConversationPolicyTest {
         assertEquals(ConversationPolicy.Decision.CONTINUE, policy.wake(NOW + 1, 30, false));
     }
 
-    @Test public void missingConversationDoesNotContinueEvenWithRecentTouch() {
-        assertEquals(ConversationPolicy.Decision.NEW, new ConversationPolicy(NOW, false).wake(NOW + 1, 30, false));
-    }
-
-    @Test public void timeoutClampPreventsInvalidLargeDuration() {
-        assertEquals(ConversationPolicy.Decision.NEW,
-            new ConversationPolicy(NOW, true).wake(NOW + 1440 * 60_000L + 1, Integer.MAX_VALUE, false));
-    }
-
     @Test public void deletedConversationCannotResumeEvenWithRecentUserActivity() {
         ConversationPolicy policy = new ConversationPolicy(NOW, true);
         policy.invalidate();
         assertEquals(ConversationPolicy.Decision.NEW, policy.wake(NOW + 1, 30, false));
     }
 
-    @Test public void nativeInheritedPageCannotConsumePendingWake() {
-        assertFalse(ConversationPolicy.acceptsExplicitRoute(true, false, 5, 5));
-    }
-
-    @Test public void explicitCompletionReturnOverridesPendingWake() {
-        assertTrue(ConversationPolicy.acceptsExplicitRoute(true, true, 5, 5));
-    }
-
-    @Test public void separateUserHistorySelectionOverridesPendingWake() {
-        assertTrue(ConversationPolicy.acceptsExplicitRoute(true, false, 5, 6));
-    }
-
-    @Test public void standaloneRouteCanSelectConversation() {
-        assertTrue(ConversationPolicy.acceptsExplicitRoute(false, false, 5, 5));
+    @Test public void explicitRouteOverridesPendingWakeOnlyForReturnOrNewerUserInput() {
+        record RouteCase(String name, boolean pending, boolean moduleReturn, long currentInput, boolean accepted) {}
+        RouteCase[] cases = {
+            new RouteCase("inherited native page", true, false, 5, false),
+            new RouteCase("completion return", true, true, 5, true),
+            new RouteCase("new user history selection", true, false, 6, true),
+            new RouteCase("standalone route", false, false, 5, true)
+        };
+        for (RouteCase test : cases) {
+            assertEquals(test.name(), test.accepted(),
+                ConversationPolicy.acceptsExplicitRoute(test.pending(), test.moduleReturn(), 5, test.currentInput()));
+        }
     }
 }

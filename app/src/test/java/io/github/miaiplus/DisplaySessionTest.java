@@ -13,11 +13,6 @@ public class DisplaySessionTest {
         assertFalse(session.matches(7, ""));
     }
 
-    @Test public void everySessionGetsItsOwnGeneration() {
-        assertNotEquals(new DisplaySession(1, "a", 1, 1, 1, 0).generation,
-            new DisplaySession(1, "a", 1, 1, 1, 0).generation);
-    }
-
     @Test public void physicalAndBackgroundFramesStayDistinguishable() {
         ScreenService.Frame physical = ScreenService.Frame.physical("img", "tree", 1440, 3200, "com.example");
         assertFalse(physical.isBackground());
@@ -45,19 +40,4 @@ public class DisplaySessionTest {
         assertFalse(BackgroundActions.NAVIGATION.contains("type"));
     }
 
-    @Test public void backgroundCapabilityIsOffByDefaultAndOnlyOptInEnablesIt() {
-        // A fresh install has no key stored, and must keep sending every task to the physical screen.
-        assertFalse(new Config(java.util.Map.of()).backgroundDisplay);
-        assertFalse(new Config(java.util.Map.of("backgroundDisplay", false)).backgroundDisplay);
-        // A non-boolean value must not enable a root-backed feature by accident.
-        assertFalse(new Config(java.util.Map.of("backgroundDisplay", "true")).backgroundDisplay);
-        assertTrue(new Config(java.util.Map.of("backgroundDisplay", true)).backgroundDisplay);
-    }
-
-    @Test public void backgroundSettingDoesNotDisturbExistingKeys() {
-        Config physical = new Config(java.util.Map.of("enabled", true, "maxSteps", 12));
-        assertTrue(physical.enabled);
-        assertEquals(12, physical.maxSteps);
-        assertFalse(physical.backgroundDisplay);
-    }
 }

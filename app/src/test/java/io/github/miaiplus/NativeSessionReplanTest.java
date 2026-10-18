@@ -62,7 +62,8 @@ public final class NativeSessionReplanTest {
     }
 
     @Test public void changedTargetReturnsFreshObservationWithoutExecutingAndNewCoordinatesWork() throws Exception {
-        ScreenShadow.current = frame(BUTTON.replace("[100,100][300,300]", "[400,100][600,300]"));
+        String movedButton = BUTTON.replace("[100,100][300,300]", "[400,100][600,300]");
+        ScreenShadow.current = frame(movedButton);
         assertSkipped(step(200, 200));
         assertEquals(0, ScreenShadow.attempts);
         assertEquals(0, ScreenShadow.executions);
@@ -72,11 +73,28 @@ public final class NativeSessionReplanTest {
         assertArrayEquals(new double[]{500, 200}, ScreenShadow.lastPoint, 0);
     }
 
-    @Test public void changeAtTheInjectionBoundaryPreservesSessionAndAllowsReplan() throws Exception {
+    @Test public void repeatedPreflightSkipsOnAFreshSessionStillAllowCancellationWithoutExecution() throws Exception {
+        assertEquals("", field(session.getClass(), "previous").get(session));
+        for (int attempt = 0; attempt < 6; attempt++) {
+            ScreenShadow.current = frame(BUTTON.replace("提交", "新目标" + attempt));
+            assertSkipped(step(200, 200));
+            assertSame(ScreenShadow.current, field(session.getClass(), "frame").get(session));
+            assertEquals("Preflight skip must not reach injection, attempt " + attempt, 0, ScreenShadow.attempts);
+            assertEquals("Preflight skip must not execute an action, attempt " + attempt, 0, ScreenShadow.executions);
+            assertEquals("Preflight skip must not record an executed action, attempt " + attempt,
+                "", field(session.getClass(), "previous").get(session));
+        }
+        NativeSession.cancel();
+        ((ExecutorService) field(NativeSession.class, "CLEANUP").get(null)).submit(() -> { }).get(5, TimeUnit.SECONDS);
+        assertClosed();
+        assertEquals("Cancellation after replan must not execute a skipped action", 0, ScreenShadow.executions);
+    }
+
+    @Test public void repeatedInjectionSkipsPreserveSessionAndAllowReplanWithoutRepeatLimit() throws Exception {
         ScreenShadow.rejectInjection = true;
-        assertSkipped(step(200, 200));
-        assertEquals(1, ScreenShadow.attempts);
-        assertEquals(0, ScreenShadow.executions);
+        for (int attempt = 0; attempt < 6; attempt++) assertSkipped(step(200, 200));
+        assertEquals("All skipped actions must reach the injection boundary", 6, ScreenShadow.attempts);
+        assertEquals("Injection rejection must not execute an action", 0, ScreenShadow.executions);
         ScreenShadow.rejectInjection = false;
         assertContinuing(step(200, 200));
         assertEquals(1, ScreenShadow.executions);
@@ -91,34 +109,7 @@ public final class NativeSessionReplanTest {
         assertEquals(1, ScreenShadow.executions);
     }
 
-    @Test public void repeatedPreflightSkipsDoNotCountAsExecutedNoProgressActions() throws Exception {
-        for (int attempt = 0; attempt < 6; attempt++) {
-            ScreenShadow.current = frame(BUTTON.replace("提交", "新目标" + attempt));
-            assertSkipped(step(200, 200));
-        }
-        assertEquals(0, ScreenShadow.attempts);
-        assertEquals(0, ScreenShadow.executions);
-    }
-
-    @Test public void repeatedInjectionSkipsDoNotTriggerExecutedActionRepeatLimit() throws Exception {
-        ScreenShadow.rejectInjection = true;
-        for (int attempt = 0; attempt < 6; attempt++) assertSkipped(step(200, 200));
-        assertEquals(6, ScreenShadow.attempts);
-        assertEquals(0, ScreenShadow.executions);
-    }
-
-    @Test public void cancellationAfterReplanStillClosesSession() throws Exception {
-        ScreenShadow.current = frame(BUTTON.replace("提交", "新目标"));
-        assertSkipped(step(200, 200));
-        NativeSession.cancel();
-        ((ExecutorService) field(NativeSession.class, "CLEANUP").get(null)).submit(() -> { }).get(5, TimeUnit.SECONDS);
-        assertTrue(sessionRun.cancelled.get());
-        assertNull(field(NativeSession.class, "active").get(null));
-        assertFalse(NativeSession.hasActiveSession());
-        assertEquals(0, ScreenShadow.executions);
-    }
-
-    @Test public void finalAllowedActionReturnsItsObservationAndZeroRemainingBudget() throws Exception {
+    @Test public void finalAllowedActionReturnsLastObservationAndStillAllowsFinish() throws Exception {
         field(session.getClass(), "steps").setInt(session, 19);
         String result = step(200, 200);
         assertContinuing(result);
@@ -126,6 +117,11 @@ public final class NativeSessionReplanTest {
         assertTrue(result, result.contains("下一次只允许finish、take_over或ask_user"));
         assertSame(ScreenShadow.current, field(session.getClass(), "frame").get(session));
         assertEquals(1, ScreenShadow.executions);
+        assertEquals("模型报告任务完成：已从最后观察确认完成",
+            step(new JSONObject().put("action", "finish").put("message", "已从最后观察确认完成")));
+        assertEquals(20, field(session.getClass(), "steps").getInt(session));
+        assertEquals(1, ScreenShadow.executions);
+        assertClosed();
     }
 
     @Test public void exhaustedBudgetRejectsMalformedNextActionWithoutParsingOrExecutingIt() throws Exception {
@@ -139,16 +135,6 @@ public final class NativeSessionReplanTest {
         }
         assertEquals(20, field(session.getClass(), "steps").getInt(session));
         assertEquals(0, ScreenShadow.attempts);
-        assertClosed();
-    }
-
-    @Test public void finishRemainsAllowedAfterFinalAction() throws Exception {
-        field(session.getClass(), "steps").setInt(session, 19);
-        assertContinuing(step(200, 200));
-        String result = step(new JSONObject().put("action", "finish").put("message", "已从最后观察确认完成"));
-        assertEquals("模型报告任务完成：已从最后观察确认完成", result);
-        assertEquals(20, field(session.getClass(), "steps").getInt(session));
-        assertEquals(1, ScreenShadow.executions);
         assertClosed();
     }
 

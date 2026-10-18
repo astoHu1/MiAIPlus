@@ -15,18 +15,17 @@ import org.robolectric.annotation.Config;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33, application = Application.class)
 public class ScreenServiceTreeTest {
-    @Test public void expandingAdCannotStarveLaterNavigationWithinTheNodeBudget() throws Exception {
-        String before = dump(page(10, false)), current = dump(page(500, false));
+    @Test public void expandedAdPreservesNavigationAndOverlayChecksWithinTheNodeBudget() throws Exception {
+        String before = dump(page(10, false));
         assertTrue(before.contains("text=首页"));
-        assertTrue(current.contains("text=首页"));
-        assertEquals(250, current.lines().count());
-        assertTrue(PageGuard.canExecute(tap(), frame(before), frame(current)));
-    }
-
-    @Test public void newOverlayIsStillObservedWhenAnAdConsumesTheBudget() throws Exception {
-        String before = dump(page(10, false)), current = dump(page(500, true));
-        assertTrue(current.contains("id=overlay"));
-        assertFalse(PageGuard.canExecute(tap(), frame(before), frame(current)));
+        for (boolean overlay : new boolean[]{false, true}) {
+            String current = dump(page(500, overlay));
+            String scenario = "overlay=" + overlay;
+            assertTrue(scenario, current.contains("text=首页"));
+            assertEquals(scenario, 250, current.lines().count());
+            assertEquals(scenario, overlay, current.contains("id=overlay"));
+            assertEquals(scenario, !overlay, PageGuard.canExecute(tap(), frame(before), frame(current)));
+        }
     }
 
     @Test public void nodeTextEscapingAndPasswordRedactionRemainIntact() {

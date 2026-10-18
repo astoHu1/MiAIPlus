@@ -45,37 +45,25 @@ public class NativeSessionLifecycleTest {
         assertNull(field(NativeSession.class, "active").get(null));
     }
 
-    @Test public void interruptedIpcReleasesItsNativeSessionWithoutBlockingCaller() throws Exception {
-        HelperProcess process = new HelperProcess();
-        Object state = state(process);
-        RunState ipc = new RunState("ipc", 1000);
-        synchronized (NativeSession.class) {
-            setActive(state);
-            try (var ignored = bindCaller(state, ipc)) {
-                ipc.cancel();
-                assertTrue(run(state).cancelled.get());
-                assertFalse(process.destroyed);
+    @Test public void ipcCancellationBeforeOrAfterBindingReleasesDisplayWithoutBlockingCaller() throws Exception {
+        for (boolean cancelBeforeBinding : new boolean[]{false, true}) {
+            String phase = cancelBeforeBinding ? "Cancelled before binding" : "Cancelled after binding";
+            HelperProcess process = new HelperProcess();
+            Object state = state(process);
+            RunState ipc = new RunState("ipc", 1000);
+            if (cancelBeforeBinding) ipc.cancel();
+            synchronized (NativeSession.class) {
+                setActive(state);
+                try (var ignored = bindCaller(state, ipc)) {
+                    if (!cancelBeforeBinding) ipc.cancel();
+                    assertTrue(phase, run(state).cancelled.get());
+                    assertFalse(phase + " must not block on helper cleanup", process.destroyed);
+                }
             }
+            awaitCleanup();
+            assertTrue(phase, process.destroyed);
+            assertNull(phase, field(NativeSession.class, "active").get(null));
         }
-        awaitCleanup();
-        assertTrue(process.destroyed);
-        assertNull(field(NativeSession.class, "active").get(null));
-    }
-
-    @Test public void cancellationBeforeNativeStepBindsStillReleasesItsDisplay() throws Exception {
-        HelperProcess process = new HelperProcess();
-        Object state = state(process);
-        RunState ipc = new RunState("ipc", 1000);
-        ipc.cancel();
-        synchronized (NativeSession.class) {
-            setActive(state);
-            try (var ignored = bindCaller(state, ipc)) {
-                assertTrue(run(state).cancelled.get());
-                assertFalse(process.destroyed);
-            }
-        }
-        awaitCleanup();
-        assertTrue(process.destroyed);
     }
 
     @Test public void completedIpcCannotCancelItsContinuingSession() throws Exception {

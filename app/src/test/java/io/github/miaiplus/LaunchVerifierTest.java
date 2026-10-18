@@ -20,15 +20,16 @@ public class LaunchVerifierTest {
         @Override public long now() { return time; }
         @Override public void pause(long millis) { time += millis; }
     }
-    @Test public void slowStartupWaitsForStableTargetWindow() throws Exception {
-        Fake f = new Fake(); f.windows = t -> t >= 4000 ? TARGET : "fixture.origin";
-        LaunchVerifier.launch(TARGET, f);
-        assertEquals(1, f.starts); assertEquals(4500, f.time);
-    }
-    @Test public void alreadyOpenDoesNotRestartApp() throws Exception {
-        Fake f = new Fake(); f.windows = t -> TARGET;
-        LaunchVerifier.launch(TARGET, f);
-        assertEquals(0, f.starts); assertEquals(500, f.time);
+    @Test public void ordinaryWindowsRequireStableTargetAndAtMostOneStart() throws Exception {
+        for (long readyAt : new long[]{0, 1000, 4000}) {
+            Fake f = new Fake();
+            f.windows = t -> t >= readyAt ? TARGET : readyAt == 1000
+                ? LaunchVerifier.classifyForeground("com.miui.securitycenter", "") : "fixture.origin";
+            LaunchVerifier.launch(TARGET, f);
+            assertEquals("starts when target ready at " + readyAt, readyAt == 0 ? 0 : 1, f.starts);
+            assertEquals("stable window when target ready at " + readyAt, readyAt + 500, f.time);
+            assertEquals("ordinary window must not approve consent", 0, f.consentClicks);
+        }
     }
     @Test public void briefTargetWindowDoesNotCountAsSuccess() throws Exception {
         Fake f = new Fake(); f.windows = t -> t == 250 ? TARGET : "fixture.origin";
@@ -46,47 +47,36 @@ public class LaunchVerifierTest {
             if (!blocker.equals("fixture.origin")) assertEquals(250, f.time);
         }
     }
-    @Test public void existingPermissionPromptIsNotCoveredByAnotherLaunch() throws Exception {
-        Fake f = new Fake(); f.windows = t -> "com.lbe.security.miui";
-        try { LaunchVerifier.launch(TARGET, f); fail(); } catch (IllegalStateException expected) { }
-        assertEquals(0, f.starts);
-    }
-    @Test public void matchingLaunchConsentIsAllowedOnceThenTargetIsVerified() throws Exception {
-        Fake f = new Fake(); f.consent = true;
-        f.windows = t -> t < 250 ? "fixture.origin" : t < 1000 ? LaunchVerifier.XIAOMI_CONFIRMATION : TARGET;
-        LaunchVerifier.launch(TARGET, f);
-        assertEquals(1, f.starts); assertEquals(1, f.consentClicks); assertEquals(1500, f.time);
+    @Test public void launchConsentIsAllowedOnceThenTargetIsVerified() throws Exception {
+        for (String target : new String[]{TARGET, "com.miui.securitycenter"}) {
+            for (boolean existingPrompt : new boolean[]{false, true}) {
+                String scenario = target + ", existing prompt=" + existingPrompt;
+                Fake f = new Fake(); f.consent = true;
+                f.windows = t -> t < 250 && !existingPrompt ? "fixture.origin"
+                    : t < (existingPrompt ? 250 : 1000) ? LaunchVerifier.XIAOMI_CONFIRMATION : target;
+                LaunchVerifier.launch(target, f);
+                assertEquals(scenario, existingPrompt ? 0 : 1, f.starts);
+                assertEquals(scenario, 1, f.consentClicks);
+                assertEquals(scenario, existingPrompt ? 750 : 1500, f.time);
+            }
+        }
     }
     @Test public void clickingConsentDoesNotCountAsSuccessfulLaunch() throws Exception {
         Fake f = new Fake(); f.consent = true;
         f.windows = t -> t < 250 ? "fixture.origin" : LaunchVerifier.XIAOMI_CONFIRMATION;
-        try { LaunchVerifier.launch(TARGET, f); fail(); } catch (IllegalStateException expected) { }
-        assertEquals(1, f.consentClicks); assertEquals(10000, f.time);
+        assertTrue(assertThrows(IllegalStateException.class, () -> LaunchVerifier.launch(TARGET, f))
+            .getMessage().startsWith("PAUSE："));
+        assertEquals(1, f.starts); assertEquals(1, f.consentClicks); assertEquals(10000, f.time);
     }
-    @Test public void existingMatchingPromptCanCompleteWithoutAnotherStart() throws Exception {
-        Fake f = new Fake(); f.consent = true;
-        f.windows = t -> t < 250 ? LaunchVerifier.XIAOMI_CONFIRMATION : TARGET;
-        LaunchVerifier.launch(TARGET, f);
-        assertEquals(0, f.starts); assertEquals(1, f.consentClicks);
-    }
-    @Test public void securityAppConfirmationDoesNotCountAsSecurityAppOpened() throws Exception {
-        Fake f = new Fake(); f.consent = true;
-        f.windows = t -> t < 250 ? "fixture.origin" : t < 1000 ? LaunchVerifier.XIAOMI_CONFIRMATION : "com.miui.securitycenter";
-        LaunchVerifier.launch("com.miui.securitycenter", f);
-        assertEquals(1, f.consentClicks); assertEquals(1500, f.time);
-    }
-    @Test public void normalSecurityAppPageAllowsLaunchAndWaitsForTarget() throws Exception {
-        Fake f = new Fake();
-        f.windows = t -> t < 1000 ? LaunchVerifier.classifyForeground("com.miui.securitycenter", "") : TARGET;
-        LaunchVerifier.launch(TARGET, f);
-        assertEquals(1, f.starts); assertEquals(0, f.consentClicks); assertEquals(1500, f.time);
-    }
-    @Test public void securityAppPermissionPageStillBlocksBeforeLaunch() throws Exception {
-        Fake f = new Fake(); f.consent = true;
-        f.windows = t -> LaunchVerifier.classifyForeground("com.miui.securitycenter", "相机");
-        try { LaunchVerifier.launch(TARGET, f); fail(); }
-        catch (IllegalStateException expected) { assertTrue(expected.getMessage().startsWith("PAUSE：")); }
-        assertEquals(0, f.starts);
+    @Test public void existingPermissionPromptsBlockBeforeAnotherLaunch() throws Exception {
+        for (String blocker : new String[]{"com.lbe.security.miui",
+            LaunchVerifier.classifyForeground("com.miui.securitycenter", "相机")}) {
+            Fake f = new Fake(); f.consent = true; f.windows = t -> blocker;
+            assertTrue(blocker, assertThrows(IllegalStateException.class, () -> LaunchVerifier.launch(TARGET, f))
+                .getMessage().startsWith("PAUSE："));
+            assertEquals(blocker, 0, f.starts);
+            assertEquals(blocker, 0, f.consentClicks);
+        }
     }
     @Test public void anotherSecurityPermissionAfterLaunchConsentStillPauses() throws Exception {
         Fake f = new Fake(); f.consent = true;

@@ -5,21 +5,18 @@ The implementation spec forbids running the existing device scripts during a mea
 their phone", because those scripts flip accessibility settings, restart XiaoAi and launch fixtures on the physical
 screen. So this driver does the opposite of sharing a window:
 
-  1. init     -- install nothing, touch no settings; only verify the device is in a measurable state.
-  2. user     -- place the debug fixture on the physical screen and let it settle. This is the user's screen for
-                 the rest of the run, and the runner takes its baseline afterwards.
-  3. measure  -- run the instrumented background task. The runner asserts the user's screen never moves.
-  4. cleanup  -- remove the fixture task and the reverse mapping, and report the device's display ids.
+  1. init     -- optionally install the APKs, then verify root and unlock prerequisites without changing settings.
+  2. measure  -- run the instrumented background task. The runner places its physical-screen fixture, opens the
+                 keyboard and takes the baseline before asserting the user's screen never moves.
+  3. cleanup  -- remove the fixture task and the reverse mapping, and report the device's display ids.
 
 Usage: python3 scripts/background_display_test.py [--skip-install]
 """
 import subprocess
 import sys
-import time
 
 APPLICATION = "io.github.miaiplus"
 TEST_PACKAGE = "io.github.miaiplus.test"
-FIXTURE = "io.github.miaiplus/.FixtureActivity"
 # There is exactly one instrumentation in this APK; the background checks are a dispatch mode of it, not a second
 # component, so asking for a separate runner name fails with "Unable to find instrumentation info".
 RUNNER = f"{TEST_PACKAGE}/io.github.miaiplus.DeviceTestRunner"
@@ -58,23 +55,8 @@ def init_phase(skip_install):
         raise SystemExit("init: keyguard is showing; unlock it and re-run")
 
 
-def user_phase():
-    """Confirm the device is in a normal, idle state before anything is measured.
-
-    Deliberately does not place the measured fixture: ``am instrument`` restarts the target process, so a fixture
-    launched from here is gone before the runner starts. The runner places it and takes its own baseline, which is
-    also what makes the invariant meaningful — the user's screen must already be where it should stay.
-    """
-    log("user: confirming an idle, unlocked physical screen")
-    resumed = adb("shell", "dumpsys", "activity", "activities")
-    line = next((l for l in resumed.splitlines() if "topResumedActivity" in l), "")
-    if not line:
-        raise SystemExit("user: could not read the physical screen's top task")
-    log(f"user: physical screen is {line.strip()}")
-
-
 def measure_phase():
-    """The measurement window. Nothing here may change the physical screen."""
+    """The runner owns setup and the baseline; isolation is measured only after both complete."""
     log("measure: running the background task")
     process = subprocess.Popen(
         ["adb", "shell", "am", "instrument", "--user", "0", "-w", "-e", "background", "true", RUNNER],
@@ -118,7 +100,6 @@ if __name__ == "__main__":
     ok = False
     try:
         init_phase("--skip-install" in sys.argv)
-        user_phase()
         ok = measure_phase()
     finally:
         cleanup_phase()
