@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://astohu1.github.io/MiAIPlus/sitemap.xml
