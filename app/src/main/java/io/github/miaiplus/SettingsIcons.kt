@@ -11,6 +11,27 @@ import androidx.compose.ui.unit.dp
 
 /** Small outline icons matching the weight of Miuix's built-in navigation icons. */
 internal object SettingsIcons {
+    val Search = outline("Search") {
+        moveTo(17f, 10f); arcTo(7f, 7f, 0f, true, true, 3f, 10f)
+        arcTo(7f, 7f, 0f, true, true, 17f, 10f)
+        moveTo(15f, 15f); lineTo(21f, 21f)
+    }
+    val Share = outline("Share") {
+        moveTo(12f, 15f); lineTo(12f, 3f)
+        moveTo(7f, 8f); lineTo(12f, 3f); lineTo(17f, 8f)
+        moveTo(6f, 11f); lineTo(4f, 11f); lineTo(4f, 21f)
+        lineTo(20f, 21f); lineTo(20f, 11f); lineTo(18f, 11f)
+    }
+    val Save = outline("Save") {
+        moveTo(12f, 3f); lineTo(12f, 15f)
+        moveTo(7f, 10f); lineTo(12f, 15f); lineTo(17f, 10f)
+        moveTo(4f, 13f); lineTo(4f, 21f); lineTo(20f, 21f); lineTo(20f, 13f)
+    }
+    val More = outline("More") {
+        moveTo(4f, 12f); lineTo(5f, 12f)
+        moveTo(11.5f, 12f); lineTo(12.5f, 12f)
+        moveTo(19f, 12f); lineTo(20f, 12f)
+    }
     val Home = outline("Home") {
         moveTo(3f, 10f); lineTo(12f, 3f); lineTo(21f, 10f)
         moveTo(5f, 9f); lineTo(5f, 20f); lineTo(10f, 20f); lineTo(10f, 14f)

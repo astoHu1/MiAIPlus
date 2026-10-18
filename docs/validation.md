@@ -1,5 +1,16 @@
 # MiAIPlus 1.0.1-preview 实现与验证状态
 
+## 日志页精简与 LSPosed 布局参考（2026-10-18）
+
+实际打开已授权手机上的 LSPosed 日志页及更多菜单，参考其顶部图标操作、搜索／分类和日志卡片。首页日志入口移除副标题；日志页隐藏底栏，保存／分享放顶部，详细日志开关、自动刷新、手动刷新与清空收进「更多」。移除常驻操作教学、隐私说明和容量上限说明；保留精简统计与记录状态，仅非零丢弃／写入失败时提示。记录卡片突出来源、时间、会话和等宽事件名，点击仍可展开复制 JSON。后端采集、权限、轮转及 ZIP 内容不变。
+
+364 项 JVM／Robolectric 测试全部通过（0 failures/errors/skipped），覆盖工具栏入口、菜单开关、重建后深浅色、来源筛选、详情及取消／确认清空。Debug／Release 构建、Debug AndroidTest 构建、完整 Debug／Release Lint 通过（0 errors，35／26 warnings）；记录 `work/log-ui-redesign-final-checks.log`。后续仅调整设备夹具，AndroidTest 构建与 Debug Lint 再次通过（`work/log-ui-redesign-runner-final-checks.log`）。合成截图更新为 `docs/images/settings-logs.png` 与 `settings-logs-dark.png`，已人工核对。
+
+同一 Xiaomi API 37 手机安装新版 Debug／AndroidTest，使用原本为空的日志目录填入 10 条明确标记的合成双来源元数据，未请求模型或启动控屏。完整日志 UI 流程通过：菜单开关、搜索／筛选、展开详情、URI 导出、系统文件选择器实际保存 ZIP 并读回校验、分享面板、取消／确认清空及分享缓存清理。仅打开分享面板，未选择接收方。最终 `work/log-ui-redesign-device/logs-verified.runner.log`；此轮不声称重新验证真实宿主采集或前后台控屏。初轮夹具对已选中菜单项的无障碍点击识别失败，另一次模糊匹配把「刷新」匹配到「自动刷新」；已改为前缀匹配，并对未暴露 ACTION_CLICK 的选中项注入该节点中心触摸，最终开关持久化断言通过。失败记录保留在忽略目录。
+
+测试恢复日志开关为关闭，合成记录／分享缓存及唯一命名的下载测试包清除，未修改执行配置、显示参数或 ADB reverse。仪器测试退出后的模块无障碍服务已单独重新绑定，保留其他服务与原列表；仅 display 0。
+
+
 ## 首页日志查看与 ZIP 导出（2026-10-18）
 
 首页新增「日志」入口，沿用默认关闭的详细日志开关，支持 App 内查看、事件／会话／元数据搜索、模块／小爱来源筛选、展开复制、可关闭的前台自动刷新、保存／分享 ZIP 及确认清空。模块与宿主元数据通过独立有界队列汇总到模块私有轮转日志（最多 2 MiB）；宿主追加 IPC 沿用 UID 校验。ZIP 只包含元数据 JSONL、白名单环境信息和说明；FileProvider 仅开放专用分享目录并临时授权读取。默认执行逻辑、权限、取消、观察、输入和一次性帧不变。使用与丢失边界见 [详细日志](phone-use-logging.md)。

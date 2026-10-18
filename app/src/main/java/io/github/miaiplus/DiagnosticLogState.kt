@@ -58,7 +58,8 @@ class DiagnosticLogState(private val application: Application, private val scope
         }
         entries = records
         bytes = snapshot.bytes()
-        health = "模块丢弃 ${snapshot.dropped()} · 写入失败 ${snapshot.errors()}"
+        health = if (snapshot.dropped() > 0 || snapshot.errors() > 0)
+            "模块丢弃 ${snapshot.dropped()} · 写入失败 ${snapshot.errors()}" else ""
         error = null
     }
 

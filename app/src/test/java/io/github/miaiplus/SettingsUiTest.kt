@@ -48,14 +48,32 @@ class SettingsUiTest {
         compose.onNodeWithText("日志", useUnmergedTree = true).performScrollTo().performClick()
         compose.waitUntil(5000) { compose.waitForIdle(); state.logs.entries.size == 2 }
         capture("home-detailed-logs")
+        compose.onNodeWithTag("tab-Home").assertDoesNotExist()
+        compose.onNodeWithContentDescription("分享").assertExists()
+        compose.onNodeWithContentDescription("保存压缩包").assertExists()
+        compose.onNodeWithContentDescription("更多").performClick()
+        compose.onNodeWithText("详细日志", substring = false).performClick()
+        compose.runOnIdle { assertEquals(true, state.config.phoneUseDetailedLog) }
+        compose.onNodeWithText("正在记录").assertExists()
+        compose.onNodeWithContentDescription("更多").performClick()
+        compose.onNodeWithText("详细日志", substring = false).performClick()
+        compose.runOnIdle { assertEquals(false, state.config.phoneUseDetailedLog) }
+        RuntimeEnvironment.setQualifiers("+night")
+        compose.activityRule.scenario.recreate()
+        compose.waitUntil(5000) { compose.waitForIdle(); state.logs.entries.size == 2 }
+        capture("home-detailed-logs-dark")
+        RuntimeEnvironment.setQualifiers("+notnight")
+        compose.activityRule.scenario.recreate()
         compose.onNodeWithText("tree_empty").performScrollTo().performClick()
         compose.onNodeWithText("no_windows", substring = true).assertExists()
         capture("home-detailed-logs-details")
-        compose.onNodeWithText("模块", substring = false).performScrollTo().performClick()
+        compose.onAllNodesWithText("模块", substring = false).onFirst().performClick()
         compose.onNodeWithText("image_attached").assertDoesNotExist()
-        compose.onNodeWithText("清空", substring = false).performScrollTo().performClick()
+        compose.onNodeWithContentDescription("更多").performClick()
+        compose.onNodeWithText("清空", substring = false).performClick()
         compose.onNodeWithText("取消", substring = false).performClick()
         compose.runOnIdle { assertEquals(2, store.snapshot().lines().size) }
+        compose.onNodeWithContentDescription("更多").performClick()
         compose.onNodeWithText("清空", substring = false).performClick()
         compose.onNodeWithText("清空日志", substring = false).performClick()
         compose.waitUntil(5000) { compose.waitForIdle(); state.logs.entries.isEmpty() && !state.logs.busy }

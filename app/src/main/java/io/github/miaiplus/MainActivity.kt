@@ -88,6 +88,7 @@ private enum class SettingsPage(val title: String, val depth: Int = 0) {
 private fun SettingsApp(state: SettingsState, openSettings: (Boolean) -> Unit, onScreenTask: () -> Unit) {
     var page by rememberSaveable { mutableStateOf(SettingsPage.Home) }
     var leaveTo by remember { mutableStateOf<SettingsPage?>(null) }
+    var followLogs by rememberSaveable { mutableStateOf(true) }
     val savedPages = rememberSaveableStateHolder()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -122,10 +123,13 @@ private fun SettingsApp(state: SettingsState, openSettings: (Boolean) -> Unit, o
                         Icon(top.yukonga.miuix.kmp.icon.MiuixIcons.Basic.ArrowRight, "返回", Modifier.rotate(180f))
                     }
                 },
+                actions = {
+                    if (page == SettingsPage.Logs) DiagnosticLogActions(state, followLogs) { followLogs = it }
+                },
             )
         },
         bottomBar = {
-            Column(Modifier.imePadding()) {
+            if (page != SettingsPage.Logs) Column(Modifier.imePadding()) {
                 if (page == SettingsPage.Model && state.dirty) {
                     Row(
                         Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp),
@@ -172,7 +176,7 @@ private fun SettingsApp(state: SettingsState, openSettings: (Boolean) -> Unit, o
                             SettingsPage.Virtual -> VirtualScreenPage(state)
                             SettingsPage.Status -> StatusPage(state, openSettings, { navigate(SettingsPage.Virtual) }) { navigate(SettingsPage.Test) }
                             SettingsPage.Test -> TestPage(state, onScreenTask)
-                            SettingsPage.Logs -> DiagnosticLogPage(state)
+                            SettingsPage.Logs -> DiagnosticLogPage(state, followLogs)
                         }
                     }
                 }
@@ -271,7 +275,7 @@ private fun HomePage(state: SettingsState, openStatus: () -> Unit, openLogs: () 
     }
     Spacer(Modifier.height(16.dp))
     Group {
-        ArrowPreference(title = "日志", summary = "查看详细日志、保存或分享压缩包", onClick = openLogs)
+        ArrowPreference(title = "日志", onClick = openLogs)
         ArrowPreference(title = "运行状态", summary = "连接与诊断", onClick = openStatus)
     }
     OverlayDialog(show = editConversationTimeout, title = "自动新建对话",

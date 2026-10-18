@@ -69,12 +69,12 @@ final class EndpointProfilesRunner {
             onMain(() -> state = new ViewModelProvider(activity).get(SettingsState.class));
             click("日志");
             waitFor(() -> !state.getLogs().getLoading() && state.getLogs().getBytes() > 0, "Home log page did not load persisted records");
-            click("Phone Use 详细日志");
+            clickLogOption("详细日志");
             check(prefs.getBoolean(Config.PHONE_USE_LOG_KEY, false), "Home log toggle did not save");
             PhoneUseLog.event("log_viewer_test", "reason", "fixture_metadata_only", "displayId", 2);
             edit("", "log_viewer_test");
             hideKeyboard();
-            click("刷新");
+            clickLogOption("刷新");
             waitFor(() -> find(n -> !n.isEditable() && text(n).equals("log_viewer_test")) != null, "Search did not show event");
             click("log_viewer_test");
             check(findWithScroll(n -> text(n).contains("fixture_metadata_only")) != null, "Record did not expand");
@@ -125,11 +125,11 @@ final class EndpointProfilesRunner {
             waitFor(() -> ui.getRootInActiveWindow() != null && !context.getPackageName().contentEquals(ui.getRootInActiveWindow().getPackageName()), "Share chooser did not open");
             capture("logs-share-chooser-device");
             test.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK); settle();
-            click("Phone Use 详细日志");
+            clickLogOption("详细日志");
             check(!prefs.getBoolean(Config.PHONE_USE_LOG_KEY, true), "Log toggle did not stop recording");
-            click("清空"); click("取消");
+            clickLogOption("清空"); click("取消");
             check(!store.snapshot().lines().isEmpty(), "Cancel cleared records");
-            click("清空"); click("清空日志");
+            clickLogOption("清空"); click("清空日志");
             waitFor(() -> !state.getLogs().getBusy() && state.getLogs().getBytes() == 0, "Clear did not refresh UI");
             check(store.snapshot().lines().isEmpty(), "Clear left journal records");
             check(directory.listFiles() == null || directory.listFiles().length == 0, "Clear left share archives");
@@ -150,6 +150,26 @@ final class EndpointProfilesRunner {
             }
         }
         test.finish(code, result);
+    }
+
+    private void clickLogOption(String label) {
+        click("更多");
+        waitFor(() -> find(n -> text(n).startsWith(label)) != null, "Log menu option unavailable: " + label);
+        var node = find(n -> text(n).startsWith(label));
+        Rect bounds = new Rect(); node.getBoundsInScreen(bounds);
+        while (!node.isClickable() && node.getParent() != null) node = node.getParent();
+        if (!node.isClickable() || !node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            // Selected popup rows may omit ACTION_CLICK from their accessibility node.
+            long now = SystemClock.uptimeMillis();
+            for (int action : new int[]{MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP}) {
+                MotionEvent event = MotionEvent.obtain(now, SystemClock.uptimeMillis(), action,
+                    bounds.centerX(), bounds.centerY(), 0);
+                event.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
+                check(ui.injectInputEvent(event, true), "Log menu touch failed: " + label);
+                event.recycle();
+            }
+        }
+        settle();
     }
 
     /** Exercise the actual Start/Stop UI against the local delayed model fixture on a separate display. */
