@@ -7,9 +7,11 @@ import android.media.FrameFixtureImage;
 import android.media.Image;
 import android.media.ImageReader;
 import android.os.SystemClock;
+import android.view.InputDevice;
 import android.view.InputEvent;
 import android.view.MotionEvent;
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -26,18 +28,23 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 import org.robolectric.annotation.Implementation;
 import org.robolectric.annotation.Implements;
+import org.robolectric.annotation.RealObject;
+import org.robolectric.shadow.api.Shadow;
 import org.robolectric.shadows.ShadowImageReader;
+import org.robolectric.shadows.ShadowMotionEvent;
 import static org.junit.Assert.*;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 35, shadows = {
     DisplayHelperFramesAndGesturesTest.ReaderShadow.class,
-    DisplayHelperFramesAndGesturesTest.UptimeShadow.class
+    DisplayHelperFramesAndGesturesTest.UptimeShadow.class,
+    DisplayHelperFramesAndGesturesTest.DisplayRoutingMotionShadow.class
 })
 public class DisplayHelperFramesAndGesturesTest {
     private static final Method REAL_NANO_TIME = realNanoTimeMethod();
     private static final long CLOCK_ORIGIN = realNanoTime();
     private final InputSink sink = new InputSink();
+    private int noFocusChangeFlag;
     private ImageReader reader;
 
     @Before public void setUp() throws Exception {
@@ -49,6 +56,8 @@ public class DisplayHelperFramesAndGesturesTest {
         Method display = MotionEvent.class.getDeclaredMethod("setDisplayId", int.class);
         display.setAccessible(true);
         set("motionSetDisplayId", display);
+        noFocusChangeFlag = DisplayHelper.requiredNoFocusChangeFlag(MotionEvent.class);
+        set("motionNoFocusChangeFlag", noFocusChangeFlag);
     }
 
     @After public void tearDown() throws Exception {
@@ -61,6 +70,7 @@ public class DisplayHelperFramesAndGesturesTest {
         set("inputService", null);
         set("injectInputEvent", null);
         set("motionSetDisplayId", null);
+        set("motionNoFocusChangeFlag", 0);
     }
 
     @Test public void finalRedrawInsideThrottleIsCopiedEvenWhenNoMoreFramesArrive() throws Exception {
@@ -131,6 +141,7 @@ public class DisplayHelperFramesAndGesturesTest {
         invoke("tap", new Class<?>[] { long.class, String.class }, 1L, "10 20");
         assertEquals(List.of(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL), actions());
         assertEquals(sink.events.get(0).downTime, sink.events.get(2).downTime);
+        assertFocusSafeEvents();
     }
 
     @Test public void rejectedSwipeReleaseStillAttemptsToCancelThePressedPointer() throws Exception {
@@ -139,6 +150,25 @@ public class DisplayHelperFramesAndGesturesTest {
         assertEquals(14, sink.events.size());
         assertEquals(MotionEvent.ACTION_CANCEL, sink.events.get(13).action);
         assertEquals(sink.events.get(0).downTime, sink.events.get(13).downTime);
+        assertFocusSafeEvents();
+    }
+
+    @Test public void touchesStopBeforeInjectionWhenFocusIsolationIsUnavailable() throws Exception {
+        set("motionNoFocusChangeFlag", 0);
+        InvocationTargetException failure = assertThrows(InvocationTargetException.class,
+            () -> invoke("tap", new Class<?>[] { long.class, String.class }, 1L, "10 20"));
+        assertTrue(failure.getCause() instanceof IllegalStateException);
+        assertTrue(failure.getCause().getMessage().contains("focus isolation unavailable"));
+        assertTrue(sink.events.isEmpty());
+    }
+
+    @Test public void focusIsolationUsesThePlatformFlagWithoutNumericFallback() throws Exception {
+        assertEquals(AlternateMotionFlags.FLAG_NO_FOCUS_CHANGE,
+            DisplayHelper.requiredNoFocusChangeFlag(AlternateMotionFlags.class));
+        assertThrows(NoSuchFieldException.class,
+            () -> DisplayHelper.requiredNoFocusChangeFlag(MissingMotionFlags.class));
+        assertThrows(IllegalStateException.class,
+            () -> DisplayHelper.requiredNoFocusChangeFlag(InvalidMotionFlags.class));
     }
 
     @Test public void unreadableBaselineReportsUntestedEvenWithLaterReadableSamples() throws Exception {
@@ -180,6 +210,7 @@ public class DisplayHelperFramesAndGesturesTest {
 
     private void assertGesture(long duration, int count) {
         assertEquals(count, sink.events.size());
+        assertFocusSafeEvents();
         Event first = sink.events.get(0), last = sink.events.get(count - 1);
         assertEquals(MotionEvent.ACTION_DOWN, first.action);
         assertEquals(MotionEvent.ACTION_UP, last.action);
@@ -191,6 +222,14 @@ public class DisplayHelperFramesAndGesturesTest {
             assertTrue("event time must never be in the future", event.eventTime <= event.observedAt);
             assertTrue("event time must describe injection, not a synthetic future", event.observedAt - event.eventTime < 100);
             previous = event.eventTime;
+        }
+    }
+    private void assertFocusSafeEvents() {
+        for (Event event : sink.events) {
+            assertEquals("background gestures must suppress pointer-down-outside-focus",
+                noFocusChangeFlag, event.flags & noFocusChangeFlag);
+            assertEquals("focus isolation must retain target display routing", 19, event.displayId);
+            assertEquals(InputDevice.SOURCE_TOUCHSCREEN, event.source);
         }
     }
     private List<Integer> actions() {
@@ -248,7 +287,12 @@ public class DisplayHelperFramesAndGesturesTest {
         return 10_000 + (realNanoTime() - CLOCK_ORIGIN) / 1_000_000;
     }
 
-    private record Event(int action, long downTime, long eventTime, long observedAt, float x, float y) { }
+    private record Event(int action, long downTime, long eventTime, long observedAt, float x, float y,
+            int flags, int displayId, int source) { }
+
+    public static final class AlternateMotionFlags { public static final int FLAG_NO_FOCUS_CHANGE = 1 << 20; }
+    public static final class MissingMotionFlags { }
+    public static final class InvalidMotionFlags { public static final int FLAG_NO_FOCUS_CHANGE = 3; }
 
     public static final class InputSink {
         final List<Event> events = new ArrayList<>();
@@ -257,9 +301,28 @@ public class DisplayHelperFramesAndGesturesTest {
         public boolean injectInputEvent(InputEvent input, int mode) throws Exception {
             MotionEvent event = (MotionEvent) input;
             events.add(new Event(event.getAction(), event.getDownTime(), event.getEventTime(),
-                SystemClock.uptimeMillis(), event.getX(), event.getY()));
+                SystemClock.uptimeMillis(), event.getX(), event.getY(), event.getFlags(),
+                (Integer) MotionEvent.class.getMethod("getDisplayId").invoke(event), event.getSource()));
             if (latencyMs != 0) Thread.sleep(latencyMs);
             return !rejectUp || event.getAction() != MotionEvent.ACTION_UP;
+        }
+    }
+
+    /**
+     * Robolectric 4.17's sole MotionEvent shadow discards displayId in nativeInitialize and implements neither
+     * nativeGetDisplayId nor nativeSetDisplayId. GraphicsMode.NATIVE has no native MotionEvent implementation.
+     * Supply only that missing property; flags, source, coordinates and timing retain ShadowMotionEvent behavior.
+     * Reset it on recycle so an earlier event cannot hide a missing per-event display-id setter.
+     */
+    @Implements(MotionEvent.class)
+    public static class DisplayRoutingMotionShadow extends ShadowMotionEvent {
+        @RealObject private MotionEvent event;
+        private int displayId;
+        @Implementation protected void setDisplayId(int value) { displayId = value; }
+        @Implementation protected int getDisplayId() { return displayId; }
+        @Implementation protected void recycle() {
+            displayId = 0;
+            Shadow.directlyOn(event, MotionEvent.class, "recycle");
         }
     }
 

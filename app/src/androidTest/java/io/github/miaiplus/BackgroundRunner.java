@@ -28,6 +28,7 @@ final class BackgroundRunner {
     private static final Pattern SESSION = Pattern.compile("会话=([a-f0-9-]{36})");
     private static final Pattern FOREGROUND = Pattern.compile("前台=([^；\\n]*)");
     private static final Pattern GEOMETRY = Pattern.compile("屏幕=(\\d+x\\d+)");
+    private static final Pattern EDITOR_TAPS = Pattern.compile("editor taps=(\\d+)");
     /** This runner's explicit canvas; a physical capture would report the panel's own size instead. */
     private static final String BACKGROUND_GEOMETRY = "1080x1920";
     /** Typed only on the background screen, so a leak into the user's window would be visible. */
@@ -137,14 +138,28 @@ final class BackgroundRunner {
 
                 // Tapping a real editor exercises the app's own request to show a keyboard. Launch alone and
                 // ACTION_SET_TEXT alone do not cover the single-IME migration reported by users.
-                keyboard.assertHeld("typing-tap-editor");
-                android.graphics.Rect editor = editableBounds(test, typing.session().displayId);
-                DisplaySession canvas = typing.session();
-                Action tap = new Action(new org.json.JSONObject().put("action", "tap").put("element",
-                    new org.json.JSONArray().put(editor.exactCenterX() * 1000.0 / canvas.width)
-                        .put(editor.exactCenterY() * 1000.0 / canvas.height)));
-                BackgroundActions.execute(typing, tap, typingRun, new Config(context));
-                Thread.sleep(400);
+                for (int index = 0; index < 3; index++) {
+                    keyboard.assertHeld("typing-tap-editor-" + (index + 1));
+                    ScreenService.Frame beforeTap = typing.observe(typingRun);
+                    int deliveredBefore = editorTaps(beforeTap.tree());
+                    android.graphics.Rect editor = editableBounds(test, typing.session().displayId);
+                    DisplaySession canvas = typing.session();
+                    Action tap = new Action(new org.json.JSONObject().put("action", "tap").put("element",
+                        new org.json.JSONArray().put(editor.exactCenterX() * 1000.0 / canvas.width)
+                            .put(editor.exactCenterY() * 1000.0 / canvas.height)));
+                    BackgroundActions.execute(typing, tap, typingRun, new Config(context));
+                    long tapDeadline = SystemClock.uptimeMillis() + 5000;
+                    int deliveredAfter;
+                    do {
+                        keyboard.assertHeld("typing-verify-editor-tap-" + (index + 1));
+                        deliveredAfter = editorTaps(typing.observe(typingRun).tree());
+                        if (deliveredAfter != deliveredBefore) break;
+                        Thread.sleep(100);
+                    } while (SystemClock.uptimeMillis() < tapDeadline);
+                    check(deliveredAfter == deliveredBefore + 1,
+                        "background editor did not handle exactly one tap: " + deliveredBefore + " -> " + deliveredAfter);
+                }
+                notes.append("editorTaps=3Delivered; ");
                 keyboard.assertHeld("typing-set-text");
 
                 // Goes through the product's own action path, so what is measured is what the agent would get.
@@ -240,11 +255,20 @@ final class BackgroundRunner {
                 else if (value instanceof Long v) edit.putLong(entry.getKey(), v);
             }
             edit.commit();
+            test.runOnMainSync(() -> {
+                FixtureActivity fixture = FixtureActivity.current;
+                if (fixture != null) fixture.finishAndRemoveTask();
+            });
             test.finish(code, report);
         }
     }
 
     private static void check(boolean ok, String message) { if (!ok) throw new AssertionError(message); }
+    private static int editorTaps(String tree) {
+        var matcher = EDITOR_TAPS.matcher(tree);
+        check(matcher.find(), "background typing tree has no delivered-tap counter");
+        return Integer.parseInt(matcher.group(1));
+    }
     private static android.graphics.Rect editableBounds(Instrumentation test, int displayId) {
         android.graphics.Rect bounds = new android.graphics.Rect();
         test.runOnMainSync(() -> {

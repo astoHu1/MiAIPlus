@@ -1,5 +1,19 @@
 # MiAIPlus 1.0.0-preview 实现与验证状态
 
+## 前台输入法隔离实机复验（2026-10-18）
+
+用户反馈虚拟屏打开应用／点击时前台键盘仍被挤掉，并指定当前连接设备进行复验。比对设备已安装 APK 与本地修复包：原安装包不含 `createIsolatedDisplay` 和 `VIRTUAL_DISPLAY_FLAG_STEAL_TOP_FOCUS_DISABLED`，确认设备尚未运行上一轮的修复代码。先安装上一轮仅包含显示焦点／HIDE 修复的 Debug 与 AndroidTest，完整后台回归通过，主屏实际键盘持续监测 2058 次、`physicalImeLoss=null`。因此不能把此次用户反馈直接归因为这些标志在该 ROM 上无效。
+
+另外为后台触摸补充运行平台的 `MotionEvent.FLAG_NO_FOCUS_CHANGE`：所有点击／长按／滑动／取消都携带它，并保留目标 display id，使可信注入跳过 [InputDispatcher 的外部窗口点击焦点通知](https://android.googlesource.com/platform/frameworks/native/+/refs/heads/android16-release/services/inputflinger/dispatcher/InputDispatcher.cpp)。平台缺字段或值无效时拒绝后台输入。此项是事件层的进一步约束，不把它描述为本次设备已经证明的唯一根因。
+
+包含事件层约束的 Debug／AndroidTest 已在 Xiaomi 25019PNF3C / xuanyuan、API 37、`CP2A.260605.016` 上完成通用 `background` 设备回归。使用设备当前默认输入法，主屏自有 Fixture 编辑框真实打开键盘，覆盖原生会话创建／启动计算器／返回／结束，独立后台编辑框三次真实点击各在目标页计数精确增加一次，中文经产品 `BackgroundActions` 写入并在原节点回读，BACK 退出后台页，销毁及 capability 建屏／启动／输入／销毁均保持主屏键盘。持续 2107 次监测无丢失（`physicalImeLoss=null`），主屏 Fixture 零触摸、零文字泄漏。此次只验证确定动作，不代表模型自主规划能力。
+
+本地 334 项 JVM／Robolectric 测试通过（0 failures/errors/skipped），Debug／Release／AndroidTest 构建及两套完整 Lint 通过（0 errors，35／26 warnings）。新增事件标志拒绝与触摸隔离回归；既有点击／长按／滑动／取消检查同时覆盖标志、source 与 display id。Robolectric 4.17 自带 MotionEvent shadow 缺失 display id 属性，实现最小测试 shadow 补充该属性，flags／source／坐标／时序仍使用原 shadow；真实按屏路由另外经设备测试检查。
+
+完整后台回归后配置内容摘要与无障碍服务列表均保持原值，服务重连后 `connected=true,busy=false`；设备仅剩 display 0，无 helper、无活动 instrumentation，回到桌面，未添加／删除 reverse 映射。未请求真实模型，未提交、推送或发布。按用户要求，测试集仅保留自有测试页的通用输入法回归，已移除第三方应用专项 runner、分发参数及运行说明；上述设备结果来自移除专项前的通用回归。
+
+移除专项后重新执行 `:app:lintDebug :app:assembleDebugAndroidTest` 通过，并检查生成测试 APK 的 DEX 不再包含专项 runner、参数及目标包名。本次移除未重新执行设备测试。
+
 ## 模块截图与虚拟屏键盘隔离（2026-10-18）
 
 模块 `MainActivity` 不再设置 `FLAG_SECURE`，设置页及继承宿主策略的弹窗允许用户截图。密钥默认遮挡、离页重新遮挡及私有存储保持。设置 UI runner 改为断言允许截图，截图后不再重新开启安全旗标。

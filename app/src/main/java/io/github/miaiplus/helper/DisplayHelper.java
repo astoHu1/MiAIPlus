@@ -106,6 +106,10 @@ public final class DisplayHelper {
             throw new IllegalStateException("platform ignored independent focus or no-steal flag");
     }
 
+    static int requiredNoFocusChangeFlag(Class<?> motionEventClass) throws Exception {
+        return requiredFlag(motionEventClass, "FLAG_NO_FOCUS_CHANGE");
+    }
+
     /** Reads a hidden DisplayManager constant from the running platform, falling back to the AOSP value. */
     private static int romFlag(String name, int fallback) {
         try {
@@ -282,6 +286,12 @@ public final class DisplayHelper {
         } catch (Exception failure) {
             throw new IsolationFailure("FOCUS_ISOLATION_FAILED",
                 "platform does not provide independent background focus without stealing top focus", failure);
+        }
+        try {
+            motionNoFocusChangeFlag = requiredNoFocusChangeFlag(MotionEvent.class);
+        } catch (Exception failure) {
+            throw new IsolationFailure("FOCUS_ISOLATION_FAILED",
+                "platform cannot inject background touches without changing window focus", failure);
         }
         if (keyguardLocked()) throw new IllegalStateException("device is locked");
         int flags = BASE_DISPLAY_FLAGS | focusFlags[0];
@@ -1224,6 +1234,7 @@ public final class DisplayHelper {
     private static Method injectInputEvent;
     private static Method motionSetDisplayId;
     private static Method keySetDisplayId;
+    private static int motionNoFocusChangeFlag;
     private static String inputFailure = "";
 
     // BlockedPrivateApi: runs under app_process, which carries no app targetSdk, so the hidden-API blocklist does
@@ -1241,10 +1252,12 @@ public final class DisplayHelper {
             Method key = KeyEvent.class.getDeclaredMethod("setDisplayId", int.class);
             motion.setAccessible(true);
             key.setAccessible(true);
+            int noFocusChange = requiredNoFocusChangeFlag(MotionEvent.class);
             inputService = service;
             injectInputEvent = inject;
             motionSetDisplayId = motion;
             keySetDisplayId = key;
+            motionNoFocusChangeFlag = noFocusChange;
         } catch (Exception failure) {
             inputFailure = failure.getClass().getSimpleName() + ": " + failure.getMessage();
         }
@@ -1257,16 +1270,29 @@ public final class DisplayHelper {
      * background display by identity rather than to whatever the user's screen currently has focused.
      * {@code SOURCE_TOUCHSCREEN} is set because apps and the input pipeline treat an event with no source as an
      * unknown device and some reject it; a source-less event is not the same thing as a synthetic touch.
+     * Every event also carries the platform's NO_FOCUS_CHANGE flag. Display-level no-steal focus does not
+     * suppress InputDispatcher's pointer-down-outside-focus notification to WindowManager; this flag does.
      */
     @SuppressLint("WrongConstant") // The "input" service name and the hidden per-event display id are both non-SDK here.
     private static boolean inject(int action, float x, float y, long downTime) throws Exception {
         if (displayId < 0) throw new IllegalStateException("no display");
         resolveInput();
         if (injectInputEvent == null) throw new IllegalStateException("input injection unavailable: " + inputFailure);
+        if (motionNoFocusChangeFlag == 0)
+            throw new IllegalStateException("background touch focus isolation unavailable");
         long now = SystemClock.uptimeMillis();
-        MotionEvent event = MotionEvent.obtain(downTime, now, action, x, y, 0);
+        MotionEvent.PointerProperties pointer = new MotionEvent.PointerProperties();
+        pointer.id = 0;
+        pointer.toolType = MotionEvent.TOOL_TYPE_FINGER;
+        MotionEvent.PointerCoords coordinates = new MotionEvent.PointerCoords();
+        coordinates.x = x;
+        coordinates.y = y;
+        coordinates.pressure = 1;
+        coordinates.size = 1;
+        MotionEvent event = MotionEvent.obtain(downTime, now, action, 1,
+            new MotionEvent.PointerProperties[] { pointer }, new MotionEvent.PointerCoords[] { coordinates },
+            0, 0, 1, 1, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, motionNoFocusChangeFlag);
         try {
-            event.setSource(InputDevice.SOURCE_TOUCHSCREEN);
             motionSetDisplayId.invoke(event, displayId);
             return Boolean.TRUE.equals(injectInputEvent.invoke(inputService, event, 2));
         }

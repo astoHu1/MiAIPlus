@@ -42,6 +42,8 @@ helper 的 stdin 就是命令通道，所以模块**不能**关闭它；该流�
 
 后台屏另外使用并回读 `IME_POLICY_HIDE=2`，不创建软键盘；文字输入继续通过目标屏已聚焦编辑框的 `ACTION_SET_TEXT` 和精确回读。旧 `LOCAL` 仅决定键盘显示位置，仍可能争用系统输入法。策略或焦点校验失败会释放屏幕并停止，不回退主屏。
 
+所有后台触摸事件（点击、长按、滑动及取消）还携带平台实际定义的 `MotionEvent.FLAG_NO_FOCUS_CHANGE`，继续绑定目标 display id。它使可信注入跳过 InputDispatcher 的 `dispatchPointerDownOutsideFocus`，避免后台点击额外触发系统的窗口／任务焦点处理。创建屏幕前确认平台提供该标志，不猜测数值。显示级 no-steal 与事件级 no-focus-change 是两处独立约束；HIDE 本身不能证明系统输入法 client 隔离。
+
 刻意不加 **`ALWAYS_UNLOCKED`**：scrcpy 用它让镜像在锁屏下可用。本项目创建屏幕时若已锁屏会失败；运行中锁屏按已有用户要求处理。
 
 ## 实机验证结果

@@ -20,10 +20,22 @@ public final class TypingFixtureActivity extends Activity {
     public static volatile EditText input;
     /** Records every touch this page receives, to show input addressed here never lands elsewhere. */
     public static volatile String lastTouch = "none";
+    private TextView title;
+    private int editorTaps;
 
     @Override public boolean dispatchTouchEvent(android.view.MotionEvent event) {
         lastTouch = event.getActionMasked() + ":" + event.getX() + "," + event.getY();
-        return super.dispatchTouchEvent(event);
+        boolean handled = super.dispatchTouchEvent(event);
+        if (handled && event.getActionMasked() == android.view.MotionEvent.ACTION_UP
+            && input != null && input.getContext() == this && input.hasFocus()) {
+            android.graphics.Rect bounds = new android.graphics.Rect();
+            input.getGlobalVisibleRect(bounds);
+            if (bounds.contains((int) event.getRawX(), (int) event.getRawY())) {
+                editorTaps++;
+                title.setText("MiAIPlus background typing fixture; editor taps=" + editorTaps);
+            }
+        }
+        return handled;
     }
 
     @Override public void onCreate(Bundle state) {
@@ -31,8 +43,8 @@ public final class TypingFixtureActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setPadding(40, 140, 40, 40);
         root.setOrientation(LinearLayout.VERTICAL);
-        TextView title = new TextView(this);
-        title.setText("MiAIPlus background typing fixture");
+        title = new TextView(this);
+        title.setText("MiAIPlus background typing fixture; editor taps=0");
         title.setTextSize(20);
         root.addView(title);
         input = new EditText(this);
