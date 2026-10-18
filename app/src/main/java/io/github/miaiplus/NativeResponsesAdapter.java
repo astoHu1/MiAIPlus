@@ -63,6 +63,7 @@ final class NativeResponsesAdapter {
         if ("responses".equals(api)) restore(chat, replayIdentity);
         JSONObject body = "responses".equals(api) ? ModelProtocol.request(chat) : chat;
         ReasoningPolicy.apply(body, model, api, reasoning);
+        PhoneUseLog.request(body, api);
         Object builder = Reflector.callMethod(request, "newBuilder");
         Reflector.callMethod(builder, "header", "User-Agent", ModelHeaders.USER_AGENT);
         Object session = Reflector.callMethod(request, "header", ModelHeaders.SESSION);

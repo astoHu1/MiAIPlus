@@ -50,7 +50,9 @@ public final class NativeSession {
     }
     private static String handle(Config config, String query, int owner, RunState caller, boolean background, String sourceTool) throws Exception {
         executing = true;
-        try { return handleStep(config, query, owner, caller, background, sourceTool); }
+        try (PhoneUseLog.Scope ignored = PhoneUseLog.scope(caller == null ? "" : caller.id, 0)) {
+            return handleStep(config, query, owner, caller, background, sourceTool);
+        }
         finally { executing = false; }
     }
     private static String handleStep(Config config, String query, int owner, RunState caller, boolean background, String sourceTool) throws Exception {
@@ -71,6 +73,9 @@ public final class NativeSession {
                 if (screen == null || !ScreenService.isHealthy()) throw new IllegalStateException("MiAIPlus 无障碍未连接或已失效，请开启服务或 root 任务前检查");
                 s = new State(query, owner, config.maxSteps, screen, background, sourceTool); active = s;
                 s.permissionMode = config.phoneUsePermissionMode;
+                PhoneUseLog.bind(s.id, 0);
+                PhoneUseLog.event("session_start", "planner", "native", "background", background, "tool", sourceTool,
+                    "caller", caller == null ? "" : PhoneUseLog.reference(caller.id), "maxSteps", s.maxSteps);
                 s.run.progress = TaskProgress.goal(query);
                 ownsStep = true;
                 if (caller != null) cancellation = bindCaller(s, caller);
@@ -90,6 +95,9 @@ public final class NativeSession {
             } else {
                 JSONObject request = new JSONObject(query.substring(9));
                 verifyContinuation(s, request, owner, sourceTool);
+                PhoneUseLog.bind(s.id, s.steps + 1);
+                PhoneUseLog.event("step_start", "background", s.background, "tool", sourceTool,
+                    "caller", caller == null ? "" : PhoneUseLog.reference(caller.id));
                 ownsStep = true;
                 if (caller != null) cancellation = bindCaller(s, caller);
                 extendBudget(s);
@@ -109,6 +117,8 @@ public final class NativeSession {
                     : new Action(Coordinates.normalize(request.getJSONObject("action"), request.optString("coordinate_space", "normalized"),
                         s.frame.width(), s.frame.height(), s.frame.imageWidth(), s.frame.imageHeight()));
                 String intent = TaskProgress.intent(action);
+                PhoneUseLog.event("action_coordinate_space", "requested", request.optString("coordinate_space", "normalized"));
+                PhoneUseLog.action("action_proposed", action, s.frame);
                 s.run.progress = intent;
                 if (action.name.equals("finish")) {
                     String result = "模型报告任务完成：" + action.data.optString("message", "完成"); close(); return result;
@@ -170,6 +180,7 @@ public final class NativeSession {
                         handoffPackage = s.background
                             ? BackgroundActions.foregroundHandoff(s.display, action, s.run, s.launchPolicy) : null;
                         if (handoffPackage != null) {
+                            PhoneUseLog.event("screen_handoff", "from", "background", "to", "foreground");
                             s.run.check();
                             s.display.close();
                             s.display = null;
@@ -219,6 +230,8 @@ public final class NativeSession {
             s.frame = observe(s);
             if (handoffPackage != null) BackgroundActions.verifyHandoffFrame(s.frame, handoffPackage);
             String frameToken = FrameStore.put(s.frame, owner);
+            PhoneUseLog.event("step_continue", "background", s.background, "stepsUsed", s.steps,
+                "skipped", !skipped.isEmpty(), "awaitingReview", awaitingReview);
             String scaleHint = "附图JPEG=" + s.frame.imageWidth() + "x" + s.frame.imageHeight()
                 + "；树坐标为屏幕像素，不能混用。\n";
             String tree = s.frame.tree();
@@ -254,6 +267,7 @@ public final class NativeSession {
                 + scaleHint
                 + frameToken + "\n" + observation;
         } catch (Exception e) {
+            PhoneUseLog.failure("native_step", e);
             // A foreign/stale session cannot cancel another caller's current task.
             if (ownsStep) close();
             if (e instanceof ForegroundConsent.Paused) return e.getMessage();
@@ -349,6 +363,8 @@ public final class NativeSession {
         try {
             State s = active; active = null;
             if (s != null) {
+                PhoneUseLog.event("session_close", "sessionRef", PhoneUseLog.reference(s.id), "stepsUsed", s.steps,
+                    "cancelled", s.run.cancelled.get());
                 s.run.cancel();
                 synchronized (s) {
                     ++s.watchdogGeneration;

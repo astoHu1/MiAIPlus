@@ -2,6 +2,8 @@
 
 设置界面使用 Compose 与 Miuix，连接模块现有配置、Hook 和后台虚拟屏后端。历史验证按日期记录，当前版本的检查结果以 [验证记录](validation.md) 为准。
 
+「控屏 → 诊断」提供默认关闭的「Phone Use 详细日志」开关，同时覆盖前台和虚拟屏，保存后无需重启。记录范围、Logcat 收集方式和覆盖限制见 [详细日志](phone-use-logging.md)。
+
 ## 页面
 
 底栏固定按「首页 → 模型 API → 控屏」排列，使用 Miuix 原生 `NavigationBar` / `NavigationBarItem`。

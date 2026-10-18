@@ -16,6 +16,7 @@ final class DualToolsRunner {
     static void run(Instrumentation test) {
         var prefs = Config.prefs(test.getTargetContext());
         Map<String, ?> saved = prefs.getAll();
+        boolean diagnostics = new Config(prefs).phoneUseDetailedLog;
         Bundle report = new Bundle();
         int code = Activity.RESULT_CANCELED;
         try {
@@ -26,6 +27,7 @@ final class DualToolsRunner {
             for (boolean legacyBackground : new boolean[]{true, false}) {
                 prefs.edit().putBoolean("enabled", true).putBoolean("globalModel", false)
                     .putBoolean("backgroundDisplay", legacyBackground).putString("planner", "native")
+                    .putInt("displayWidth", 1080).putInt("displayHeight", 1920).putInt("displayDensity", 320)
                     .putInt("maxSteps", 8).remove("hook_report").commit();
                 signal(test, "MIAIPLUS_RESTART_XIAOAI MIAIPLUS_DUAL_TOOLS");
                 long deadline = SystemClock.elapsedRealtime() + 150_000;
@@ -44,6 +46,11 @@ final class DualToolsRunner {
                         if (result.equals("DUAL_TOOLS_FOREGROUND_STARTED")) {
                             expectedDefault = !legacyBackground;
                             prefs.edit().putBoolean("backgroundDisplay", expectedDefault).commit();
+                            if (diagnostics) {
+                                check(prefs.edit().putBoolean(Config.PHONE_USE_LOG_KEY, false).commit(), "Could not disable host logs");
+                                Thread.sleep(1100); // Host switch cache expires without restarting XiaoAi/the session.
+                                android.util.Log.i("MiAIPlusPhoneUseTest", "HOST_LOG_OFF");
+                            }
                         } else if (result.equals("DUAL_TOOLS_BACKGROUND_STARTED")) {
                             expectedDefault = legacyBackground;
                             prefs.edit().putBoolean("backgroundDisplay", expectedDefault).commit();
@@ -56,6 +63,11 @@ final class DualToolsRunner {
                             test.runOnMainSync(() -> check(FixtureActivity.input != null && FixtureActivity.input.getText().length() == 0,
                                 "physical fixture input was not empty before background test"));
                             acknowledged = true;
+                            if (diagnostics) {
+                                check(prefs.edit().putBoolean(Config.PHONE_USE_LOG_KEY, true).commit(), "Could not enable host logs");
+                                Thread.sleep(1100);
+                                android.util.Log.i("MiAIPlusPhoneUseTest", "HOST_LOG_ON");
+                            }
                         } else throw new AssertionError("unknown dual-tool stage: " + result);
                         // The receiver is DUMP-protected. Run this one constant test-control broadcast as root,
                         // just as the existing background runner reads dumpsys as root; no app is force-stopped.
@@ -99,7 +111,11 @@ final class DualToolsRunner {
                     edit.putStringSet(entry.getKey(), strings);
                 }
             }
-            edit.commit();
+            if (!edit.commit() || !saved.equals(prefs.getAll())) {
+                code = Activity.RESULT_CANCELED;
+                report.putString("stream", report.getString("stream", "")
+                    + "FAIL: Could not restore original settings\n");
+            }
             test.finish(code, report);
         }
     }

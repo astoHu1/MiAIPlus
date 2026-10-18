@@ -41,6 +41,7 @@ public final class ModelClient {
         if (tools != null) body.put("tools", tools).put("tool_choice", "required").put("parallel_tool_calls", false);
         if ("responses".equals(config.api)) body = ModelProtocol.request(body.put("max_tokens", 16384));
         ReasoningPolicy.apply(body, config.model, config.api, config.reasoning);
+        PhoneUseLog.request(body, config.api);
         HttpURLConnection c = (HttpURLConnection) new URL(config.completionsUrl()).openConnection();
         run.connection = c;
         try {
@@ -55,6 +56,7 @@ public final class ModelClient {
             c.setFixedLengthStreamingMode(bytes.length);
             try (var out = c.getOutputStream()) { out.write(bytes); }
             int code = c.getResponseCode();
+            PhoneUseLog.event("model_http_response", "code", code);
             // Do not echo server bodies: these can include credentials, screenshots, or proxy HTML.
             if (code < 200 || code >= 300) throw new IllegalStateException("模型接口 HTTP " + code);
             String response;

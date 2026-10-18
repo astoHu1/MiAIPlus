@@ -30,6 +30,16 @@ public final class AgentEngine {
         return run(config, mode, query, run, config.backgroundDisplay, "");
     }
     static String run(Config config, String mode, String query, RunState run, boolean selectedBackground, String sourceTool) throws Exception {
+        try (PhoneUseLog.Scope ignored = PhoneUseLog.scope(run.id, 0)) {
+            PhoneUseLog.event("run_start", "mode", mode, "planner", config.planner, "background", selectedBackground);
+            try {
+                String result = runLogged(config, mode, query, run, selectedBackground, sourceTool);
+                PhoneUseLog.event("run_return", "cancelled", run.cancelled.get());
+                return result;
+            } catch (Exception failure) { PhoneUseLog.failure("run", failure); throw failure; }
+        }
+    }
+    private static String runLogged(Config config, String mode, String query, RunState run, boolean selectedBackground, String sourceTool) throws Exception {
         if (query == null || query.isBlank() || query.length() > 16000) throw new IllegalArgumentException("任务内容为空或过长");
         if (mode.equals("screen") && config.planner.equals("native")) return NativeSession.handle(config, query, run, selectedBackground, sourceTool);
         if (config.model.isBlank()) throw new IllegalStateException("请配置模型名称");
@@ -63,6 +73,8 @@ public final class AgentEngine {
             String previous = "", outcome = "任务开始";
             int repeats = 0;
             for (int step = 0; step < config.maxSteps; step++) {
+                PhoneUseLog.bind(run.id, step + 1);
+                PhoneUseLog.event("step_start", "planner", "external", "background", background);
                 run.check();
                 if (step == 0) run.progress = TaskProgress.goal(query);
                 ScreenService.Frame frame = observe(display, screen, run);
@@ -99,6 +111,7 @@ public final class AgentEngine {
                 }
                 run.check();
                 JSONObject historyMessage = ModelClient.message("assistant", auto ? response.getString("content") : JSONObject.NULL);
+                PhoneUseLog.action("action_proposed", action, frame);
                 if (!auto) historyMessage.put("tool_calls", response.getJSONArray("tool_calls"));
                 if (response.has("_responses_output")) historyMessage.put("_responses_output", response.getJSONArray("_responses_output"));
                 messages.put(historyMessage);
@@ -110,6 +123,7 @@ public final class AgentEngine {
                 handoffPackage = background
                     ? BackgroundActions.foregroundHandoff(display, action, run, launchPolicy) : null;
                 if (handoffPackage != null) {
+                    PhoneUseLog.event("screen_handoff", "from", "background", "to", "foreground");
                     run.check();
                     display.close();
                     display = null;
@@ -142,6 +156,7 @@ public final class AgentEngine {
                     boolean sameApproval = !(review && (SystemDialogPolicy.requiresApproval(frame) || SystemDialogPolicy.requiresApproval(current)))
                         || PageGuard.same(PageGuard.anchor(frame), PageGuard.anchor(current));
                     if (!sameApproval || !PageGuard.canExecute(action, frame, current)) {
+                        PhoneUseLog.event("action_skipped", "reason", "target_or_approval_changed");
                         outcome = "本步未执行：动作目标已变化，请根据新观察重新规划，旧坐标与本次授权已作废";
                         previous = ""; repeats = 0;
                     } else {

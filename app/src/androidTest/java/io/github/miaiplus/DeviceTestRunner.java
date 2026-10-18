@@ -10,7 +10,22 @@ import java.util.Map;
 
 /** Instrumented end-to-end test against scripts/mock_model.py, no paid model required. */
 public final class DeviceTestRunner extends HookProbeRunner {
+    private boolean logOverride, hadLogOption;
+    private boolean savedLogOption;
     @Override public void finish(int resultCode, Bundle results) {
+        if (logOverride) {
+            var prefs = Config.prefs(getTargetContext());
+            var editor = prefs.edit();
+            if (hadLogOption) editor.putBoolean(Config.PHONE_USE_LOG_KEY, savedLogOption);
+            else editor.remove(Config.PHONE_USE_LOG_KEY);
+            boolean restored = editor.commit() && prefs.contains(Config.PHONE_USE_LOG_KEY) == hadLogOption
+                && (!hadLogOption || prefs.getBoolean(Config.PHONE_USE_LOG_KEY, !savedLogOption) == savedLogOption);
+            logOverride = false;
+            if (!restored) {
+                resultCode = Activity.RESULT_CANCELED;
+                results.putString("stream", results.getString("stream", "") + "FAIL: Detailed log option restore failed\n");
+            } else results.putString("stream", results.getString("stream", "") + "Detailed log option restored and verified.\n");
+        }
         // UI probes put a fixture behind XiaoAi. Never leave it as the next app to resume.
         runOnMainSync(() -> {
             for (var task : getTargetContext().getSystemService(android.app.ActivityManager.class).getAppTasks()) {
@@ -39,7 +54,7 @@ public final class DeviceTestRunner extends HookProbeRunner {
     private void check(boolean ok, String message) { if (!ok) throw new AssertionError(message); }
     private void signal(String text) { Bundle status = new Bundle(); status.putString("stream", text + "\n"); sendStatus(1, status); }
     private void configure(String protocol) {
-        Config.prefs(getTargetContext()).edit().putBoolean("enabled", true).putBoolean("backgroundDisplay", false)
+        Config.prefs(getTargetContext()).edit().putBoolean("enabled", true).putBoolean("backgroundDisplay", false).putBoolean("globalModel", false)
             .putString("endpoint", "http://127.0.0.1:18765/v1")
             .putString("api", transportApi).putString("apiKey", "test-key").putString("model", "responses".equals(transportApi) ? "fixture-responses-model" : "fixture-model").putString("planner", "external").putString("protocol", protocol).putInt("maxSteps", 8).commit();
     }
@@ -66,6 +81,8 @@ public final class DeviceTestRunner extends HookProbeRunner {
         try (var in = getTargetContext().getContentResolver().openInputStream(uri)) {
             var json = new org.json.JSONObject(new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
             check(json.getString("image").length() > 1000, "native frame empty");
+            check(json.has("diagnostics") == new Config(getTargetContext()).phoneUseDetailedLog,
+                "frame diagnostics did not follow the live switch");
         }
         try {
             var unexpected = getTargetContext().getContentResolver().openInputStream(uri);
@@ -74,6 +91,14 @@ public final class DeviceTestRunner extends HookProbeRunner {
         } catch (java.io.FileNotFoundException expected) { }
     }
     @Override public void onStart() {
+        if (arguments.containsKey("detailed_log")) {
+            var prefs = Config.prefs(getTargetContext());
+            hadLogOption = prefs.contains(Config.PHONE_USE_LOG_KEY);
+            savedLogOption = prefs.getBoolean(Config.PHONE_USE_LOG_KEY, false);
+            logOverride = true;
+            check(prefs.edit().putBoolean(Config.PHONE_USE_LOG_KEY,
+                "true".equals(arguments.getString("detailed_log"))).commit(), "Could not set detailed log fixture");
+        }
         if (conversationContinuityMode) { ConversationContinuityRunner.run(this); return; }
         if (phoneUseTerminalMode) { PhoneUseTerminalRunner.run(this); return; }
         if (realPageGuardMode) { RealPageGuardRunner.run(this); return; }
@@ -110,9 +135,11 @@ public final class DeviceTestRunner extends HookProbeRunner {
                 // Host launches the fixture without creating a second accessibility controller.
                 signal("MIAIPLUS_LAUNCH_FIXTURE");
                 long launchDeadline = SystemClock.elapsedRealtime() + 10000;
-                while (FixtureActivity.current == null && SystemClock.elapsedRealtime() < launchDeadline) Thread.sleep(100);
+                while ((FixtureActivity.current == null || !FixtureActivity.current.hasWindowFocus())
+                    && SystemClock.elapsedRealtime() < launchDeadline) Thread.sleep(100);
                 Activity fixture = FixtureActivity.current;
                 check(fixture != null, "fixture launch failed");
+                check(fixture.hasWindowFocus(), "fixture did not receive window focus");
                 waitForIdleSync(); Thread.sleep(800);
                 int[] location = new int[2]; int[] center = new int[2];
                 runOnMainSync(() -> {
@@ -123,6 +150,7 @@ public final class DeviceTestRunner extends HookProbeRunner {
                 var frame = ScreenService.instance.capture(new RunState("capture-test", android.os.Process.myUid()));
                 check(frame.width() > 0 && frame.image().length() > 1000, "no screenshot");
                 check("io.github.miaiplus".equals(frame.foreground()), "fixture not foreground: " + frame.foreground());
+                check(frame.tree().contains("MiAIPlus device test fixture"), "fixture tree not observed");
                 String query = "MIAIPLUS_SCREEN_TEST " + protocol + " " + (center[0]*1000.0/frame.width()) + " " + (center[1]*1000.0/frame.height());
                 Bundle result;
                 if (protocol.equals("native")) {
@@ -139,6 +167,11 @@ public final class DeviceTestRunner extends HookProbeRunner {
                     for (var action : new org.json.JSONObject[]{
                         new org.json.JSONObject().put("action", "tap").put("element", new org.json.JSONArray().put(center[0]*1000.0/frame.width()).put(center[1]*1000.0/frame.height())),
                         new org.json.JSONObject().put("action", "type").put("text", "你好 MiAIPlus")}) {
+                        if (logOverride && "true".equals(arguments.getString("detailed_log"))) {
+                            boolean logging = action.getString("action").equals("type");
+                            check(prefs.edit().putBoolean(Config.PHONE_USE_LOG_KEY, logging).commit(), "Live log toggle failed");
+                            android.util.Log.i("MiAIPlusPhoneUseTest", logging ? "NATIVE_LOG_ON" : "NATIVE_LOG_OFF");
+                        }
                         query = "MIAIPLUS:" + new org.json.JSONObject().put("session", session).put("action", action);
                         result = await(startJob("screen", query).getString("id"));
                         check("done".equals(result.getString("status")), "native action failed: " + result);

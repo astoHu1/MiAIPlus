@@ -62,6 +62,8 @@ Provider 在创建任务或收起界面前校验续调的会话、UID、期限�
 
 原官方模型及其传输链是否支持图片需要单独确认；不支持时有无障碍树可用，但纯图片页面受限。该实现没有内置 AutoGLM 模型权重，不能把模型名称与执行器协议混为一谈。
 
+`PhoneUseLog` 提供默认关闭的前后台控屏诊断开关，按会话／步骤／观察编号关联窗口读取、动作、输入回读、helper RPC、一次性帧和宿主附图。日志仅输出元数据到 Logcat；外部请求只检查图文结构与图片摘要，不输出正文或凭证。诊断异常被隔离，不更改动作结果和重试策略。开关、收集方式及官方传输的覆盖边界见 [详细日志](phone-use-logging.md)。
+
 ## 原聊天入口的外部模型推理档位
 
 `NativeReasoningHook` 只在 `globalModel` 开启时接管三套原生入口：`StandardEditInputView` 的模式 popup、全屏 `FunctionBarView` 的模式 popup，以及电源键唤醒等非全屏界面 `FloatStateMorePopup`（`zd1.b0`）的“＋ → 回答模式”子菜单。浮窗在原菜单可见性处理后、Miuix 复制菜单前替换子项，并按模型档位生成 `preCheckSecondaryItem` 的选中数组；其他附件／输入切换入口沿用原逻辑。原生 AUTO/QUICK/EXPERT 枚举、回调和持久化保持原状；外部选择经 UID 校验的 `set_reasoning` IPC 写入模块私有配置，以 endpoint/model/api 的摘要分别存储。写入前校验当前模型身份与有效档位，拒绝过期菜单写入。关闭外部模式时原菜单照常执行；热重载清理浮窗和弱引用的菜单配置快照。

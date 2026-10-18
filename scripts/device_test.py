@@ -10,6 +10,9 @@ def adb(*args):
 
 
 process = subprocess.Popen(['adb', 'shell', 'am', 'instrument', '--user', '0', '-w', '-e', 'hook', str('--hook' in sys.argv).lower(),
+    *(['-e', 'detailed_log', str('--detailed-log' in sys.argv).lower()]
+      if '--detailed-log' in sys.argv or '--no-detailed-log' in sys.argv else []),
+    '-e', 'background', str('--background' in sys.argv).lower(),
     '-e', 'profiles', str('--profiles' in sys.argv).lower(),
     '-e', 'api', 'responses' if '--responses' in sys.argv else 'chat',
     '-e', 'reply_actions', str('--reply-actions' in sys.argv or '--reply-actions-chat' in sys.argv or '--reply-actions-current-config' in sys.argv).lower(),

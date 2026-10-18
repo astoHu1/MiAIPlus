@@ -1,5 +1,24 @@
 # MiAIPlus 1.0.1-preview 实现与验证状态
 
+## Phone Use 与虚拟屏可选详细日志（2026-10-18）
+
+「控屏 → 诊断 → Phone Use 详细日志」默认关闭，保存后无需重启，可在任务间或任务期间开关；模块即时读取，宿主只读 IPC 的开关缓存最长 1 秒。记录元数据到 `MiAIPlusPhoneUse` Logcat 标签，覆盖前后台会话／观察、窗口选择与空树原因、动作、后台输入精确回读、helper RPC、帧有效期／消费和宿主附图；受控外部请求可按图片摘要核对实际序列化内容。会话／步骤／观察关联信息随内部帧管道传递，不进入用户正文。不记录页面正文、输入内容、图片、密钥、服务地址、完整请求或异常消息。执行模式、权限、重试、回读期限和一次性帧约束不变。官方私有传输只验证到宿主附图边界，不能据此证明服务端收图或模型理解。使用方法见 [详细日志](phone-use-logging.md)。
+
+本地 356 项 JVM／Robolectric 测试全部通过（0 failures/errors/skipped）；新增 11 项覆盖默认关闭与运行中切换、宿主开关刷新及 IPC 不可用、跨线程诊断上下文、正文／异常脱敏、日志后端异常时仍正常交付帧、日志开关两态下截图内容／单次读取不变、过期及 UID 拒绝、Chat／Responses 图片关联、窗口树和拒绝输入行为不变，以及设置持久化。设置页截图 `app/build/outputs/ui-screenshots/control-phone-use-log.png` 已渲染并人工核对。Debug／Release 构建、Debug AndroidTest 构建、`lintDebug`、`lintRelease` 全部通过，未跳过 Lint；`git diff --check` 通过。最终生产代码检查记录在忽略目录 `work/phone-use-log-host-context-final.log`；AndroidTest 夹具后续改动另通过 `assembleDebugAndroidTest` 与 `lintDebug`。
+
+授权 ADB 实机：Xiaomi 25019PNF3C／xuanyuan、Android API 37、已解锁 root、小爱 `8.3.30.4420 (508003030)`，安装 Debug／AndroidTest APK 并串行测试，本地固定 mock，不请求真实模型。当前通过：
+
+- 关闭日志的 Phone Use／AutoGLM／原生会话：截图→点击→中文输入→新观察确认→结束，以及取消和帧单次消费；收集区间详细日志为 0 条。
+- 开启同一用例：141 条元数据记录，模块原生会话中关闭后重新开启日志，关闭区间 0 条；帧诊断字段随实时开关变化，输入／目标／测试密钥未出现在详细日志中。
+- 实际虚拟屏：219 条记录；后台输入中文在后台树中确认，3 次编辑框点击送达；主屏无点击／文字泄漏，持续 2177 次键盘检查未丢失焦点、连接或可见状态。日志捕捉空后台屏的 `tree_empty/no_windows`，应用启动后树可读，并记录 `input_set_text` 与精确回读成功。
+- 两个已注册宿主控屏工具：426 条记录；两种旧版默认屏幕设置下均通过，跨工具续调拒绝不丢失原会话，后台点击／滑动隔离和正常释放；两次同一宿主会话关闭日志，缓存到期后关闭区间 0 条，再开启恢复宿主附图记录。
+- 原生外部 Chat／Responses 各 36 条记录；实际 Hook 与模型／记忆／路由模拟请求通过。`ToolResult.Success` 与 TOOL Message 附图，以及序列化请求图片摘要／数量可关联回观察。
+- 实际 Compose 设置页完整回归通过：默认关闭、点击开启、持久化、Activity 重建、再次关闭，不启动模型任务；同时通过原配置管理、规划器锁定、权限预设、步数边界和导航检查。截图 `work/phone-use-log-device-20261018/settings-final/control-phone-use-log-device.png` 已核对。旧禁用规划器检查已适配 Compose 合并后的整行语义，生产 UI 无改动。
+
+初轮失败保留在忽略目录：安装后的模块更新通知使坐标点击打开 LSPosed；等待通知消退并收起通知栏后原基线通过。旧双工具夹具假定固定 1080×1920 却未设置尺寸，已改为显式测试尺寸，未修改生产路由。实测还发现 `Application.attach` 时 `getApplicationContext()` 可为空，导致宿主日志被关闭；已改为直接保存传入 Application 的弱引用，并以同一启动时序的单测和宿主实测验证。最终控屏日志与断言在 `work/phone-use-log-device-20261018/final/`，设置页完整复测在 `work/phone-use-log-device-20261018/settings-final/`。每项用例恢复设置并校验；整轮结束仅宿主启动状态时间戳 `hook_at` 更新，用户配置值不变。原无障碍服务列表和 ADB reverse 恢复，helper 进程为 0、显示列表仅 display 0，无障碍已连接且任务空闲。
+
+未调用真实模型，未复现拼多多／抖音的间歇性故障，也不将新增诊断视为修复该故障。未安装正式签名 Release 或发布版本；下方发布记录对应此前版本。
+
 ## v1.0.1-preview 发布构建（2026-10-18）
 
 将版本元数据更新为 `versionName=1.0.1-preview`、`versionCode=15` 后，重新通过 345 项 JVM／Robolectric 测试、Debug／Release 完整 Lint（0 errors，35／26 warnings），以及 Debug、Release、Preview、AndroidTest 构建。下述实机验收对应相同功能代码、版本元数据更新前的 Debug 构建；没有在设备上安装正式签名 Release，也没有请求真实模型。正式签名与预发布由版本 tag 的 GitHub 工作流处理，发布范围与说明见 [版本说明](releases/v1.0.1-preview.md)。

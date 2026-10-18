@@ -58,6 +58,14 @@ final class BackgroundActions {
 
     static void execute(BackgroundDisplay display, Action action, RunState run, Config config,
         ScreenService.Frame planned, boolean systemDialogApproved) throws Exception {
+        PhoneUseLog.action("action_begin", action, planned);
+        try {
+            executeLogged(display, action, run, config, planned, systemDialogApproved);
+            PhoneUseLog.action("action_complete", action, planned);
+        } catch (Exception failure) { PhoneUseLog.failure("action_background_" + action.name, failure); throw failure; }
+    }
+    private static void executeLogged(BackgroundDisplay display, Action action, RunState run, Config config,
+        ScreenService.Frame planned, boolean systemDialogApproved) throws Exception {
         DisplaySession session = display.session();
         if (session == null) throw new IllegalStateException(BackgroundDisplay.ERROR_DISPLAY_LOST + "：后台显示已关闭");
         // Cheap generation check before any input so a recreated display cannot receive stale coordinates.
@@ -122,8 +130,10 @@ final class BackgroundActions {
         ScreenService.Frame current = new ScreenService.Frame(planned == null ? "" : planned.image(), tree,
             session.width, session.height, foreground, planned == null ? session.width : planned.imageWidth(),
             planned == null ? session.height : planned.imageHeight(), session.displayId, session.generation);
-        if (planned != null && !PageGuard.canExecute(action, planned, current))
+        if (planned != null && !PageGuard.canExecute(action, planned, current)) {
+            PhoneUseLog.event("action_skipped", "reason", "target_changed", "displayId", session.displayId);
             throw new ScreenService.ObservationChanged();
+        }
         SystemDialogPolicy.verify(action, planned, current, approved);
     }
 

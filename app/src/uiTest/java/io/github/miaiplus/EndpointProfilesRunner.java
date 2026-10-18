@@ -388,6 +388,17 @@ final class EndpointProfilesRunner {
             checkPermissionSelection(label, summary);
             check(state.getJob() == null, "Permission selection started a model job");
         }
+        check(!new Config(context).phoneUseDetailedLog, "Detailed logging is not off by default");
+        click("Phone Use 详细日志");
+        waitFor(() -> state.getConfig().phoneUseDetailedLog && new Config(context).phoneUseDetailedLog,
+            "Detailed log switch did not persist");
+        recreate(); enterControlPage();
+        check(state.getConfig().phoneUseDetailedLog, "Detailed log switch lost on recreation");
+        capture("control-phone-use-log-device");
+        click("Phone Use 详细日志");
+        waitFor(() -> !state.getConfig().phoneUseDetailedLog && !new Config(context).phoneUseDetailedLog,
+            "Detailed log switch did not turn off");
+        check(state.getJob() == null, "Logging switch started a task");
     }
 
     private void enterControlPage() {
@@ -415,7 +426,9 @@ final class EndpointProfilesRunner {
         check("native".equals(Config.prefs(test.getTargetContext()).getString("planner", "")),
             "Native planner was not persisted");
         click("控屏");
-        var planner = find(n -> "规划模型".equals(text(n)));
+        // Disabled merged Compose semantics may expose the row's title, summary and value as one text.
+        waitFor(() -> find(n -> text(n).contains("规划模型")) != null, "Planner selector was not visible");
+        var planner = find(n -> text(n).contains("规划模型"));
         // Android exposes the title text as a child; enabled belongs to the preference row.
         while (planner != null && planner.isEnabled() && !planner.isClickable() && planner.getParent() != null)
             planner = planner.getParent();

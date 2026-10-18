@@ -28,7 +28,7 @@ public final class BridgeProvider extends ContentProvider {
     // A task spans all native CONTINUE calls, including the idle model-planning gaps.
     private static String screenTaskId;
     private static boolean screenTaskActive;
-    @Override public boolean onCreate() { return true; }
+    @Override public boolean onCreate() { PhoneUseLog.init(getContext()); return true; }
     private void enforceCaller() {
         int uid = Binder.getCallingUid();
         if (uid == Process.myUid()) return;
@@ -59,6 +59,10 @@ public final class BridgeProvider extends ContentProvider {
         }
         enforceCaller();
         Bundle b = new Bundle();
+        if (method.equals("phone_use_log_settings")) {
+            b.putBoolean("enabled", PhoneUseLog.enabled());
+            return b;
+        }
         Config config = new Config(getContext());
         if (method.equals("hook_report")) {
             String report = extras == null ? "" : extras.getString("report", "");

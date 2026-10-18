@@ -20,7 +20,11 @@ public final class FrameStore {
     private static final int MAX_PENDING = 4;
     public static String put(ScreenService.Frame frame, int owner) throws Exception {
         long now = android.os.SystemClock.elapsedRealtime();
-        ENTRIES.entrySet().removeIf(e -> e.getValue().expires < now);
+        ENTRIES.entrySet().removeIf(e -> {
+            boolean expired = e.getValue().expires < now;
+            if (expired) PhoneUseLog.event("frame_expired", "frameRef", PhoneUseLog.reference(e.getKey()));
+            return expired;
+        });
         while (ENTRIES.size() >= MAX_PENDING) {
             String oldest = null;
             long oldestExpiry = Long.MAX_VALUE;
@@ -30,6 +34,7 @@ public final class FrameStore {
             }
             // An entry that vanished concurrently is already gone; re-check the bound rather than assume.
             if (oldest == null || ENTRIES.remove(oldest) == null) break;
+            PhoneUseLog.event("frame_evicted", "frameRef", PhoneUseLog.reference(oldest));
         }
         String id = UUID.randomUUID().toString();
         byte[] jpeg = android.util.Base64.decode(frame.image(), android.util.Base64.DEFAULT);
@@ -37,15 +42,27 @@ public final class FrameStore {
         android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length, bounds);
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw new IllegalStateException("截图编码无效");
         byte[] bytes = new JSONObject().put("image", frame.image()).put("width", bounds.outWidth).put("height", bounds.outHeight)
+            .put("diagnostics", PhoneUseLog.metadata())
             .toString().getBytes(StandardCharsets.UTF_8);
         ENTRIES.put(id, new Entry(owner, now + 60000, bytes));
+        PhoneUseLog.event("frame_stored", "frameRef", PhoneUseLog.reference(id), "expiresInMs", 60000,
+            "pending", ENTRIES.size(), "payloadBytes", bytes.length);
         return "MIAIPLUS_FRAME:" + id;
     }
     public static byte[] take(String id, int caller) throws java.io.FileNotFoundException {
         Entry entry = ENTRIES.get(id);
         if (entry == null || entry.expires < android.os.SystemClock.elapsedRealtime()
-            || (entry.owner != caller && caller != android.os.Process.myUid())) throw new java.io.FileNotFoundException("Frame unavailable");
-        if (!ENTRIES.remove(id, entry)) throw new java.io.FileNotFoundException("Frame already consumed");
+            || (entry.owner != caller && caller != android.os.Process.myUid())) {
+            PhoneUseLog.event("frame_read_failed", "frameRef", PhoneUseLog.reference(id), "reason",
+                entry == null ? "missing_or_consumed" : entry.expires < android.os.SystemClock.elapsedRealtime() ? "expired" : "wrong_uid");
+            throw new java.io.FileNotFoundException("Frame unavailable");
+        }
+        if (!ENTRIES.remove(id, entry)) {
+            PhoneUseLog.event("frame_read_failed", "frameRef", PhoneUseLog.reference(id), "reason", "already_consumed");
+            throw new java.io.FileNotFoundException("Frame already consumed");
+        }
+        PhoneUseLog.event("frame_read", "frameRef", PhoneUseLog.reference(id),
+            "ageMs", android.os.SystemClock.elapsedRealtime() - (entry.expires - 60000), "payloadBytes", entry.bytes.length);
         return entry.bytes;
     }
     public static void clear() { ENTRIES.clear(); }

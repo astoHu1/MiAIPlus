@@ -441,6 +441,11 @@ private fun ControlPage(state: SettingsState, openSettings: (Boolean) -> Unit, o
             checked = state.guardEnabled, enabled = !state.guardChanging, onCheckedChange = { state.setGuard(it) })
         ArrowPreference(title = "应用权限", summary = "后台弹出界面", onClick = { openSettings(true) })
     }
+    Section("诊断") {
+        SwitchPreference(title = "Phone Use 详细日志", checked = state.config.phoneUseDetailedLog,
+            summary = "记录前台与虚拟屏的观察、动作、输入和截图传递；不记录页面正文或输入内容。关闭后停止记录，无需重启。",
+            onCheckedChange = { state.setOption(Config.PHONE_USE_LOG_KEY, it) })
+    }
     OverlayDialog(show = editSteps, title = "最大步数", summary = "设置 1–${Config.MAX_PHONE_USE_STEPS} 步，默认 30 步。", onDismissRequest = { editSteps = false }) {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Input("步数", steps, { steps = it }, type = KeyboardType.Number)

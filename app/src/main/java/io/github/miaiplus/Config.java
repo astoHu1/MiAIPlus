@@ -6,6 +6,7 @@ import java.util.Map;
 
 /** Credentials persist only in module-private storage; global mode shares them with the scoped native client in memory. */
 public final class Config {
+    public static final String PHONE_USE_LOG_KEY = "phoneUseDetailedLog";
     public static final String PHONE_USE_PERMISSION_MODE_KEY = "phoneUsePermissionMode";
     public static final String PHONE_USE_PERMISSION_MANUAL = "manual";
     public static final String PHONE_USE_PERMISSION_AUTO = "auto";
@@ -20,7 +21,7 @@ public final class Config {
     public static final int DEFAULT_DISPLAY_WIDTH = 1080;
     public static final int DEFAULT_DISPLAY_HEIGHT = 1920;
     public static final int DEFAULT_DISPLAY_DENSITY = 320;
-    public final boolean enabled, globalModel, backgroundDisplay;
+    public final boolean enabled, globalModel, backgroundDisplay, phoneUseDetailedLog;
     public final String endpoint, apiKey, model, protocol, planner, api, reasoning;
     public final String phoneUsePermissionMode;
     public final int maxSteps;
@@ -30,6 +31,7 @@ public final class Config {
     Config(SharedPreferences prefs) { this(prefs.getAll()); }
     Config(Map<String, ?> p) {
         enabled = Boolean.TRUE.equals(p.get("enabled"));
+        phoneUseDetailedLog = Boolean.TRUE.equals(p.get(PHONE_USE_LOG_KEY));
         // Default off: an existing installation keeps sending every task to the physical screen.
         backgroundDisplay = Boolean.TRUE.equals(p.get("backgroundDisplay"));
         Object permissionMode = p.get(PHONE_USE_PERMISSION_MODE_KEY);

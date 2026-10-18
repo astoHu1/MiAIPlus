@@ -73,6 +73,15 @@ public final class BridgeProviderConversationSettingsTest {
         prefs.edit().putInt("conversationTimeoutMinutes", 0).commit();
         assertEquals(0, settings().getInt("conversationTimeoutMinutes"));
     }
+    @Test public void diagnosticsSettingsExposeOnlyLiveOptInWithoutCredentials() {
+        assertFalse(provider.call("phone_use_log_settings", null, null).getBoolean("enabled"));
+        prefs.edit().putBoolean(Config.PHONE_USE_LOG_KEY, true).putString("apiKey", "fixture-secret").commit();
+        Bundle enabled = provider.call("phone_use_log_settings", null, null);
+        assertEquals(Set.of("enabled"), enabled.keySet());
+        assertTrue(enabled.getBoolean("enabled"));
+        prefs.edit().putBoolean(Config.PHONE_USE_LOG_KEY, false).commit();
+        assertFalse(provider.call("phone_use_log_settings", null, null).getBoolean("enabled"));
+    }
 
     @Test public void wakeSettingsDoNotExportModelCredentialsOrScreenContents() throws Exception {
         prefs.edit().putBoolean("globalModel", true).putString("endpoint", "https://example.invalid/v1")

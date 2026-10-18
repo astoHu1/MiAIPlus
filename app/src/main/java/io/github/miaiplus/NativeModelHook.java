@@ -10,6 +10,7 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
+import org.json.JSONObject;
 
 /** Pinned native model integration: retain stock messages, streaming, history and tool execution. */
 public final class NativeModelHook {
@@ -37,6 +38,7 @@ public final class NativeModelHook {
         modelConfig = value; fetchedAt = now; return value;
     }
     public static void install(Context context, ClassLoader loader, List<HookCallback.Unhook> hooks) throws Exception {
+        PhoneUseLog.initRemote(context);
         NativePhoneUseTool.install(context, loader, hooks);
         NativeTurnLifecycle.install(context, loader, hooks);
         NativeIntentHook.install(context, loader, hooks);
@@ -54,13 +56,18 @@ public final class NativeModelHook {
                     var matcher = FRAME.matcher(content);
                     if (!matcher.find()) return;
                     String id = matcher.group(1);
-                    Object nativeImage;
+                    LoadedImage nativeImage;
                     try { nativeImage = readImage(context, id, imageConstructor); }
-                    catch (Exception e) { param.args[2] = matcher.replaceAll("[截图传输失败，请停止并让用户接管]"); return; }
+                    catch (Exception e) {
+                        PhoneUseLog.event("image_attach_failed", "route", "message", "frameRef", PhoneUseLog.reference(id));
+                        PhoneUseLog.failure("image_read", e);
+                        param.args[2] = matcher.replaceAll("[截图传输失败，请停止并让用户接管]"); return;
+                    }
                     List<Object> images = new ArrayList<>();
                     if (param.args[6] instanceof List<?> old) images.addAll(old);
-                    images.add(nativeImage); param.args[6] = images;
+                    images.add(nativeImage.value()); param.args[6] = images;
                     param.args[2] = matcher.replaceAll("[本步截图已附加为原生图片]");
+                    nativeImage.attached("message", images.size());
                 }
             }));
         }
@@ -76,12 +83,15 @@ public final class NativeModelHook {
                 var marker = FRAME.matcher(text);
                 if (marker.find()) {
                     try {
-                        Object nativeImage = readImage(context, marker.group(1), imageConstructor);
+                        LoadedImage nativeImage = readImage(context, marker.group(1), imageConstructor);
                         List<Object> images = new ArrayList<>();
                         if (param.args[2] instanceof List<?> old) images.addAll(old);
-                        images.add(nativeImage); param.args[2] = images;
+                        images.add(nativeImage.value()); param.args[2] = images;
                         param.args[0] = marker.replaceAll("[本步截图已附加为原生图片]");
+                        nativeImage.attached("tool_success", images.size());
                     } catch (Exception unavailable) {
+                        PhoneUseLog.event("image_attach_failed", "route", "tool_success", "frameRef", PhoneUseLog.reference(marker.group(1)));
+                        PhoneUseLog.failure("image_read", unavailable);
                         param.args[0] = marker.replaceAll("[截图不可用；仅可依据无障碍树，无法判断时接管]");
                     }
                 }
@@ -250,7 +260,15 @@ public final class NativeModelHook {
         }
         return configConstructor(loader).newInstance(arguments);
     }
-    private static Object readImage(Context context, String id, java.lang.reflect.Constructor<?> constructor) throws Exception {
+    private record LoadedImage(Object value, JSONObject diagnostics, String frameRef) {
+        void attached(String route, int count) {
+            try (PhoneUseLog.Scope ignored = PhoneUseLog.fromMetadata(diagnostics)) {
+                PhoneUseLog.event("image_attached", "route", route, "frameRef", frameRef, "images", count);
+            }
+        }
+    }
+    private static LoadedImage readImage(Context context, String id, java.lang.reflect.Constructor<?> constructor) throws Exception {
+        PhoneUseLog.event("image_read_begin", "frameRef", PhoneUseLog.reference(id));
         try (var in = context.getContentResolver().openInputStream(Uri.parse(BridgeProvider.URI + "/frame/" + id));
              var out = new java.io.ByteArrayOutputStream()) {
             if (in == null) throw new IllegalStateException("控屏截图不可用");
@@ -260,7 +278,14 @@ public final class NativeModelHook {
                 out.write(buffer, 0, n);
             }
             var frame = new org.json.JSONObject(out.toString(java.nio.charset.StandardCharsets.UTF_8));
-            return constructor.newInstance(frame.getString("image"), null, "image/jpeg", frame.getInt("width"), frame.getInt("height"), null);
+            JSONObject diagnostics = frame.optJSONObject("diagnostics");
+            try (PhoneUseLog.Scope ignored = PhoneUseLog.fromMetadata(diagnostics)) {
+                PhoneUseLog.rememberImage(frame.getString("image"));
+                PhoneUseLog.event("image_read_complete", "frameRef", PhoneUseLog.reference(id),
+                    "payloadBytes", out.size(), "imageWidth", frame.getInt("width"), "imageHeight", frame.getInt("height"));
+            }
+            return new LoadedImage(constructor.newInstance(frame.getString("image"), null, "image/jpeg",
+                frame.getInt("width"), frame.getInt("height"), null), diagnostics, PhoneUseLog.reference(id));
         }
     }
     static boolean canReload() { return NativeResponsesAdapter.isIdle(); }
@@ -269,6 +294,7 @@ public final class NativeModelHook {
         return memoryTransport.get() && setting != null ? setting.getString(ModelHeaders.SESSION) : null;
     }
     static synchronized void dispose() {
+        PhoneUseLog.disposeRemote();
         for (Object http : externalHttp.values()) Reflector.callMethod(http, "close");
         externalHttp.clear(); modelConfig = null; fetchedAt = 0;
         delegating.remove(); memoryTransport.remove(); memorySettings.remove();

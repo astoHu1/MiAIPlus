@@ -39,6 +39,30 @@ import java.util.concurrent.atomic.AtomicInteger
 class SettingsUiTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
+    @Test fun detailedLogSwitchPersistsAndCanBeDisabledWithoutChangingExecutionSettings() {
+        var state = ViewModelProvider(compose.activity)[SettingsState::class.java]
+        val background = state.config.backgroundDisplay
+        val permission = state.config.phoneUsePermissionMode
+        compose.onNodeWithTag("tab-Control").performClick()
+        compose.onNodeWithText("Phone Use 详细日志").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(true, state.config.phoneUseDetailedLog) }
+        compose.activityRule.scenario.recreate()
+        state = ViewModelProvider(compose.activity)[SettingsState::class.java]
+        compose.onNodeWithTag("tab-Control").performClick()
+        compose.onNodeWithText("Phone Use 详细日志").performScrollTo()
+        compose.runOnIdle {
+            assertEquals(true, state.config.phoneUseDetailedLog)
+            assertEquals(background, state.config.backgroundDisplay)
+            assertEquals(permission, state.config.phoneUsePermissionMode)
+        }
+        capture("control-phone-use-log")
+        compose.onNodeWithText("Phone Use 详细日志").performClick()
+        compose.runOnIdle {
+            assertEquals(false, state.config.phoneUseDetailedLog)
+            assertEquals(false, io.github.miaiplus.Config(state.getApplication<Application>()).phoneUseDetailedLog)
+        }
+    }
+
     @Test fun permissionPresetsSaveAllModesSurviveRecreationAndRejectInvalidValues() {
         var state = ViewModelProvider(compose.activity)[SettingsState::class.java]
         compose.onNodeWithTag("tab-Control").performClick()

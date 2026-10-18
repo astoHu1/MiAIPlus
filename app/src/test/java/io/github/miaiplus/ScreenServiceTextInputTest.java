@@ -41,6 +41,22 @@ public class ScreenServiceTextInputTest {
 
     @After public void tearDown() {
         ScreenService.instance = null;
+        io.github.miaiplus.Config.prefs(service).edit().remove(io.github.miaiplus.Config.PHONE_USE_LOG_KEY).commit();
+    }
+
+    @Test public void loggingPreservesTreeAndRefusedInputAndIdentifiesMissingFocusWithoutPageText() {
+        PhoneUseLog.init(service);
+        String before = ScreenService.treeOnDisplay(7, PACKAGE);
+        io.github.miaiplus.Config.prefs(service).edit().putBoolean(io.github.miaiplus.Config.PHONE_USE_LOG_KEY, true).commit();
+        org.robolectric.shadows.ShadowLog.clear();
+        assertEquals(before, ScreenService.treeOnDisplay(7, PACKAGE));
+        AccessibilityNodeInfo field = node(true, "private-existing-input");
+        Shadows.shadowOf(root).addChild(field);
+        assertFalse(ScreenService.setTextOnDisplay(7, PACKAGE, "private-replacement"));
+        assertTrue(Shadows.shadowOf(field).getPerformedActions().isEmpty());
+        String logs = org.robolectric.shadows.ShadowLog.getLogsForTag(PhoneUseLog.TAG).toString();
+        assertTrue(logs.contains("no_input_focus"));
+        assertFalse(logs.contains("private-existing-input")); assertFalse(logs.contains("private-replacement"));
     }
 
     @Test public void textVerificationRequiresAnExactReadableReplacementIncludingClearing() throws Exception {

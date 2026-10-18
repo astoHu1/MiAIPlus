@@ -177,8 +177,17 @@ public final class BackgroundDisplay implements AutoCloseable {
 
     /** Sends one command and waits for its reply. A dead helper or a mismatched token becomes BACKEND_DIED. */
     private JSONObject request(RunState run, String verb, String arguments) throws Exception {
+        long started = android.os.SystemClock.elapsedRealtime();
+        PhoneUseLog.event("helper_request", "verb", verb, "displayId", session == null ? -1 : session.displayId);
         synchronized (requestLock) {
-            return requestLocked(run, verb, arguments);
+            try {
+                JSONObject result = requestLocked(run, verb, arguments);
+                PhoneUseLog.event("helper_reply", "verb", verb, "status", result.optString("status"),
+                    "source", result.optString("source"), "frames", result.optString("frames"),
+                    "foreground", result.optString("foreground"), "focus", verb.equals("focus") ? result.optString("display") : "",
+                    "durationMs", android.os.SystemClock.elapsedRealtime() - started);
+                return result;
+            } catch (Exception failure) { PhoneUseLog.failure("helper_" + verb, failure); throw failure; }
         }
     }
 
@@ -197,8 +206,10 @@ public final class BackgroundDisplay implements AutoCloseable {
                 if (reply == null) throw new IllegalStateException(ERROR_BACKEND_DIED + "：后台显示进程已退出");
                 JSONObject parsed = new JSONObject(reply);
                 if (parsed.optLong("token") != token) continue; // Late reply for a command that already timed out.
-                if ("error".equals(parsed.optString("status")))
+                if ("error".equals(parsed.optString("status"))) {
+                    PhoneUseLog.event("helper_error", "verb", verb, "code", parsed.optString("code"));
                     throw failure(parsed.optString("code"), parsed.optString("message"));
+                }
                 return parsed;
             }
             if (!helper.isAlive()) throw new IllegalStateException(ERROR_BACKEND_DIED + "：后台显示进程已退出");
@@ -245,6 +256,8 @@ public final class BackgroundDisplay implements AutoCloseable {
      * tree is empty, which the caller reports as a vision-only observation instead of borrowing the physical tree.
      */
     public ScreenService.Frame observe(RunState run) throws Exception {
+        PhoneUseLog.observation();
+        long started = android.os.SystemClock.elapsedRealtime();
         File raw = new File(frameDirectory, "frame-" + session.generation.substring(0, 8) + "-" + System.nanoTime() + ".png");
         File jpeg = null;
         try {
@@ -254,11 +267,17 @@ public final class BackgroundDisplay implements AutoCloseable {
             if (bytes.length == 0) throw new IllegalStateException(ERROR_DISPLAY_LOST + "：后台截图内容为空");
             String foreground = reply.optString("foreground");
             String tree = ScreenService.treeOnDisplay(session.displayId, foreground);
-            return ScreenService.Frame.background(
+            ScreenService.Frame frame = ScreenService.Frame.background(
                 android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP), tree,
                 reply.optInt("displayWidth", session.width), reply.optInt("displayHeight", session.height),
                 reply.optInt("imageWidth", session.width), reply.optInt("imageHeight", session.height),
                 foreground, session.displayId, session.generation);
+            PhoneUseLog.frame(frame);
+            PhoneUseLog.event("capture_complete", "displayId", session.displayId, "source", reply.optString("source"),
+                "frames", reply.optString("frames"), "durationMs", android.os.SystemClock.elapsedRealtime() - started);
+            return frame;
+        } catch (Exception failure) {
+            PhoneUseLog.failure("capture_background", failure); throw failure;
         } finally {
             // Exactly one captured pair per observation; leaving them would grow the cache without bound.
             raw.delete();
@@ -332,6 +351,7 @@ public final class BackgroundDisplay implements AutoCloseable {
     @Override public void close() {
         synchronized (LOCK) {
             if (closed) return;
+            PhoneUseLog.event("display_close", "displayId", session == null ? -1 : session.displayId);
             closed = true;
             if (active == this) active = null;
             try { request(null, "destroy", null); }

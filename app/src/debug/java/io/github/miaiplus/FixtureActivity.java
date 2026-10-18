@@ -18,9 +18,16 @@ public final class FixtureActivity extends Activity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         LinearLayout root = new LinearLayout(this); root.setPadding(40,100,40,40); root.setOrientation(LinearLayout.VERTICAL);
+        // API 35+ enforces edge-to-edge. Keep test targets below the status bar/touch region.
+        root.setOnApplyWindowInsetsListener((view, insets) -> {
+            var bars = insets.getInsets(android.view.WindowInsets.Type.systemBars());
+            view.setPadding(40 + bars.left, 100 + bars.top, 40 + bars.right, 40 + bars.bottom);
+            return insets;
+        });
         TextView title = new TextView(this); title.setText("MiAIPlus device test fixture"); root.addView(title);
         input = new EditText(this); input.setSingleLine(true); input.setHint("设备测试输入框"); root.addView(input);
         setContentView(root);
+        root.requestApplyInsets();
         lastTouch = "none"; current = this;
     }
     @Override public void onDestroy() { if (current == this) { current = null; input = null; } super.onDestroy(); }

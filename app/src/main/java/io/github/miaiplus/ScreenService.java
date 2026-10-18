@@ -51,6 +51,8 @@ public final class ScreenService extends AccessibilityService {
 
     @Override public void onServiceConnected() {
         instance = this;
+        PhoneUseLog.init(this);
+        PhoneUseLog.event("accessibility_connected");
     }
     public static boolean isHealthy() {
         ScreenService service = instance;
@@ -73,7 +75,7 @@ public final class ScreenService extends AccessibilityService {
         }
     }
     private <T> T onMain(Callable<T> callable) throws Exception {
-        return MainThread.call(callable);
+        return MainThread.call(PhoneUseLog.propagate(callable));
     }
     private void unlocked(RunState run) {
         run.check();
@@ -86,11 +88,16 @@ public final class ScreenService extends AccessibilityService {
                 && window.getType() != android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD
                 && window.getType() != android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) {
                 AccessibilityNodeInfo root = window.getRoot();
-                if (root == null || !root.refresh()) throw new IllegalStateException("当前窗口无法识别，请手动接管");
+                if (root == null || !root.refresh()) {
+                    PhoneUseLog.window("physical_tree", window, root, "root_missing_or_stale");
+                    throw new IllegalStateException("当前窗口无法识别，请手动接管");
+                }
+                PhoneUseLog.window("physical_tree", window, root, "selected_focused");
                 return root;
             }
         }
         AccessibilityNodeInfo root = getRootInActiveWindow();
+        PhoneUseLog.event("physical_tree_fallback", "rootPresent", root != null);
         if (root != null && !root.refresh()) throw new IllegalStateException("窗口信息已失效，请重新发起任务");
         return root;
     }
@@ -117,34 +124,48 @@ public final class ScreenService extends AccessibilityService {
      */
     static String treeOnDisplay(int displayId, String expectedPackage) {
         ScreenService service = instance;
-        if (service == null) return "";
+        if (service == null) { PhoneUseLog.event("tree_empty", "reason", "service_missing", "displayId", displayId); return ""; }
         try {
             return service.onMain(() -> {
                 java.util.List<android.view.accessibility.AccessibilityWindowInfo> windows = null;
                 try {
                     var byDisplay = service.getWindowsOnAllDisplays();
                     if (byDisplay != null) windows = byDisplay.get(displayId);
-                } catch (RuntimeException unsupported) { /* Older ROMs may not implement this; treat as no tree. */ }
-                if (windows == null || windows.isEmpty()) return "";
+                } catch (RuntimeException unsupported) { PhoneUseLog.failure("tree_windows", unsupported); }
+                PhoneUseLog.event("tree_windows", "displayId", displayId, "expectedPackage", expectedPackage,
+                    "count", windows == null ? -1 : windows.size());
+                if (windows == null || windows.isEmpty()) {
+                    PhoneUseLog.event("tree_empty", "reason", "no_windows", "displayId", displayId); return "";
+                }
                 AccessibilityNodeInfo fallback = null;
                 for (var window : windows) {
                     if (window.getType() == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD
-                        || window.getType() == android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) continue;
+                        || window.getType() == android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) {
+                        PhoneUseLog.window("tree", window, null, "excluded_type"); continue;
+                    }
                     AccessibilityNodeInfo root = window.getRoot();
-                    if (root == null || !root.refresh()) continue;
+                    if (root == null) { PhoneUseLog.window("tree", window, null, "root_missing"); continue; }
+                    if (!root.refresh()) { PhoneUseLog.window("tree", window, root, "refresh_failed"); continue; }
+                    PhoneUseLog.window("tree", window, root, "candidate");
                     if (window.isFocused()) {
                         StringBuilder builder = new StringBuilder();
-                        dump(root, builder, new int[]{0});
+                        int[] visited = {0};
+                        dump(root, builder, visited);
+                        PhoneUseLog.event("tree_selected", "via", "focused", "windowId", window.getId(),
+                            "nodes", visited[0], "chars", builder.length());
                         return builder.toString();
                     }
                     if (fallback == null && matchesPackage(expectedPackage, root)) fallback = root;
                 }
-                if (fallback == null) return "";
+                if (fallback == null) { PhoneUseLog.event("tree_empty", "reason", "no_matching_root"); return ""; }
                 StringBuilder builder = new StringBuilder();
-                dump(fallback, builder, new int[]{0});
+                int[] visited = {0};
+                dump(fallback, builder, visited);
+                PhoneUseLog.event("tree_selected", "via", "package_fallback", "nodes", visited[0], "chars", builder.length());
                 return builder.toString();
             });
         } catch (Exception unavailable) {
+            PhoneUseLog.failure("tree", unavailable);
             return "";
         }
     }
@@ -166,7 +187,8 @@ public final class ScreenService extends AccessibilityService {
      */
     static boolean setTextOnDisplay(int displayId, String expectedPackage, String text) {
         ScreenService service = instance;
-        if (service == null) return false;
+        if (service == null) { PhoneUseLog.event("input_failed", "reason", "service_missing"); return false; }
+        PhoneUseLog.event("input_begin", "displayId", displayId, "expectedPackage", expectedPackage, "textLength", text == null ? -1 : text.length());
         try {
             EditableTarget edited = service.onMain(() -> {
                 java.util.List<android.view.accessibility.AccessibilityWindowInfo> windows = null;
@@ -174,41 +196,60 @@ public final class ScreenService extends AccessibilityService {
                     var byDisplay = service.getWindowsOnAllDisplays();
                     if (byDisplay != null) windows = byDisplay.get(displayId);
                 } catch (RuntimeException unsupported) {
+                    PhoneUseLog.failure("input_windows", unsupported);
                     return null;
                 }
-                if (windows == null) return null;
+                if (windows == null) { PhoneUseLog.event("input_failed", "reason", "no_windows"); return null; }
+                PhoneUseLog.event("input_windows", "displayId", displayId, "count", windows.size());
                 for (var window : windows) {
                     if (window.getType() == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD
                         || window.getType() == android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) continue;
                     AccessibilityNodeInfo root = window.getRoot();
-                    if (root == null || !root.refresh()) continue;
-                    if (!matchesPackage(expectedPackage, root)) continue;
+                    if (root == null) { PhoneUseLog.window("input", window, null, "root_missing"); continue; }
+                    if (!root.refresh()) { PhoneUseLog.window("input", window, root, "refresh_failed"); continue; }
+                    if (!matchesPackage(expectedPackage, root)) {
+                        PhoneUseLog.window("input", window, root, "package_mismatch"); continue;
+                    }
                     AccessibilityNodeInfo target = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
-                    if (target == null || !target.isEditable() || target.isPassword()
-                        || !target.isVisibleToUser() || !matchesPackage(expectedPackage, target)) continue;
+                    if (target == null) { PhoneUseLog.event("input_candidate", "reason", "no_input_focus", "windowId", window.getId()); continue; }
+                    if (!target.isEditable()) { PhoneUseLog.event("input_candidate", "reason", "not_editable", "windowId", window.getId()); continue; }
+                    if (target.isPassword()) { PhoneUseLog.event("input_candidate", "reason", "password", "windowId", window.getId()); continue; }
+                    if (!target.isVisibleToUser()) { PhoneUseLog.event("input_candidate", "reason", "not_visible", "windowId", window.getId()); continue; }
+                    if (!matchesPackage(expectedPackage, target)) { PhoneUseLog.event("input_candidate", "reason", "target_package_mismatch", "windowId", window.getId()); continue; }
                     EditableTarget identity = new EditableTarget(window.getId(), target);
                     Bundle arguments = new Bundle();
                     arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text);
-                    return target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments) ? identity : null;
+                    boolean accepted = target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments);
+                    PhoneUseLog.event("input_set_text", "windowId", window.getId(), "accepted", accepted);
+                    return accepted ? identity : null;
                 }
                 return null;
             });
-            if (edited == null) return false;
+            if (edited == null) { PhoneUseLog.event("input_failed", "reason", "no_accepted_target"); return false; }
             // The read runs outside the main thread and re-enumerates the display's windows every attempt. Two
             // reasons, both learned from a write that landed but was reported as a failure: the window object is
             // stale once the app rebuilds its hierarchy in response to the edit, and an edit is applied on the
             // view's next frame rather than the moment it is accepted. Waiting here also keeps a sleep off the
             // accessibility service's main thread, which an ANR would consume.
             long deadline = android.os.SystemClock.uptimeMillis() + 1200;
+            int attempts = 0;
             while (true) {
-                if (textMatches(readTextOnDisplay(service, displayId, expectedPackage, edited), text)) return true;
-                if (android.os.SystemClock.uptimeMillis() >= deadline) return false;
+                EditableValue actual = readTextOnDisplay(service, displayId, expectedPackage, edited);
+                boolean matches = textMatches(actual, text);
+                PhoneUseLog.event("input_readback", "attempt", ++attempts, "nodePresent", actual != null && actual.present(),
+                    "readable", actual != null && actual.text() != null, "matches", matches);
+                if (matches) return true;
+                if (android.os.SystemClock.uptimeMillis() >= deadline) {
+                    PhoneUseLog.event("input_failed", "reason", "readback_timeout", "attempts", attempts); return false;
+                }
                 Thread.sleep(80);
             }
         } catch (InterruptedException interrupted) {
+            PhoneUseLog.failure("input_interrupted", interrupted);
             Thread.currentThread().interrupt();
             return false;
         } catch (Exception unavailable) {
+            PhoneUseLog.failure("input", unavailable);
             return false;
         }
     }
@@ -227,18 +268,24 @@ public final class ScreenService extends AccessibilityService {
                 var byDisplay = service.getWindowsOnAllDisplays();
                 if (byDisplay != null) windows = byDisplay.get(displayId);
             } catch (RuntimeException unsupported) {
+                PhoneUseLog.failure("input_readback_windows", unsupported);
                 return null;
             }
-            if (windows == null) return null;
+            if (windows == null) { PhoneUseLog.event("input_readback_unavailable", "reason", "no_windows"); return null; }
             for (var window : windows) {
                 if (window.getId() != edited.windowId()) continue;
                 if (window.getType() == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD
                     || window.getType() == android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) continue;
                 AccessibilityNodeInfo root = window.getRoot();
-                if (root == null || !root.refresh()) continue;
-                if (!matchesPackage(expectedPackage, root)) continue;
+                if (root == null || !root.refresh()) {
+                    PhoneUseLog.window("input_readback", window, root, "root_missing_or_stale"); continue;
+                }
+                if (!matchesPackage(expectedPackage, root)) {
+                    PhoneUseLog.window("input_readback", window, root, "package_mismatch"); continue;
+                }
                 return readBackText(root, edited.node());
             }
+            PhoneUseLog.event("input_readback_unavailable", "reason", "original_window_missing_or_unreadable");
             return null;
         });
     }
@@ -252,7 +299,10 @@ public final class ScreenService extends AccessibilityService {
      */
     private static EditableValue readBackText(AccessibilityNodeInfo root, AccessibilityNodeInfo original) {
         AccessibilityNodeInfo node = findSameNode(root, original, new int[]{0});
-        if (node == null || !node.isEditable() || node.isPassword()) return null;
+        if (node == null) { PhoneUseLog.event("input_readback_unavailable", "reason", "original_node_missing"); return null; }
+        if (!node.isEditable() || node.isPassword()) {
+            PhoneUseLog.event("input_readback_unavailable", "reason", "original_node_ineligible"); return null;
+        }
         CharSequence value = node.getText();
         return value == null ? new EditableValue(null, node.isEditable()) : new EditableValue(value.toString(), true);
     }
@@ -300,6 +350,17 @@ public final class ScreenService extends AccessibilityService {
     }
 
     public synchronized Frame capture(RunState run) throws Exception {
+        PhoneUseLog.observation();
+        long started = android.os.SystemClock.elapsedRealtime();
+        try {
+            Frame frame = capturePhysical(run);
+            PhoneUseLog.frame(frame);
+            PhoneUseLog.event("capture_complete", "displayId", 0, "source", "accessibility",
+                "durationMs", android.os.SystemClock.elapsedRealtime() - started);
+            return frame;
+        } catch (Exception failure) { PhoneUseLog.failure("capture_physical", failure); throw failure; }
+    }
+    private Frame capturePhysical(RunState run) throws Exception {
         unlocked(run);
         awaitCaptureInterval(lastCaptureAt, new CaptureTiming() {
             @Override public long now() { return android.os.SystemClock.elapsedRealtime(); }
@@ -327,7 +388,10 @@ public final class ScreenService extends AccessibilityService {
                     finally { bitmap.recycle(); }
                 } catch (Throwable e) { f.completeExceptionally(e); }
             }
-            @Override public void onFailure(int code) { f.completeExceptionally(new IllegalStateException("无法截图（安全窗口/服务权限），错误码 " + code)); }
+            @Override public void onFailure(int code) {
+                PhoneUseLog.event("capture_failed", "displayId", 0, "code", code);
+                f.completeExceptionally(new IllegalStateException("无法截图（安全窗口/服务权限），错误码 " + code));
+            }
         });
         Frame frame = f.get(5, TimeUnit.SECONDS);
         run.check(); return frame;
@@ -542,6 +606,13 @@ public final class ScreenService extends AccessibilityService {
         execute(action, frame, run, false);
     }
     public void execute(Action action, Frame frame, RunState run, boolean systemDialogApproved) throws Exception {
+        PhoneUseLog.action("action_begin", action, frame);
+        try {
+            executePhysical(action, frame, run, systemDialogApproved);
+            PhoneUseLog.action("action_complete", action, frame);
+        } catch (Exception failure) { PhoneUseLog.failure("action_physical_" + action.name, failure); throw failure; }
+    }
+    private void executePhysical(Action action, Frame frame, RunState run, boolean systemDialogApproved) throws Exception {
         unlocked(run);
         if (!action.name.equals("launch") && !action.name.equals("wait")) onMain(() -> {
             unlocked(run);
@@ -571,9 +642,13 @@ public final class ScreenService extends AccessibilityService {
                     verifySystemDialog(action, frame, root, systemDialogApproved);
                     verifyActionTarget(action, frame, root);
                     AccessibilityNodeInfo focused = root == null ? null : root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
-                    if (focused == null || !focused.isEditable() || focused.isPassword()) return false;
+                    if (focused == null || !focused.isEditable() || focused.isPassword()) {
+                        PhoneUseLog.event("input_failed", "displayId", 0, "reason", "ineligible_focus"); return false;
+                    }
                     Bundle b = new Bundle(); b.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, action.data.getString("text"));
-                    return focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, b);
+                    boolean accepted = focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, b);
+                    PhoneUseLog.event("input_set_text", "displayId", 0, "accepted", accepted);
+                    return accepted;
                 });
                 if (!ok) throw new IllegalStateException("当前焦点不可编辑或为密码框，请手动接管");
             }
