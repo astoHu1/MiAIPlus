@@ -1,4 +1,4 @@
-# MiAIPlus
+# <img src="docs/images/module-icon-logo.png" width="48" height="48" alt="MiAIPlus 图标"> MiAIPlus
 
 为超级小爱增加完善高自由度无限制的手机操作工具，也可接入你自己的模型服务。默认使用小爱当前模型，**无需额外 API**。
 
