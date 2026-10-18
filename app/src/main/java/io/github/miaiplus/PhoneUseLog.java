@@ -16,6 +16,14 @@ import org.json.JSONObject;
 final class PhoneUseLog {
     static final String TAG = "MiAIPlusPhoneUse";
     private static volatile SharedPreferences preferences;
+    private static volatile DiagnosticLogStore store;
+    private static final AtomicLong hostDropped = new AtomicLong();
+    private static final AtomicLong hostErrors = new AtomicLong();
+    private static final AtomicLong remoteGeneration = new AtomicLong();
+    private static final java.util.concurrent.ThreadPoolExecutor delivery = new java.util.concurrent.ThreadPoolExecutor(
+        0, 1, 30, java.util.concurrent.TimeUnit.SECONDS, new java.util.concurrent.ArrayBlockingQueue<>(256), runnable -> {
+            Thread thread = new Thread(runnable, "MiAIPlus-log-delivery"); thread.setDaemon(true); return thread;
+        });
     private static volatile java.lang.ref.WeakReference<Context> remoteContext = new java.lang.ref.WeakReference<>(null);
     private static volatile boolean remoteEnabled;
     private static volatile long remoteCheckedAt = -1;
@@ -25,7 +33,10 @@ final class PhoneUseLog {
     record Trace(String session, int step, String observation) { }
 
     static void init(Context context) {
-        try { preferences = Config.prefs(context.getApplicationContext()); }
+        try {
+            preferences = Config.prefs(context.getApplicationContext());
+            store = DiagnosticLogStore.get(context);
+        }
         catch (RuntimeException ignored) { /* Diagnostics are optional. */ }
     }
     static void initRemote(Context context) {
@@ -34,6 +45,7 @@ final class PhoneUseLog {
         remoteContext = new java.lang.ref.WeakReference<>(application);
     }
     static void disposeRemote() {
+        remoteGeneration.incrementAndGet(); delivery.getQueue().clear();
         remoteContext.clear(); remoteEnabled = false; remoteCheckedAt = -1;
         synchronized (images) { images.clear(); }
     }
@@ -85,7 +97,9 @@ final class PhoneUseLog {
     static void event(String event, Object... fields) {
         if (!enabled()) return;
         try {
-            JSONObject record = new JSONObject().put("event", event).put("elapsedMs", SystemClock.elapsedRealtime());
+            JSONObject record = new JSONObject().put("event", event).put("elapsedMs", SystemClock.elapsedRealtime())
+                .put("time", System.currentTimeMillis()).put("pid", android.os.Process.myPid())
+                .put("source", preferences == null ? "host" : "module");
             Trace trace = current.get();
             if (trace != null) record.put("session", trace.session()).put("step", trace.step()).put("observation", trace.observation());
             for (int i = 0; i + 1 < fields.length; i += 2) {
@@ -94,6 +108,22 @@ final class PhoneUseLog {
                 record.put(String.valueOf(fields[i]), value);
             }
             Log.i(TAG, record.toString());
+            DiagnosticLogStore local = store;
+            if (preferences != null && local != null) local.append(record.toString());
+            else {
+                long generation = remoteGeneration.get();
+                String line = record.put("hostDropped", hostDropped.get()).put("hostDeliveryErrors", hostErrors.get()).toString();
+                try {
+                    delivery.execute(() -> {
+                        Context context = remoteContext.get();
+                        if (generation != remoteGeneration.get() || context == null) return;
+                        try {
+                            Bundle data = new Bundle(); data.putString("record", line);
+                            context.getContentResolver().call(BridgeProvider.URI, "phone_use_log_append", null, data);
+                        } catch (RuntimeException | LinkageError failure) { hostErrors.incrementAndGet(); }
+                    });
+                } catch (java.util.concurrent.RejectedExecutionException failure) { hostDropped.incrementAndGet(); }
+            }
         } catch (Exception | LinkageError ignored) { /* Never fail an action because logging failed. */ }
     }
     static String reference(String value) {

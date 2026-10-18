@@ -39,6 +39,29 @@ import java.util.concurrent.atomic.AtomicInteger
 class SettingsUiTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
+    @Test fun homeLogsShowsFiltersDetailsAndClearConfirmation() {
+        val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
+        val store = DiagnosticLogStore.get(state.getApplication<Application>())
+        store.clear()
+        store.append("""{"event":"tree_empty","source":"module","time":1792272000123,"session":"7d62b401","step":3,"reason":"no_windows","displayId":2}""")
+        store.append("""{"event":"image_attached","source":"host","time":1792272000250,"session":"7d62b401","step":3,"images":1}""")
+        compose.onNodeWithText("日志", useUnmergedTree = true).performScrollTo().performClick()
+        compose.waitUntil(5000) { compose.waitForIdle(); state.logs.entries.size == 2 }
+        capture("home-detailed-logs")
+        compose.onNodeWithText("tree_empty").performScrollTo().performClick()
+        compose.onNodeWithText("no_windows", substring = true).assertExists()
+        capture("home-detailed-logs-details")
+        compose.onNodeWithText("模块", substring = false).performScrollTo().performClick()
+        compose.onNodeWithText("image_attached").assertDoesNotExist()
+        compose.onNodeWithText("清空", substring = false).performScrollTo().performClick()
+        compose.onNodeWithText("取消", substring = false).performClick()
+        compose.runOnIdle { assertEquals(2, store.snapshot().lines().size) }
+        compose.onNodeWithText("清空", substring = false).performClick()
+        compose.onNodeWithText("清空日志", substring = false).performClick()
+        compose.waitUntil(5000) { compose.waitForIdle(); state.logs.entries.isEmpty() && !state.logs.busy }
+        assertEquals(0, store.snapshot().lines().size)
+    }
+
     @Test fun detailedLogSwitchPersistsAndCanBeDisabledWithoutChangingExecutionSettings() {
         var state = ViewModelProvider(compose.activity)[SettingsState::class.java]
         val background = state.config.backgroundDisplay

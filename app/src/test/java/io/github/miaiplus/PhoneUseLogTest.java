@@ -58,6 +58,17 @@ public final class PhoneUseLogTest {
         assertTrue(output().contains("textLength")); assertTrue(output().contains("IllegalStateException"));
         assertFalse(output().contains("secret"));
     }
+    @Test public void persistentJournalSurvivesDisableAndOmitsPrivateActionContents() throws Exception {
+        var store = DiagnosticLogStore.get(RuntimeEnvironment.getApplication()); store.clear();
+        enable(true);
+        PhoneUseLog.action("action_proposed", new Action(new JSONObject().put("action", "type")
+            .put("text", "private-input-secret").put("message", "private-goal-secret")), null);
+        enable(false); PhoneUseLog.event("should_not_persist");
+        String text = String.join("\n", store.snapshot().lines());
+        assertTrue(text.contains("action_proposed")); assertTrue(text.contains("\"source\":\"module\""));
+        assertFalse(text.contains("secret")); assertFalse(text.contains("should_not_persist"));
+        store.clear();
+    }
     @Test public void hostSwitchWorksDuringApplicationAttachRefreshesAndFailsClosedWhenBridgeIsUnavailable() throws Exception {
         var application = RuntimeEnvironment.getApplication();
         LogSettingsProvider provider = new LogSettingsProvider();

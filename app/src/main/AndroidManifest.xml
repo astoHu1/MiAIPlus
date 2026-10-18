@@ -15,6 +15,10 @@
         </activity>
         <provider android:name=".BridgeProvider" android:authorities="io.github.miaiplus.bridge"
             android:exported="true" />
+        <provider android:name="androidx.core.content.FileProvider" android:authorities="io.github.miaiplus.log-files"
+            android:exported="false" android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/log_file_paths" />
+        </provider>
         <service android:name=".ScreenService" android:exported="true"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter><action android:name="android.accessibilityservice.AccessibilityService" /></intent-filter>

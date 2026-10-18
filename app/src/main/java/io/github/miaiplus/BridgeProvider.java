@@ -63,6 +63,20 @@ public final class BridgeProvider extends ContentProvider {
             b.putBoolean("enabled", PhoneUseLog.enabled());
             return b;
         }
+        if (method.equals("phone_use_log_append")) {
+            if (PhoneUseLog.enabled() && extras != null) {
+                String line = extras.getString("record");
+                if (line != null && line.length() <= DiagnosticLogStore.MAX_LINE_BYTES) {
+                    try {
+                        JSONObject record = new JSONObject(line);
+                        // Never trust the sending process to label a record as module-side.
+                        record.put("source", Binder.getCallingUid() == Process.myUid() ? "module" : "host");
+                        DiagnosticLogStore.get(getContext()).append(record.toString());
+                    } catch (org.json.JSONException ignored) { /* Invalid diagnostic data is discarded. */ }
+                }
+            }
+            return b;
+        }
         Config config = new Config(getContext());
         if (method.equals("hook_report")) {
             String report = extras == null ? "" : extras.getString("report", "");

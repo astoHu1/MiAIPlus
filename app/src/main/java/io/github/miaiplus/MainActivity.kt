@@ -78,9 +78,9 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class SettingsPage(val title: String, val depth: Int = 0) {
-    Home("MiAIPlus"), Model("模型 API"), Control("控屏"), Virtual("虚拟屏", 1), Status("运行状态", 1), Test("直接测试", 2);
+    Home("MiAIPlus"), Model("模型 API"), Control("控屏"), Virtual("虚拟屏", 1), Status("运行状态", 1), Test("直接测试", 2), Logs("日志", 1);
 
-    val tab: SettingsPage get() = when (this) { Virtual -> Control; Status, Test -> Home; else -> this }
+    val tab: SettingsPage get() = when (this) { Virtual -> Control; Status, Test, Logs -> Home; else -> this }
     val parent: SettingsPage get() = when (this) { Test -> Status; Virtual -> Control; else -> Home }
 }
 
@@ -158,7 +158,7 @@ private fun SettingsApp(state: SettingsState, openSettings: (Boolean) -> Unit, o
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
                     Column(
                         Modifier.widthIn(max = 680.dp).fillMaxWidth()
-                            .then(if (destination == SettingsPage.Model) Modifier else Modifier.verticalScroll(scroll)).imePadding()
+                            .then(if (destination == SettingsPage.Model || destination == SettingsPage.Logs) Modifier else Modifier.verticalScroll(scroll)).imePadding()
                             .padding(top = 8.dp, bottom = 24.dp),
                     ) {
                         state.error?.takeIf { destination != SettingsPage.Model }?.let { message ->
@@ -166,12 +166,13 @@ private fun SettingsApp(state: SettingsState, openSettings: (Boolean) -> Unit, o
                             Spacer(Modifier.height(12.dp))
                         }
                         when (destination) {
-                            SettingsPage.Home -> HomePage(state) { navigate(SettingsPage.Status) }
+                            SettingsPage.Home -> HomePage(state, { navigate(SettingsPage.Status) }, { navigate(SettingsPage.Logs) })
                             SettingsPage.Model -> ModelPage(state)
                             SettingsPage.Control -> ControlPage(state, openSettings) { navigate(SettingsPage.Virtual) }
                             SettingsPage.Virtual -> VirtualScreenPage(state)
                             SettingsPage.Status -> StatusPage(state, openSettings, { navigate(SettingsPage.Virtual) }) { navigate(SettingsPage.Test) }
                             SettingsPage.Test -> TestPage(state, onScreenTask)
+                            SettingsPage.Logs -> DiagnosticLogPage(state)
                         }
                     }
                 }
@@ -223,7 +224,7 @@ private fun PageTransition(page: SettingsPage, modifier: Modifier, content: @Com
 }
 
 @Composable
-private fun HomePage(state: SettingsState, openStatus: () -> Unit) {
+private fun HomePage(state: SettingsState, openStatus: () -> Unit, openLogs: () -> Unit) {
     var editConversationTimeout by remember { mutableStateOf(false) }
     var conversationTimeout by remember { mutableStateOf("") }
     val reported = state.hookRecordedAt > 0L
@@ -269,7 +270,10 @@ private fun HomePage(state: SettingsState, openStatus: () -> Unit) {
             })
     }
     Spacer(Modifier.height(16.dp))
-    Group { ArrowPreference(title = "运行状态", summary = "连接与诊断", onClick = openStatus) }
+    Group {
+        ArrowPreference(title = "日志", summary = "查看详细日志、保存或分享压缩包", onClick = openLogs)
+        ArrowPreference(title = "运行状态", summary = "连接与诊断", onClick = openStatus)
+    }
     OverlayDialog(show = editConversationTimeout, title = "自动新建对话",
         summary = "距上次操作超过设定时长，再次唤醒时新建对话；时长内继续同一对话。全屏和浮窗共用。支持 0–${Config.MAX_CONVERSATION_TIMEOUT_MINUTES} 分钟，0 关闭，默认 ${Config.DEFAULT_CONVERSATION_TIMEOUT_MINUTES} 分钟。",
         onDismissRequest = { editConversationTimeout = false; state.error = null }) {

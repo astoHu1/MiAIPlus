@@ -43,6 +43,115 @@ final class EndpointProfilesRunner {
 
     static void runDirect(Instrumentation test) { new EndpointProfilesRunner(test).runDirect(); }
 
+    static void runLogs(Instrumentation test) { new EndpointProfilesRunner(test).runLogs(); }
+
+    /** Run after authorized phone-use fixtures so the journal contains real module + host events. */
+    private void runLogs() {
+        var context = test.getTargetContext();
+        var prefs = Config.prefs(context);
+        boolean hadOption = prefs.contains(Config.PHONE_USE_LOG_KEY);
+        boolean original = prefs.getBoolean(Config.PHONE_USE_LOG_KEY, false);
+        Bundle result = new Bundle(); int code = Activity.RESULT_CANCELED;
+        File saved = null;
+        String download = null;
+        try {
+            Bundle health = context.getContentResolver().call(BridgeProvider.URI, "accessibility_health", null, null);
+            check(health != null && !health.getBoolean("busy") && !health.getBoolean("preparing"), "Stop active work before log UI checks");
+            var store = DiagnosticLogStore.get(context);
+            var retained = store.snapshot();
+            check(retained.lines().stream().anyMatch(line -> line.contains("\"source\":\"host\"")), "Missing persisted real host records");
+            check(retained.lines().stream().anyMatch(line -> line.contains("\"source\":\"module\"")), "Missing persisted real module records");
+            prefs.edit().putBoolean(Config.PHONE_USE_LOG_KEY, false).commit();
+            PhoneUseLog.event("disabled_viewer_test");
+            check(store.snapshot().lines().size() == retained.lines().size(), "Disabled logger appended records");
+            activity = (MainActivity) test.startActivitySync(new Intent(context, MainActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
+            onMain(() -> state = new ViewModelProvider(activity).get(SettingsState.class));
+            click("日志");
+            waitFor(() -> !state.getLogs().getLoading() && state.getLogs().getBytes() > 0, "Home log page did not load persisted records");
+            click("Phone Use 详细日志");
+            check(prefs.getBoolean(Config.PHONE_USE_LOG_KEY, false), "Home log toggle did not save");
+            PhoneUseLog.event("log_viewer_test", "reason", "fixture_metadata_only", "displayId", 2);
+            edit("", "log_viewer_test");
+            hideKeyboard();
+            click("刷新");
+            waitFor(() -> find(n -> !n.isEditable() && text(n).equals("log_viewer_test")) != null, "Search did not show event");
+            click("log_viewer_test");
+            check(findWithScroll(n -> text(n).contains("fixture_metadata_only")) != null, "Record did not expand");
+            capture("home-detailed-logs-device");
+            click("小爱");
+            check(find(n -> !n.isEditable() && text(n).equals("log_viewer_test")) == null, "Source filter ignored module event");
+            click("全部");
+            edit("log_viewer_test", "");
+            File directory = new File(context.getCacheDir(), "log-exports");
+            check(directory.isDirectory() || directory.mkdirs(), "Export directory unavailable");
+            saved = new File(directory, "device-save-test.zip");
+            var uri = androidx.core.content.FileProvider.getUriForFile(context, context.getPackageName() + ".log-files", saved);
+            onMain(() -> state.getLogs().save(uri));
+            waitFor(() -> !state.getLogs().getBusy(), "URI export did not complete");
+            check(state.getLogs().getError() == null && saved.length() > 0, "URI export failed");
+            try (var zip = new java.util.zip.ZipFile(saved)) {
+                String journal = new String(zip.getInputStream(zip.getEntry("phone-use.jsonl")).readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                check(journal.contains("\"source\":\"host\"") && journal.contains("\"source\":\"module\""), "Archive omitted a source");
+                check(journal.contains("log_viewer_test") && !journal.contains("disabled_viewer_test"), "Archive contains wrong toggle interval");
+                check(!journal.contains("test-key") && !journal.contains("你好 MiAIPlus") && !journal.contains("后台输入隔离标记"), "Archive leaked fixture contents");
+                check(zip.size() == 3 && zip.getEntry("environment.json") != null, "Archive layout invalid");
+            }
+            click("保存压缩包");
+            waitFor(() -> ui.getRootInActiveWindow() != null && !context.getPackageName().contentEquals(ui.getRootInActiveWindow().getPackageName()), "Save did not open document picker");
+            capture("logs-document-picker-device");
+            var nameField = findAny(ui.getRootInActiveWindow(), AccessibilityNodeInfo::isEditable);
+            check(nameField != null, "Document picker filename unavailable");
+            String filename = "MiAIPlus-device-log-test-" + System.nanoTime() + ".zip";
+            download = "/sdcard/Download/" + filename;
+            Bundle filenameArgs = new Bundle(); filenameArgs.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, filename);
+            check(nameField.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, filenameArgs), "Could not name test archive");
+            var saveButton = findAny(ui.getRootInActiveWindow(), n -> "保存".equals(text(n)));
+            check(saveButton != null && saveButton.performAction(AccessibilityNodeInfo.ACTION_CLICK), "Document picker save failed");
+            waitFor(() -> ui.getRootInActiveWindow() != null && context.getPackageName().contentEquals(ui.getRootInActiveWindow().getPackageName())
+                && !state.getLogs().getBusy(), "Document save did not return");
+            settle();
+            try (var input = new android.os.ParcelFileDescriptor.AutoCloseInputStream(ui.executeShellCommand("cat " + download));
+                 var zip = new java.util.zip.ZipInputStream(input)) {
+                String journal = ""; int files = 0;
+                java.util.zip.ZipEntry entry;
+                while ((entry = zip.getNextEntry()) != null) {
+                    byte[] contents = zip.readAllBytes(); files++;
+                    if (entry.getName().equals("phone-use.jsonl")) journal = new String(contents, java.nio.charset.StandardCharsets.UTF_8);
+                }
+                check(files == 3 && journal.contains("\"source\":\"host\"") && journal.contains("log_viewer_test"), "System-saved ZIP missing records");
+            }
+            click("分享");
+            waitFor(() -> ui.getRootInActiveWindow() != null && !context.getPackageName().contentEquals(ui.getRootInActiveWindow().getPackageName()), "Share chooser did not open");
+            capture("logs-share-chooser-device");
+            test.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK); settle();
+            click("Phone Use 详细日志");
+            check(!prefs.getBoolean(Config.PHONE_USE_LOG_KEY, true), "Log toggle did not stop recording");
+            click("清空"); click("取消");
+            check(!store.snapshot().lines().isEmpty(), "Cancel cleared records");
+            click("清空"); click("清空日志");
+            waitFor(() -> !state.getLogs().getBusy() && state.getLogs().getBytes() == 0, "Clear did not refresh UI");
+            check(store.snapshot().lines().isEmpty(), "Clear left journal records");
+            check(directory.listFiles() == null || directory.listFiles().length == 0, "Clear left share archives");
+            result.putString("stream", "PASS: Home log view, live toggle, metadata expansion/search/source filter, persisted module/host records, URI ZIP export, actual document-picker save with ZIP readback, share chooser, cancel/clear and export-cache cleanup. No model request from log UI.\n");
+            code = Activity.RESULT_OK;
+        } catch (Throwable failure) {
+            try { capture("logs-ui-failure"); } catch (Exception ignored) { }
+            result.putString("stream", "FAIL: " + android.util.Log.getStackTraceString(failure));
+        } finally {
+            if (activity != null) onMain(activity::finish);
+            var editor = prefs.edit();
+            if (hadOption) editor.putBoolean(Config.PHONE_USE_LOG_KEY, original); else editor.remove(Config.PHONE_USE_LOG_KEY);
+            if (!editor.commit()) { code = Activity.RESULT_CANCELED; result.putString("stream", "FAIL: Log option restore failed\n"); }
+            if (saved != null && saved.exists()) saved.delete();
+            if (download != null) {
+                try (var descriptor = ui.executeShellCommand("rm -f " + download)) { /* Only this uniquely named test export. */ }
+                catch (Exception ignored) { }
+            }
+        }
+        test.finish(code, result);
+    }
+
     /** Exercise the actual Start/Stop UI against the local delayed model fixture on a separate display. */
     private void runDirect() {
         var context = test.getTargetContext();
@@ -242,7 +351,8 @@ final class EndpointProfilesRunner {
                 click("保存并切换");
                 waitFor(() -> new EndpointProfiles(prefs).profiles.size() == 2, "New profile missing");
                 check("服务 B".equals(new EndpointProfiles(prefs).active().name), "New profile not selected");
-                var modelField = find(n -> n.isEditable() && "fixture-a".equals(text(n)));
+                hideKeyboard();
+                var modelField = findWithScroll(n -> n.isEditable() && "fixture-a".equals(text(n)));
                 check(modelField != null, "Model field not visible for popup brightness check");
                 Rect sample = new Rect(); modelField.getBoundsInScreen(sample);
                 int sampleX = sample.left + 4, sampleY = sample.centerY();
@@ -605,9 +715,19 @@ final class EndpointProfilesRunner {
         return null;
     }
 
+    private static AccessibilityNodeInfo findAny(AccessibilityNodeInfo node, Predicate<AccessibilityNodeInfo> predicate) {
+        if (node == null) return null;
+        if (predicate.test(node)) return node;
+        for (int i = 0; i < node.getChildCount(); i++) {
+            var match = findAny(node.getChild(i), predicate);
+            if (match != null) return match;
+        }
+        return null;
+    }
+
     private void click(String label) {
         for (int attempt = 0; attempt < 18; attempt++) {
-            var node = find(n -> label.equals(text(n)) || label.contentEquals(n.getContentDescription() == null ? "" : n.getContentDescription()));
+            var node = find(n -> !n.isEditable() && (label.equals(text(n)) || label.contentEquals(n.getContentDescription() == null ? "" : n.getContentDescription())));
             if (node != null) {
                 while (!node.isClickable() && node.getParent() != null) node = node.getParent();
                 if (node.isClickable() && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) { settle(); return; }
@@ -615,6 +735,15 @@ final class EndpointProfilesRunner {
             if (attempt < 9) scroll(true); else scroll(false);
         }
         throw new AssertionError("UI control unavailable: " + label);
+    }
+
+    private AccessibilityNodeInfo findWithScroll(Predicate<AccessibilityNodeInfo> predicate) {
+        for (int attempt = 0; attempt < 18; attempt++) {
+            var node = find(predicate);
+            if (node != null) return node;
+            scroll(attempt < 9);
+        }
+        return find(predicate);
     }
 
     private void edit(String current, String replacement) {
@@ -632,9 +761,16 @@ final class EndpointProfilesRunner {
     }
 
     private void scroll(boolean forward) {
-        var node = find(AccessibilityNodeInfo::isScrollable);
+        var node = find(n -> n.isScrollable() && !n.isEditable());
         if (node != null) node.performAction(forward ? AccessibilityNodeInfo.ACTION_SCROLL_FORWARD : AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD);
         settle();
+    }
+
+    private void hideKeyboard() {
+        boolean[] visible = new boolean[1];
+        onMain(() -> visible[0] = activity.getWindow().getDecorView().getRootWindowInsets()
+            .isVisible(WindowInsets.Type.ime()));
+        if (visible[0]) { test.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK); settle(); }
     }
 
     private void settle() { test.waitForIdleSync(); SystemClock.sleep(350); }

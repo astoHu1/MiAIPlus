@@ -83,6 +83,24 @@ public final class BridgeProviderConversationSettingsTest {
         assertFalse(provider.call("phone_use_log_settings", null, null).getBoolean("enabled"));
     }
 
+    @Test public void diagnosticAppendChecksCallerAndOptInAndRejectsInvalidPayload() throws Exception {
+        var store = DiagnosticLogStore.get(RuntimeEnvironment.getApplication());
+        store.clear();
+        Bundle data = new Bundle(); data.putString("record", "{\"event\":\"fixture\",\"source\":\"host\"}");
+        provider.call("phone_use_log_append", null, data);
+        assertTrue(store.snapshot().lines().isEmpty());
+        prefs.edit().putBoolean(Config.PHONE_USE_LOG_KEY, true).commit();
+        org.robolectric.shadows.ShadowBinder.setCallingUid(12345);
+        try { assertThrows(SecurityException.class, () -> provider.call("phone_use_log_append", null, data)); }
+        finally { org.robolectric.shadows.ShadowBinder.setCallingUid(android.os.Process.myUid()); }
+        provider.call("phone_use_log_append", null, data);
+        assertEquals("module", new JSONObject(store.snapshot().lines().get(0)).getString("source"));
+        data.putString("record", "invalid-json"); provider.call("phone_use_log_append", null, data);
+        data.putString("record", "x".repeat(9000)); provider.call("phone_use_log_append", null, data);
+        assertEquals(1, store.snapshot().lines().size());
+        store.clear();
+    }
+
     @Test public void wakeSettingsDoNotExportModelCredentialsOrScreenContents() throws Exception {
         prefs.edit().putBoolean("globalModel", true).putString("endpoint", "https://example.invalid/v1")
             .putString("apiKey", "fixture-secret").putString("model", "fixture-model").commit();

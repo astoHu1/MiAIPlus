@@ -91,6 +91,7 @@ public final class DeviceTestRunner extends HookProbeRunner {
         } catch (java.io.FileNotFoundException expected) { }
     }
     @Override public void onStart() {
+        if ("true".equals(arguments.getString("logs"))) { EndpointProfilesRunner.runLogs(this); return; }
         if (arguments.containsKey("detailed_log")) {
             var prefs = Config.prefs(getTargetContext());
             hadLogOption = prefs.contains(Config.PHONE_USE_LOG_KEY);
