@@ -16,6 +16,8 @@
 - [架构、模型协议与 OpenCode Go 接入](architecture.md)
 - [实现与验证记录、未覆盖范围](validation.md)
 - [设置页性能与复现方法](settings-performance.md)
+- [后端性能静态审计与 Agent 交接（2026-10-19）](audits/backend-performance-2026-10-19/README.md)
+- [Phone Use 性能专项、关键路径与验证计划（2026-10-19）](audits/phone-use-performance-2026-10-19/README.md)
 - [动态页面控屏实测](phone-use-dynamic-pages.md)
 - [模块图标资源与预览](module-icon.md)
 - [发布流程与分发边界](releasing.md)
