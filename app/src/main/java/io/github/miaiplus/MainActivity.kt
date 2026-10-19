@@ -279,7 +279,7 @@ private fun HomePage(state: SettingsState, openStatus: () -> Unit, openLogs: () 
         ArrowPreference(title = "运行状态", summary = "连接与诊断", onClick = openStatus)
     }
     OverlayDialog(show = editConversationTimeout, title = "自动新建对话",
-        summary = "距上次操作超过设定时长，再次唤醒时新建对话；时长内继续同一对话。全屏和浮窗共用。支持 0–${Config.MAX_CONVERSATION_TIMEOUT_MINUTES} 分钟，0 关闭，默认 ${Config.DEFAULT_CONVERSATION_TIMEOUT_MINUTES} 分钟。",
+        summary = "每次打开全屏或浮窗都重新计时，操作也会延长计时。超过设定时长后，下次打开时新建对话；时长内继续同一对话。支持 0–${Config.MAX_CONVERSATION_TIMEOUT_MINUTES} 分钟，0 关闭，默认 ${Config.DEFAULT_CONVERSATION_TIMEOUT_MINUTES} 分钟。",
         onDismissRequest = { editConversationTimeout = false; state.error = null }) {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Input("时长（分钟）", conversationTimeout, { conversationTimeout = it }, type = KeyboardType.Number)

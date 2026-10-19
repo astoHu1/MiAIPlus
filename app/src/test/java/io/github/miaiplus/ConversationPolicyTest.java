@@ -42,7 +42,30 @@ public class ConversationPolicyTest {
     @Test public void rejectedWakeDoesNotConsumeExpiry() {
         ConversationPolicy policy = new ConversationPolicy(100, true);
         assertEquals(ConversationPolicy.Decision.NEW, policy.wake(NOW + 30 * 60_000L, 30, false));
+        assertFalse(policy.hasConversation());
         assertEquals(ConversationPolicy.Decision.NEW, policy.wake(NOW + 30 * 60_000L + 1, 30, false));
+    }
+
+    @Test public void everyAcceptedOpeningRestartsTimeoutBeforeNativeSelection() {
+        ConversationPolicy policy = new ConversationPolicy(NOW, true);
+        long reopened = NOW + 29 * 60_000L;
+        assertEquals(ConversationPolicy.Decision.CONTINUE, policy.wake(reopened, 30, false));
+        assertEquals(reopened, policy.lastActivity());
+        long reopenedAgain = NOW + 58 * 60_000L;
+        assertEquals(ConversationPolicy.Decision.CONTINUE, policy.wake(reopenedAgain, 30, false));
+        assertEquals(reopenedAgain, policy.lastActivity());
+        assertEquals(ConversationPolicy.Decision.NEW, policy.wake(reopenedAgain + 31 * 60_000L, 30, false));
+    }
+
+    @Test public void expiredOpeningStartsClockButRequiresConfirmedNewSelection() {
+        ConversationPolicy policy = new ConversationPolicy(NOW, true);
+        long opened = NOW + 31 * 60_000L;
+        assertEquals(ConversationPolicy.Decision.NEW, policy.wake(opened, 30, false));
+        assertEquals(opened, policy.lastActivity());
+        assertFalse(policy.hasConversation());
+        assertEquals(ConversationPolicy.Decision.NEW, policy.wake(opened + 1, 30, false));
+        policy.selected(opened + 1);
+        assertEquals(ConversationPolicy.Decision.CONTINUE, policy.wake(opened + 2, 30, false));
     }
 
     @Test public void userInteractionExtendsConversation() {

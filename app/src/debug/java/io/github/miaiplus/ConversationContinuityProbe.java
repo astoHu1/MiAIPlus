@@ -21,13 +21,23 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/** Owned local topics only. Exercises the same native topic router used by both wake surfaces. */
+/** Owned local topics only. Checks each wake surface's actual route without making a model request. */
 final class ConversationContinuityProbe {
     private ConversationContinuityProbe() { }
     private static volatile LauncherTrace launcherTrace;
 
     private record Topic(String topic, String chat) { }
     private record PopupResult(String summary, Topic latest) { }
+
+    static String focusPopupUi(Context context, ClassLoader loader) throws Exception {
+        try (PopupGuard guard = new PopupGuard(loader)) {
+            goHome(context);
+            guard.wake(context);
+            String result = HookSmokeProbe.focusUi(context, loader);
+            guard.checkSafety();
+            return result;
+        }
+    }
 
     static String run(Context context, ClassLoader loader) throws Exception {
         check(!context.getSystemService(android.app.KeyguardManager.class).isKeyguardLocked(),
@@ -148,7 +158,7 @@ final class ConversationContinuityProbe {
                 + "real native notification onNewIntent refreshes activity and continues its owned chat; "
                 + "real launcher expired/recent wake updates both native topic and visible navigation; "
                 + popup + "; owned topics and original route restored; no model request or audio capture; "
-                + "no physical-key gesture or process-restart assertion";
+                + "no reply-delivery, physical-key gesture or process-restart assertion";
         } catch (Exception | Error error) {
             failure = error;
             throw error;
@@ -264,6 +274,9 @@ final class ConversationContinuityProbe {
         Object cards = currentInfo(context, loader);
         Object page = currentPage(loader);
         Object visible = page == null ? null : Reflector.callMethod(page, "getTopicGroupInfo");
+        Object popupPage = NativeConversationRouting.popupPage(manager(context, loader));
+        Object popup = popupPage == null ? null : Reflector.callMethod(popupPage, "getTopicGroupInfo");
+        Object popupCards = NativeConversationRouting.popupInfo(manager(context, loader));
         Object ui = Reflector.callStaticMethod(Reflector.findClass("com.xiaomi.voiceassistant.UiManager", loader),
             "getInstance", context);
         Object tabs = Reflector.callMethod(manager(context, loader), "getTabHostManager");
@@ -278,9 +291,13 @@ final class ConversationContinuityProbe {
             + ";userIdleMs=" + (clock == null ? "no-policy" : System.currentTimeMillis() - clock.lastActivity())
             + ";canonical=" + safeMembership(canonical, previous)
             + ";cards=" + safeMembership(cards, previous) + ";page=" + safeMembership(visible, previous)
+            + ";popupRoute=" + safeMembership(popup, previous)
+            + ";popupCards=" + safeMembership(popupCards, previous)
             + ";canonical/cards=" + sameIdentity(canonical, cards)
             + ";canonical/page=" + sameIdentity(canonical, visible)
             + ";cards/page=" + sameIdentity(cards, visible)
+            + ";canonical/popupRoute=" + sameIdentity(canonical, popup)
+            + ";canonical/popupCards=" + sameIdentity(canonical, popupCards)
             + ";uiFull=" + Reflector.callMethod(ui, "isFullScreenInForeground")
             + ";resumedChatPage=" + (page != null) + ";host=" + lifecycle;
     }
@@ -318,7 +335,7 @@ final class ConversationContinuityProbe {
             awaitRoute(context, loader, first);
             goHome(context);
             guard.wake(context);
-            awaitTopic(context, loader, first);
+            awaitPopupTopic(context, loader, first);
             check(state("pending") == null, "recent popup did not consume the native pending route");
             report(context, "CONVERSATION_POPUP_CONTINUE_DONE");
             guard.dismiss(context, loader);
@@ -330,7 +347,7 @@ final class ConversationContinuityProbe {
             });
             goHome(context);
             guard.wake(context);
-            Topic fresh = current(context, loader);
+            Topic fresh = awaitFreshPopupTopic(context, loader, createdTopics);
             check(fresh != null && fresh.topic != null && !fresh.topic.isBlank()
                 && !createdTopics.contains(fresh.topic), "expired real popup reused an old native topic");
             createdTopics.add(fresh.topic);
@@ -341,7 +358,7 @@ final class ConversationContinuityProbe {
 
             goHome(context);
             guard.wake(context);
-            awaitTopic(context, loader, fresh);
+            awaitPopupTopic(context, loader, fresh);
             report(context, "CONVERSATION_POPUP_REPEAT_DONE");
             guard.dismiss(context, loader);
             goHome(context);
@@ -350,7 +367,8 @@ final class ConversationContinuityProbe {
             guard.checkSafety();
             report(context, "CONVERSATION_POPUP_TO_FULLSCREEN_DONE");
             return new PopupResult("three real VoiceService popup wakes, native reset and visible system window verified; "
-                + "fullscreen/popup share chat, expired popup creates topic, recent popup/fullscreen continue it; "
+                + "actual popup card controller and popup page share topic/chat with the canonical selection; "
+                + "expired popup creates topic, recent popup/fullscreen route continues it; "
                 + guard.warmupStarts.get() + " owned recorder warmups and " + guard.asrStarts.get()
                 + " owned ASR starts blocked before recording; audio/model failsafes unused", fresh);
         }
@@ -495,7 +513,27 @@ final class ConversationContinuityProbe {
                         && params.type >= WindowManager.LayoutParams.FIRST_SYSTEM_WINDOW;
                 });
                 if (popup && voiceEntries.get() > voiceBefore && resetEntries.get() > resetBefore
-                    && warmupStarts.get() > warmupBefore && asrStarts.get() > asrBefore) return;
+                    && warmupStarts.get() > warmupBefore && asrStarts.get() > asrBefore) {
+                    // Recognition is blocked in this route-only probe, so no result card would
+                    // demand the lazy view. The facade only restores a view when saved cards
+                    // exist. Follow the host's first-card lazy initialization path explicitly;
+                    // the reply probe verifies normal text creates it without either call.
+                    MainThread.call(() -> {
+                        Object floatManager = manager(context, loader);
+                        Reflector.callMethod(floatManager, "initFloatScreenResultUi", (Object)null);
+                        Object controller = NativeConversationRouting.popupController(floatManager);
+                        check(controller != null, "native popup result controller unavailable");
+                        if (Reflector.callMethod(controller, "getFloatResultCardView") == null) {
+                            Object root = Reflector.callMethod(floatManager, "getRootLayout");
+                            check(root != null, "native popup root unavailable during lazy initialization");
+                            // cm1.g/mn1.g's first-card coroutine calls w(root, null, false) on
+                            // both pinned APKs. This inflates/binds the real result view only.
+                            Reflector.callMethod(controller, "w", root, null, false);
+                        }
+                        return null;
+                    });
+                    return;
+                }
                 Thread.sleep(100);
             } while (SystemClock.elapsedRealtime() < deadline);
             String window = MainThread.call(() -> {
@@ -664,6 +702,45 @@ final class ConversationContinuityProbe {
             return info == null ? null : new Topic((String)Reflector.callMethod(info, "getTopicId"),
                 (String)Reflector.callMethod(info, "getChatId"));
         });
+    }
+
+    private static Topic popupTopic(Context context, ClassLoader loader) {
+        Object popup = NativeConversationRouting.popupInfo(manager(context, loader));
+        Object page = NativeConversationRouting.popupPage(manager(context, loader));
+        Object visible = page == null ? null : Reflector.callMethod(page, "getTopicGroupInfo");
+        Object canonical = state("conversationInfo");
+        if (popup == null || visible == null || canonical == null || state("pending") != null) return null;
+        Topic actual = new Topic((String)Reflector.callMethod(popup, "getTopicId"),
+            (String)Reflector.callMethod(popup, "getChatId"));
+        for (Object info : new Object[]{visible, canonical}) {
+            if (!java.util.Objects.equals(actual.topic, Reflector.callMethod(info, "getTopicId"))
+                || !java.util.Objects.equals(actual.chat, Reflector.callMethod(info, "getChatId"))) return null;
+        }
+        return actual;
+    }
+
+    private static Topic awaitFreshPopupTopic(Context context, ClassLoader loader,
+        List<String> previousTopics) throws Exception {
+        long deadline = SystemClock.elapsedRealtime() + 10_000;
+        do {
+            Topic actual = MainThread.call(() -> popupTopic(context, loader));
+            if (actual != null && actual.topic != null && !actual.topic.isBlank()
+                && actual.chat != null && !actual.chat.isBlank() && !previousTopics.contains(actual.topic)) return actual;
+            Thread.sleep(100);
+        } while (SystemClock.elapsedRealtime() < deadline);
+        throw new AssertionError("expired popup did not settle a new topic/chat across its own cards, popup page and canonical selection"
+            + diagnostics(context, loader));
+    }
+
+    private static void awaitPopupTopic(Context context, ClassLoader loader, Topic expected) throws Exception {
+        long deadline = SystemClock.elapsedRealtime() + 10_000;
+        do {
+            Topic actual = MainThread.call(() -> popupTopic(context, loader));
+            if (expected.equals(actual)) return;
+            Thread.sleep(100);
+        } while (SystemClock.elapsedRealtime() < deadline);
+        throw new AssertionError("popup's own cards and popup page did not match the canonical owned topic/chat"
+            + diagnostics(context, loader, expected));
     }
 
     private static void open(Context context, Intent intent) throws Exception {

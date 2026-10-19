@@ -38,12 +38,13 @@ public final class DeviceTestRunner extends HookProbeRunner {
     }
     private boolean hookMode, liveMode, reloadMode, guardMode, guardPreflightMode, profilesMode, backgroundMode, focusMode, launchMode, scrollMode, dualToolsMode, foregroundConsentMode, conversationMode, robustScreenMode;
     private String transportApi;
-    private boolean replyActionsMode, replyActionsCurrentConfig, actionConfirmationMode, realPageGuardMode, phoneUseTerminalMode, conversationContinuityMode;
+    private boolean replyActionsMode, replyActionsCurrentConfig, actionConfirmationMode, realPageGuardMode, phoneUseTerminalMode, conversationContinuityMode, conversationRepliesMode;
     private String replyActionsApi;
     private Bundle arguments;
     @Override public void onCreate(Bundle arguments) {
         this.arguments = arguments;
         conversationContinuityMode = "true".equals(arguments.getString("conversation_continuity"));
+        conversationRepliesMode = "true".equals(arguments.getString("conversation_replies"));
         phoneUseTerminalMode = "true".equals(arguments.getString("phone_use_terminal"));
         realPageGuardMode = "true".equals(arguments.getString("real_page_guard"));
         actionConfirmationMode = "true".equals(arguments.getString("action_confirmation"));
@@ -101,6 +102,7 @@ public final class DeviceTestRunner extends HookProbeRunner {
                 "true".equals(arguments.getString("detailed_log"))).commit(), "Could not set detailed log fixture");
         }
         if (conversationContinuityMode) { ConversationContinuityRunner.run(this); return; }
+        if (conversationRepliesMode) { ConversationLifecycleReplyRunner.run(this); return; }
         if (phoneUseTerminalMode) { PhoneUseTerminalRunner.run(this); return; }
         if (realPageGuardMode) { RealPageGuardRunner.run(this); return; }
         if (actionConfirmationMode) { ActionConfirmationRunner.run(this); return; }

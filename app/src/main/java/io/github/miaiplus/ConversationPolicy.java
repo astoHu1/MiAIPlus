@@ -1,6 +1,6 @@
 package io.github.miaiplus;
 
-/** User activity clock shared by every XiaoAI entry surface. Replies never touch this clock. */
+/** Opening and user activity clock shared by every XiaoAI surface. Replies never touch it. */
 final class ConversationPolicy {
     enum Decision { DISABLED, BUSY, CONTINUE, NEW }
 
@@ -19,6 +19,11 @@ final class ConversationPolicy {
         // A backwards wall-clock change must not continue an arbitrarily old conversation.
         boolean fresh = hasConversation && lastActivity > 0 && now >= lastActivity
             && now - lastActivity <= timeout;
+        // An accepted opening starts its own timeout before asynchronous native routing finishes.
+        // Expiry also retires the old selection: another entry callback must not resume it merely
+        // because this opening has already advanced the clock. Only selection confirms a new topic.
+        lastActivity = Math.max(0, now);
+        if (!fresh) hasConversation = false;
         return fresh ? Decision.CONTINUE : Decision.NEW;
     }
 

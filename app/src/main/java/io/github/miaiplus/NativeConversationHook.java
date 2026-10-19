@@ -31,10 +31,13 @@ final class NativeConversationHook {
     private static long lastInputUptime;
     private static Handler main;
     private static boolean launcherPending;
+    private static boolean floatingPending;
+    private static boolean popupRouting;
     private static long generation;
     private static long inputSequence;
     private static Object automaticNavigationInfo;
-    private static long automaticNavigationUntil;
+    private static Object automaticNavigationRoute;
+    private static boolean automaticNavigationInProgress;
     private static boolean disposed = true;
     private record Pending(ConversationPolicy.Decision decision, long timestamp, long deadline, long inputSequence) { }
 
@@ -51,6 +54,37 @@ final class NativeConversationHook {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     Intent intent = (Intent)p.args[0];
                     if (isWakeIntent(intent)) wakeSafely(context, loader);
+                }
+            }));
+        if (HostCompatibility.modern()) {
+            hooks.add(Reflector.findAndHookMethod("com.xiaomi.voiceassistant.mainui.c4", loader,
+                "startFromCapsuleOrb", String.class, new HookCallback() {
+                    @Override protected void beforeHookedMethod(MethodHookParam p) {
+                        // This user click starts the UI directly, without a VoiceService intent.
+                        // The regular pre-recognition hook applies after its native UI reset.
+                        wakeSafely(context, loader);
+                    }
+                }));
+        }
+        hooks.add(Reflector.findAndHookMethod("com.xiaomi.voiceassistant.mainui.c4", loader,
+            "startFloatScreen", Reflector.findClass(HostCompatibility.choose(
+                "com.xiaomi.voiceassistant.widget.x1", "com.xiaomi.voiceassistant.widget.g2"), loader),
+            new HookCallback() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    if (p.args[0] == null) return;
+                    // This entry restores a float state directly; it has neither an Intent nor
+                    // the normal reset/pre-recognition callback. Select before ASR can start.
+                    wakeSafely(context, loader);
+                    floatingPending = pending != null;
+                    applySafely(context, loader);
+                }
+            }));
+        hooks.add(Reflector.findAndHookMethod("com.xiaomi.voiceassistant.widget.s1", loader,
+            "enterHome", new HookCallback() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    // The popup's full-screen button bypasses LaunchHomeRouterActivity.onCreate.
+                    wakeSafely(context, loader);
+                    launcherPending = pending != null;
                 }
             }));
         hooks.add(Reflector.findAndHookMethod("com.xiaomi.voiceassistant.LaunchHomeRouterActivity", loader,
@@ -96,6 +130,9 @@ final class NativeConversationHook {
                         // its main-chat/no-PAGE form. Model streaming never enters this method.
                         pending = null;
                         launcherPending = false;
+                        floatingPending = false;
+                        popupRouting = false;
+                        NativeConversationRouting.clearOwnedSeed();
                         userActivity();
                         policy.selected(System.currentTimeMillis());
                         save();
@@ -109,6 +146,43 @@ final class NativeConversationHook {
             : new Object[]{info, boolean.class, topicObserver()};
         hooks.add(Reflector.findAndHookMethod("com.xiaomi.voiceassistant.widget.s1", loader,
             "startTopicDialogPage", topicSignature));
+        if (HostCompatibility.modern()) {
+            hooks.add(Reflector.findAndHookMethod(HostCompatibility.chatActivity(), loader, "e2",
+                Reflector.findClass(HostCompatibility.chatActivity() + "$b", loader), new HookCallback() {
+                    @Override protected void beforeHookedMethod(MethodHookParam p) {
+                        Object route = Reflector.callMethod(p.args[0], "getRoute");
+                        if (route != automaticNavigationRoute || route == null) return;
+                        automaticNavigationRoute = null;
+                        // The host may postpone this exact route until its container is ready.
+                        // A task or settings change can revoke navigation in the meantime.
+                        if (disposed || !canSyncPopup(context)) {
+                            automaticNavigationInfo = null;
+                            p.setResult(null);
+                            return;
+                        }
+                        Object manager = floatManager(context, loader);
+                        Object cards = Reflector.callMethod(manager, "getTopicDialogCardManager");
+                        Object current = cards == null ? null : Reflector.callMethod(cards, "getTopicGroupInfo");
+                        if (automaticNavigationTopic(automaticNavigationInfo, current, current) == null) {
+                            // A newer native/user selection won while the automatic route waited
+                            // for its container. Never restore the retired topic's engine or page.
+                            automaticNavigationInfo = null;
+                            p.setResult(null);
+                            if (current != null) navigateFullScreen(p.thisObject, loader, current);
+                            return;
+                        }
+                        p.setObjectExtra("MiAIPlus_automatic_navigation", automaticNavigationInProgress);
+                        automaticNavigationInProgress = true;
+                    }
+                    @Override protected void afterHookedMethod(MethodHookParam p) {
+                        Object previous = p.getObjectExtra("MiAIPlus_automatic_navigation");
+                        if (previous instanceof Boolean active) {
+                            automaticNavigationInProgress = active;
+                            automaticNavigationInfo = null;
+                        }
+                    }
+                }));
+        }
         // A history selection may occur without a new Intent. Observe the native topic initialization,
         // but only a recent real input or an explicit Activity route may advance the activity clock.
         hooks.add(Reflector.findAndHookMethod(HostCompatibility.choose("el1.s2", "jm1.v2"), loader,
@@ -118,6 +192,10 @@ final class NativeConversationHook {
                 @Override protected void afterHookedMethod(MethodHookParam p) {
                     if (disposed || conversationInfo == null || p.getResult() == null
                         || Looper.myLooper() != Looper.getMainLooper()) return;
+                    // A popup can still hold the empty placeholder while the full controller's
+                    // session creator has hydrated it. Only that creator owns canonical metadata.
+                    Object manager = floatManager(application, hostLoader);
+                    if (p.thisObject != Reflector.callMethod(manager, "getTopicDialogCardManager")) return;
                     Object updated = p.getResult();
                     if (java.util.Objects.equals(Reflector.callMethod(conversationInfo, "getTopicId"),
                         Reflector.callMethod(updated, "getTopicId"))) {
@@ -126,6 +204,36 @@ final class NativeConversationHook {
                         conversationInfo = updated;
                         save();
                     }
+                }
+            }));
+        hooks.add(Reflector.findAndHookMethod("com.xiaomi.voiceassistant.widget.s1", loader,
+            "onTopicGroupUpdate", String.class, boolean.class, new HookCallback() {
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    if (disposed || conversationInfo == null || !java.util.Objects.equals(p.args[0],
+                        Reflector.callMethod(conversationInfo, "getTopicId"))) return;
+                    try { refreshIdentity(p.thisObject, loader); }
+                    catch (RuntimeException failure) { report(failure); }
+                }
+            }));
+        hooks.add(Reflector.findAndHookMethod(HostCompatibility.choose("cm1.g", "mn1.g"), loader,
+            "w", Reflector.findClass("com.xiaomi.voiceassistant.mainui.board.FloatViewRootLayout", loader),
+            java.util.Map.class, boolean.class, new HookCallback() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    if (!popupRouting || disposed) return;
+                    if (!canSyncPopup(context)) {
+                        popupRouting = false;
+                        NativeConversationRouting.clearOwnedSeed();
+                        return;
+                    }
+                    p.setObjectExtra("MiAIPlus_popup_sync", true);
+                }
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    if (!Boolean.TRUE.equals(p.getObjectExtra("MiAIPlus_popup_sync"))
+                        || !popupRouting || disposed || conversationInfo == null) return;
+                    try {
+                        NativeConversationRouting.syncPopupController(p.thisObject,
+                            floatManager(context, loader), loader, conversationInfo);
+                    } catch (RuntimeException failure) { report(failure); }
                 }
             }));
         for (String method : new String[]{"onCreate", "onNewIntent"}) {
@@ -200,6 +308,9 @@ final class NativeConversationHook {
         conversationInfo = null;
         pending = null;
         launcherPending = false;
+        floatingPending = false;
+        popupRouting = false;
+        NativeConversationRouting.clearOwnedSeed();
         policy.invalidate();
         save();
     }
@@ -225,29 +336,59 @@ final class NativeConversationHook {
     private static HookCallback topicObserver() {
         return new HookCallback() {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
-                if (automaticNavigationInfo == null) return;
-                if (SystemClock.elapsedRealtime() > automaticNavigationUntil) {
-                    automaticNavigationInfo = null;
-                    return;
+                if (!automaticNavigationInProgress || automaticNavigationInfo == null) return;
+                if (!p.method.getName().equals("startTopicDialogPage")) return;
+                Object cards = Reflector.callMethod(p.thisObject, "getTopicDialogCardManager");
+                Object current = cards == null ? null : Reflector.callMethod(cards, "getTopicGroupInfo");
+                Object updated = automaticNavigationTopic(automaticNavigationInfo, p.args[0], current);
+                if (updated == null) return;
+                // MainNavigator posts q.b initialization. The new topic can acquire agent/chat IDs
+                // before that post runs; replaying the captured empty metadata would clean the live
+                // manager, cancel session creation, and set the engine back to a null chat. This is
+                // only a UI synchronization: keep its already initialized manager and recognition.
+                p.setResult(null);
+                p.setObjectExtra("MiAIPlus_conversation_sync", true);
+                automaticNavigationInfo = null;
+                Object tabs = Reflector.callMethod(p.thisObject, "getTabHostManager");
+                Object host = tabs == null ? null : Reflector.callMethod(tabs,
+                    HostCompatibility.choose("getTabHostMainActivity", "getConversationHost"));
+                if (host != null) {
+                    Object page = Reflector.newInstance(Reflector.findClass(
+                        "com.xiaomi.voiceassistant.data.model.PageNavigationData", hostLoader), updated, "quick");
+                    Reflector.callMethod(host, "setPageNavigationData", page, "MiAIPlus_conversation_sync");
                 }
-                // MainNavigator's q.b route feeds back through startTopicDialogPage(info, true).
-                // The automatic wake already selected this exact metadata object before ASR starts;
-                // its UI synchronization must not force-stop that wake's recognition engine.
-                if (p.args[0] == automaticNavigationInfo) p.args[1] = false;
             }
             @Override protected void afterHookedMethod(MethodHookParam p) {
-                if (disposed || internalNavigation > 0) return;
+                if (disposed || internalNavigation > 0
+                    || Boolean.TRUE.equals(p.getObjectExtra("MiAIPlus_conversation_sync"))) return;
                 if (pending != null && inputSequence <= pending.inputSequence()) return;
                 boolean explicit = SystemClock.elapsedRealtime() - lastInputUptime < 2_000;
                 if (!explicit) return;
                 try {
                     // Prefer the initialized info: a null new-topic argument is assigned an ID synchronously.
                     Object manager = floatManager(application, hostLoader);
+                    Object cards = Reflector.callMethod(manager, "getTopicDialogCardManager");
+                    Object current = cards == null ? null : Reflector.callMethod(cards, "getTopicGroupInfo");
+                    // Native title/identity refresh can run just after ASR. Re-showing the same
+                    // topic is not a new user selection and must not stop popup synchronization
+                    // or extend the user's clock because a reply happened to arrive quickly.
+                    if (automaticNavigationTopic(conversationInfo, current, current) != null) return;
                     capture(manager, true, System.currentTimeMillis());
                     pending = null;
+                    popupRouting = false;
+                    NativeConversationRouting.clearOwnedSeed();
                 } catch (RuntimeException failure) { report(failure); }
             }
         };
+    }
+
+    /** A posted UI route must retain the live topic's hydrated identity and native session. */
+    static Object automaticNavigationTopic(Object expected, Object requested, Object current) {
+        if (expected == null || requested == null || current == null) return null;
+        Object topic = Reflector.callMethod(expected, "getTopicId");
+        if (!(topic instanceof String id) || id.isBlank()) return null;
+        return topic.equals(Reflector.callMethod(requested, "getTopicId"))
+            && topic.equals(Reflector.callMethod(current, "getTopicId")) ? current : null;
     }
 
     static boolean isWakeIntent(Intent intent) {
@@ -281,6 +422,7 @@ final class NativeConversationHook {
 
     /** Reload only our private identity metadata; hook installation stays owned by the outer lifecycle. */
     static void reinitializeState(Context context, ClassLoader loader) {
+        NativeConversationRouting.clearOwnedSeed();
         generation++;
         preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         String encoded = preferences.getString("conversation", "");
@@ -289,7 +431,11 @@ final class NativeConversationHook {
             preferences.getBoolean("selected", false) && (encoded.isEmpty() || conversationInfo != null));
         pending = null;
         launcherPending = false;
+        floatingPending = false;
+        popupRouting = false;
         automaticNavigationInfo = null;
+        automaticNavigationRoute = null;
+        automaticNavigationInProgress = false;
         disposed = false;
     }
 
@@ -324,13 +470,17 @@ final class NativeConversationHook {
     static ConversationPolicy.Decision onUserWake(Context context, ClassLoader loader, long now) {
         if (disposed) return ConversationPolicy.Decision.DISABLED;
         launcherPending = false;
+        floatingPending = false;
+        popupRouting = false;
+        NativeConversationRouting.clearOwnedSeed();
         Bundle settings = settings(context);
         if (settings == null) { pending = null; return ConversationPolicy.Decision.DISABLED; }
         ConversationPolicy.Decision decision = policy.wake(now,
             settings.getInt("conversationTimeoutMinutes", Config.DEFAULT_CONVERSATION_TIMEOUT_MINUTES), settings.getBoolean("screenBusy", true));
-        if (decision == ConversationPolicy.Decision.NEW || decision == ConversationPolicy.Decision.CONTINUE)
+        if (decision == ConversationPolicy.Decision.NEW || decision == ConversationPolicy.Decision.CONTINUE) {
             pending = new Pending(decision, now, SystemClock.elapsedRealtime() + 10_000, inputSequence);
-        else pending = null;
+            save();
+        } else pending = null;
         return decision;
     }
 
@@ -342,13 +492,21 @@ final class NativeConversationHook {
     private static void applyPending(Context context, ClassLoader loader, boolean launcherResumed) {
         Pending request = pending;
         if (disposed || request == null) return;
-        if (SystemClock.elapsedRealtime() > request.deadline()) { pending = null; launcherPending = false; return; }
+        if (SystemClock.elapsedRealtime() > request.deadline()) {
+            pending = null;
+            launcherPending = false;
+            floatingPending = false;
+            return;
+        }
         Bundle settings = settings(context);
         if (settings == null || settings.getBoolean("screenBusy", true)
             || settings.getInt("conversationTimeoutMinutes", Config.DEFAULT_CONVERSATION_TIMEOUT_MINUTES) <= 0) {
             // A wake that lost permission to navigate must not be replayed by a later UI callback.
             pending = null;
             launcherPending = false;
+            floatingPending = false;
+            popupRouting = false;
+            NativeConversationRouting.clearOwnedSeed();
             return;
         }
         // A router post or pre-ASR callback can run while an old Activity still exists but is
@@ -362,10 +520,11 @@ final class NativeConversationHook {
         // UiManager's screen flag can still say fullscreen after HOME and during voice startup.
         // Navigate only a genuinely resumed conversation Activity; a paused old host belongs to
         // neither the new popup nor its route. The native voice path chooses its own screen next.
-        Object host = isResumedConversationHost(candidate, lifecycle) ? candidate : null;
+        Object host = !floatingPending && isResumedConversationHost(candidate, lifecycle) ? candidate : null;
         if (launcherPending && host == null) return;
         pending = null;
         launcherPending = false;
+        floatingPending = false;
         Object target = request.decision() == ConversationPolicy.Decision.NEW ? null : conversationInfo;
         // A user explicitly chose the native main conversation: retain its intent until the next expiry.
         if (request.decision() == ConversationPolicy.Decision.CONTINUE && target == null) {
@@ -392,8 +551,36 @@ final class NativeConversationHook {
                 }
             }
             capture(manager, true, request.timestamp());
+            popupRouting = true;
+            NativeConversationRouting.syncPopup(manager, loader, conversationInfo);
             if (host != null) navigateFullScreen(host, loader);
         } finally { internalNavigation--; }
+    }
+
+    private static boolean canSyncPopup(Context context) {
+        Bundle current = settings(context);
+        return current != null && !current.getBoolean("screenBusy", true)
+            && current.getInt("conversationTimeoutMinutes", Config.DEFAULT_CONVERSATION_TIMEOUT_MINUTES) > 0;
+    }
+
+    /** The native session creator replaces its placeholder metadata asynchronously. */
+    private static void refreshIdentity(Object manager, ClassLoader loader) {
+        if (Looper.myLooper() != Looper.getMainLooper()) return;
+        Object cards = Reflector.callMethod(manager, "getTopicDialogCardManager");
+        Object updated = cards == null ? null : Reflector.callMethod(cards, "getTopicGroupInfo");
+        if (automaticNavigationTopic(conversationInfo, updated, updated) == null) return;
+        conversationInfo = updated;
+        save();
+        if (!popupRouting || !canSyncPopup(application)) return;
+        NativeConversationRouting.syncPopup(manager, loader, updated);
+        Object tabs = Reflector.callMethod(manager, "getTabHostManager");
+        Object host = tabs == null ? null : Reflector.callMethod(tabs,
+            HostCompatibility.choose("getTabHostMainActivity", "getConversationHost"));
+        Object page = host == null ? null : Reflector.callMethod(host, "getPageNavigationData");
+        Object info = page == null ? null : Reflector.callMethod(page, "getTopicGroupInfo");
+        if (automaticNavigationTopic(updated, info, updated) != null)
+            Reflector.callMethod(host, "setPageNavigationData", NativeConversationRouting.page(loader, updated),
+                "MiAIPlus_conversation_identity");
     }
 
     static boolean isResumedConversationHost(Object host, Object lifecycle) {
@@ -404,16 +591,20 @@ final class NativeConversationHook {
     }
 
     private static void navigateFullScreen(Object host, ClassLoader loader) {
-        if (conversationInfo == null) return;
+        navigateFullScreen(host, loader, conversationInfo);
+    }
+
+    private static void navigateFullScreen(Object host, ClassLoader loader, Object info) {
+        if (info == null) return;
         Object page = Reflector.newInstance(Reflector.findClass("com.xiaomi.voiceassistant.data.model.PageNavigationData", loader),
-            conversationInfo, "quick");
+            info, "quick");
         if (HostCompatibility.modern()) {
-            automaticNavigationInfo = conversationInfo;
-            automaticNavigationUntil = SystemClock.elapsedRealtime() + 10_000;
+            automaticNavigationInfo = info;
             Object route = Reflector.newInstance(Reflector.findClass("pm1.q$b", loader), page);
+            automaticNavigationRoute = route;
             Object kind = Reflector.getStaticObjectField(Reflector.findClass("pm1.r0", loader), "CONVERSATION");
             Object key = Reflector.newInstance(Reflector.findClass("pm1.q0", loader), kind,
-                Reflector.callMethod(conversationInfo, "getTopicId"));
+                Reflector.callMethod(info, "getTopicId"));
             Reflector.callMethod(host, "navigateToDetail", route, key, false, false);
         } else {
             Reflector.callMethod(host, "setPageNavigationData", page, "MiAIPlus_conversation_wake");
@@ -434,6 +625,9 @@ final class NativeConversationHook {
             conversationInfo = page == null ? null : Reflector.callMethod(page, "getTopicGroupInfo");
             pending = null;
             launcherPending = false;
+            floatingPending = false;
+            popupRouting = false;
+            NativeConversationRouting.clearOwnedSeed();
             automaticNavigationInfo = null;
             if (moduleReturn || nativeNotification || SystemClock.elapsedRealtime() - lastInputUptime < 2_000)
                 policy.selected(System.currentTimeMillis());
@@ -512,8 +706,12 @@ final class NativeConversationHook {
             main = null;
             pending = null;
             launcherPending = false;
+            floatingPending = false;
+            popupRouting = false;
+            NativeConversationRouting.clearOwnedSeed();
             automaticNavigationInfo = null;
-            automaticNavigationUntil = 0;
+            automaticNavigationRoute = null;
+            automaticNavigationInProgress = false;
             conversationInfo = null;
             preferences = null;
             application = null;

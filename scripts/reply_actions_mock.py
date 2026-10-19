@@ -9,6 +9,7 @@ import argparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import math
+import re
 import time
 
 
@@ -59,6 +60,16 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("invalid fixture authorization")
             if body.get("model") != MODEL or MARKER not in json.dumps(body):
                 raise ValueError("invalid fixture model or marker")
+            # A distinct generated reply proves each lifecycle stage rendered its own response.
+            # The marker contains only a probe UUID; request text and headers stay unlogged.
+            # Read the latest user message, not the serialized request tail: history and system
+            # summaries may repeat earlier stage markers after the current message in other fields.
+            entries = body.get("messages", body.get("input", []))
+            users = [entry for entry in entries if isinstance(entry, dict) and entry.get("role") == "user"] if isinstance(entries, list) else []
+            stages = re.findall(r"MIAIPLUS_CONVERSATION_STAGE_([a-f0-9-]{36})", json.dumps(users[-1])) if users else []
+            if "MIAIPLUS_CONVERSATION_STAGE_" in json.dumps(body) and not stages:
+                raise ValueError("lifecycle marker missing from latest user message")
+            reply_text = "miaiplus-ok-" + stages[-1][:8] if stages else TEXT
             if not isinstance(body.get("stream", False), bool):
                 raise ValueError("invalid fixture stream mode")
             streaming = body.get("stream", False)
@@ -72,7 +83,7 @@ class Handler(BaseHTTPRequestHandler):
                 "id": "resp_reply_actions", "object": "response", "model": MODEL, "status": "completed",
                 "output": [{"type": "message", "id": "msg_reply_actions", "role": "assistant",
                             "status": "completed", "phase": "final_answer",
-                            "content": [{"type": "output_text", "text": TEXT, "annotations": []}]}],
+                            "content": [{"type": "output_text", "text": reply_text, "annotations": []}]}],
                 "usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
             }
             self.send_response(200)
@@ -83,7 +94,7 @@ class Handler(BaseHTTPRequestHandler):
             log("accepted")
             if not streaming:
                 completion = {"id": "chatcmpl_reply_actions", "object": "chat.completion", "model": MODEL,
-                              "choices": [{"index": 0, "message": {"role": "assistant", "content": TEXT},
+                              "choices": [{"index": 0, "message": {"role": "assistant", "content": reply_text},
                                            "finish_reason": "stop"}]}
                 self.wfile.write(json.dumps(response if protocol == "responses" else completion).encode("utf-8"))
                 log("json.completed")
@@ -91,7 +102,7 @@ class Handler(BaseHTTPRequestHandler):
                 event({"type": "response.created", "response": {
                     "id": response["id"], "model": MODEL, "status": "in_progress"}})
                 log("created")
-                event({"type": "response.output_text.delta", "delta": TEXT, "output_index": 0,
+                event({"type": "response.output_text.delta", "delta": reply_text, "output_index": 0,
                        "content_index": 0, "item_id": "msg_reply_actions"})
                 log("text")
                 deadline = time.monotonic() + self.server.response_delay
@@ -113,7 +124,7 @@ class Handler(BaseHTTPRequestHandler):
                 event({"type": "response.completed", "response": response})
                 log("completed")
             else:
-                for delta, reason in [({"role": "assistant"}, None), ({"content": TEXT}, None), ({}, "stop")]:
+                for delta, reason in [({"role": "assistant"}, None), ({"content": reply_text}, None), ({}, "stop")]:
                     chunk = {"id": "chatcmpl_reply_actions", "object": "chat.completion.chunk", "model": MODEL,
                              "created": 0, "choices": [{"index": 0, "delta": delta, "finish_reason": reason}]}
                     self.wfile.write(("data: " + json.dumps(chunk) + "\n\n").encode("utf-8"))
