@@ -163,7 +163,7 @@ private fun SettingsApp(state: SettingsState, openSettings: (Boolean) -> Unit, o
                     Column(
                         Modifier.widthIn(max = 680.dp).fillMaxWidth()
                             .then(if (destination == SettingsPage.Model || destination == SettingsPage.Logs) Modifier else Modifier.verticalScroll(scroll)).imePadding()
-                            .padding(top = 8.dp, bottom = 24.dp),
+                            .padding(top = 8.dp, bottom = if (destination == SettingsPage.Model) 0.dp else 24.dp),
                     ) {
                         state.error?.takeIf { destination != SettingsPage.Model }?.let { message ->
                             Group { BasicComponent(title = "未能完成", summary = message) }
@@ -313,7 +313,10 @@ private fun ModelPage(state: SettingsState) {
     var newName by remember { mutableStateOf("") }
     var showDelete by remember { mutableStateOf(false) }
     var revealKey by remember(draft.id) { mutableStateOf(false) }
-    LazyColumn(Modifier.testTag("model-settings")) {
+    LazyColumn(
+        modifier = Modifier.testTag("model-settings"),
+        contentPadding = PaddingValues(bottom = 24.dp),
+    ) {
         state.error?.let { message ->
             item(key = "error") {
                 Group { BasicComponent(title = "未能完成", summary = message) }

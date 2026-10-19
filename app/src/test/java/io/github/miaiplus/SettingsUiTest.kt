@@ -20,6 +20,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.runtime.snapshots.SnapshotStateObserver
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.unit.dp
 import org.junit.Rule
 import org.junit.Test
 import org.junit.After
@@ -400,6 +401,30 @@ class SettingsUiTest {
         compose.onNodeWithText("另存为新配置").assertIsDisplayed()
         compose.onNodeWithTag("model-settings").performScrollToNode(hasText("配置名称"))
         compose.onNode(hasSetTextAction() and hasText("默认配置")).assertExists()
+    }
+
+    @Test fun modelListReachesTheBottomBarAndKeepsItsLastSettingAccessible() {
+        compose.onNodeWithTag("tab-Model").performClick()
+        fun assertListReachesContentBottom() {
+            val content = compose.onNodeWithTag("page-Model").getBoundsInRoot()
+            val list = compose.onNodeWithTag("model-settings").getBoundsInRoot()
+            assertEquals(content.bottom.value, list.bottom.value, 1f)
+        }
+        assertListReachesContentBottom()
+        capture("model-bottom-bar-light")
+        RuntimeEnvironment.setQualifiers("+night")
+        compose.activityRule.scenario.recreate()
+        assertListReachesContentBottom()
+        capture("model-bottom-bar-dark")
+        compose.onNodeWithText("配置名称").performTextReplacement("布局测试")
+        compose.onNodeWithText("保存配置").assertIsDisplayed()
+        assertListReachesContentBottom()
+        compose.onNodeWithTag("model-settings").performScrollToNode(hasText("删除当前配置"))
+        compose.onNodeWithText("删除当前配置").assertIsDisplayed()
+        val lastSetting = compose.onNodeWithText("删除当前配置").getBoundsInRoot()
+        val save = compose.onNodeWithText("保存配置").getBoundsInRoot()
+        check(lastSetting.bottom + 8.dp <= save.top)
+        capture("model-bottom-bar-dirty")
     }
 
     @Test fun dashboardLabelsSavedReportsWithoutClaimingALiveConnection() {
