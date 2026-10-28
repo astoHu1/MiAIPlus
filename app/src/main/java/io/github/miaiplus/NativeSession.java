@@ -64,6 +64,8 @@ public final class NativeSession {
         String availableApps = "";
         String handoffPackage = null;
         String skipped = "";
+        String lastAction = "none";
+        String executionStatus = "initial";
         boolean awaitingReview = false;
         RunState.CancellationBinding cancellation = null;
         try {
@@ -116,6 +118,7 @@ public final class NativeSession {
                 Action action = ending ? new Action(actionData)
                     : new Action(Coordinates.normalize(request.getJSONObject("action"), request.optString("coordinate_space", "normalized"),
                         s.frame.width(), s.frame.height(), s.frame.imageWidth(), s.frame.imageHeight()));
+                lastAction = action.name;
                 String intent = TaskProgress.intent(action);
                 PhoneUseLog.event("action_coordinate_space", "requested", request.optString("coordinate_space", "normalized"));
                 PhoneUseLog.action("action_proposed", action, s.frame);
@@ -141,6 +144,7 @@ public final class NativeSession {
                         s.permissionReview.clear(); s.reviewChallenge = null;
                         s.steps++;
                         skipped = "本步未执行：审计期间动作目标或系统授权已变化；请按新观察在同一会话重新规划。";
+                        executionStatus = "skipped";
                     }
                 }
                 if (!staleReview) {
@@ -160,6 +164,7 @@ public final class NativeSession {
                             } else {
                                 s.reviewChallenge = s.permissionReview.issue(action, s.frame);
                                 awaitingReview = true;
+                                executionStatus = "waiting_review";
                                 s.run.progress = "等待模型审计本次操作";
                             }
                         } else if (!manual) approved = true;
@@ -190,6 +195,7 @@ public final class NativeSession {
                             s.frame = null;
                             s.previous = ""; s.repeats = 0;
                             s.run.progress = "已切换前台控屏，正在重新观察";
+                            executionStatus = "handoff";
                         } else {
                             boolean ready = true;
                             if (PageGuard.needsFreshFrame(action.name)) {
@@ -201,8 +207,10 @@ public final class NativeSession {
                                 ready = canExecuteReviewed(action, s.frame, current, approved);
                                 s.frame = current;
                             }
-                            if (!ready) skipped = "本步未执行：动作目标、焦点或屏幕布局已变化；旧坐标已作废。请按本次新截图/无障碍树在同一会话重新规划，不要重新开始任务。";
-                            else {
+                            if (!ready) {
+                                skipped = "本步未执行：动作目标、焦点或屏幕布局已变化；旧坐标已作废。请按本次新截图/无障碍树在同一会话重新规划，不要重新开始任务。";
+                                executionStatus = "skipped";
+                            } else {
                                 String previousFingerprint = s.previous;
                                 int previousRepeats = s.repeats;
                                 try {
@@ -213,9 +221,11 @@ public final class NativeSession {
                                         BackgroundActions.execute(s.display, action, s.run, config, s.frame, approved);
                                         s.launchPolicy.used(action);
                                     } else s.screen.execute(action, s.frame, s.run, approved);
+                                    executionStatus = "executed";
                                 } catch (ScreenService.ObservationChanged changed) {
                                     s.previous = previousFingerprint; s.repeats = previousRepeats;
                                     skipped = "本步未执行：注入前动作目标发生变化；请按本次新观察在同一会话重新规划。";
+                                    executionStatus = "skipped";
                                 }
                             }
                         }
@@ -234,12 +244,11 @@ public final class NativeSession {
                 "skipped", !skipped.isEmpty(), "awaitingReview", awaitingReview);
             String scaleHint = "附图JPEG=" + s.frame.imageWidth() + "x" + s.frame.imageHeight()
                 + "；树坐标为屏幕像素，不能混用。\n";
-            String tree = s.frame.tree();
-            // A ROM may not expose a virtual display's windows; say so instead of implying a tree was read.
-            String observation = tree.isEmpty() && s.frame.isBackground()
-                ? "（本机未提供后台屏的无障碍树，请只依据截图判断）"
-                : tree.substring(0, Math.min(12000, tree.length()));
+            // Only the model view is compacted; execution and permission checks retain the original Frame.
+            String observation = ModelObservation.nativeTree(s.frame);
             return "CONTINUE：控屏尚未完成。由你（小爱当前主模型）根据新截图/无障碍树选择下一步，不需要外部模型。\n"
+                + "上步动作=" + lastAction + "；执行状态=" + executionStatus + "\n"
+                + (executionStatus.equals("executed") ? "执行器已完成该动作；动作效果和任务是否完成仍须依据本次新观察核实。\n" : "")
                 + (skipped.isEmpty() ? "" : skipped + "\n")
                 + (s.reviewChallenge == null ? "" : "本步尚未执行，也未消耗动作预算。请独立审计下列待执行动作，保持action完全相同，补充permission_review，并显式传coordinate_space=normalized后再次调用本工具（挑战中的坐标已归一化）；不确定时decision=ask_user，由灵动岛请求用户确认。审计挑战=" + s.reviewChallenge + "\n")
                 + "会话=" + s.id + "；目标=" + s.goal + "；步数=" + s.steps + "/" + s.maxSteps
@@ -248,7 +257,7 @@ public final class NativeSession {
                     ? "动作预算已耗尽，本次为最后观察；下一次只允许finish、take_over或ask_user。只有本次观察确认目标完成才finish，否则说明未完成部分并交还用户；禁止继续操作或自动重启任务。\n"
                     : "每个操作（包括未执行的重新规划步骤）消耗一个动作步数；预算不足以完成时请take_over或ask_user说明未完成部分，不要自动重启任务。\n")
                 + "执行屏幕=" + (s.background ? "background" : "foreground") + "；会话工具=" + (s.sourceTool.isEmpty() ? "voiceassist__controlApp" : s.sourceTool) + "\n"
-                + (handoffPackage == null ? "" : "执行器已切换到前台控屏模式；旧后台截图和坐标已作废，只能根据本次新观察规划下一步。\n")
+                + (handoffPackage == null ? "" : "执行器已切换到前台控屏模式，本步未执行旧动作；旧后台截图和坐标已作废，只能根据本次新观察规划下一步。\n")
                 + (s.background
                     ? "本任务在独立的手机后台屏幕上执行，截图与树都只来自该后台屏；用户在其他屏幕上的操作与你无关，不要尝试操作主屏，也不要因为看不到主屏内容而改用主屏。\n"
                     : "")

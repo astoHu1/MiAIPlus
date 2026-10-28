@@ -14,6 +14,7 @@
 | 模型 API 列表底部空白修复 | 376 项 JVM／Robolectric 测试，Debug／Release 完整 Lint 与构建、Debug AndroidTest 构建通过；深浅色及未保存状态的布局断言与渲染检查 | 本轮未安装或操作手机，未实测系统导航栏与软键盘。见 [底部布局记录](validation/settings-bottom-layout-2026-10-19.md) |
 | 首页概览卡字号与等高布局 | 376 项 JVM／Robolectric 测试，Debug／Release 完整 Lint、Debug／Release／Preview APK 与 Debug AndroidTest 构建通过；API 37 实机覆盖安装后核对首页、配置恢复及无障碍连接 | 深色使用 Robolectric 渲染；未运行控屏、真实模型或宿主 Hook 回归。见 [首页字号记录](validation/settings-home-typography-2026-10-28.md) |
 | 底栏切页动画 | 377 项 JVM／Robolectric 测试，Debug／Release 完整 Lint 与各 APK 构建；深浅色和中断过渡断言、API 37 优化 Preview 设置回归与性能采样通过 | 底栏采样 P95 19 ms、1/660 帧超时，仍有 150 ms 长帧；未重做真实模型或 Hook 回归。见 [底栏动画记录](validation/settings-tab-animation-2026-10-28.md) |
+| Phone Use 模型观察、明确执行状态与请求计量 | 395 项 JVM／Robolectric 测试、双变体完整 Lint／构建、Preview／AndroidTest；真实应用安全导航、Chat／Responses mock 与实际宿主 Hook／附图／续调通过 | 仅模型树投影，内部安全证据不变；历史 48 帧树 UTF-8 体积减少约 4.53%／6.43%，不等于整体请求或 token 收益。后台与部分依赖 su 的设备专项受权限限制，未验证真实模型质量 A/B。见 [观察与状态记录](validation/phone-use-observation-2026-10-28.md) |
 
 各行按其日期和验证范围独立判断；2026-10-19 会话修复重跑了本地测试、Lint 与构建，并安装测试包完成上述设备专项，未运行 CI。详细日志、日志页及会话修复属于发布基线之后的源码改动，未据此创建新的正式签名发布版本。
 

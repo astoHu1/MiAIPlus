@@ -28,6 +28,7 @@ final class PhoneUseLog {
     private static volatile boolean remoteEnabled;
     private static volatile long remoteCheckedAt = -1;
     private static final AtomicLong observations = new AtomicLong();
+    private static final AtomicLong requests = new AtomicLong();
     private static final ThreadLocal<Trace> current = new ThreadLocal<>();
     private static final java.util.LinkedHashMap<String, Trace> images = new java.util.LinkedHashMap<>();
     record Trace(String session, int step, String observation) { }
@@ -177,42 +178,120 @@ final class PhoneUseLog {
     /** Inspect only known multimodal content fields, never print prompts, URLs or request bodies. */
     static void request(JSONObject body, String api) {
         if (!enabled()) return;
+        try { request(body, api, body.toString()); }
+        catch (Exception ignored) { event("request_inspection_failed"); }
+    }
+    static void request(JSONObject body, String api, String serialized) {
+        if (!enabled()) return;
+        try { request(body, api, serialized.getBytes(StandardCharsets.UTF_8).length); }
+        catch (Exception ignored) { event("request_inspection_failed"); }
+    }
+    /** requestBytes comes from the final serialized transport body, not a token estimate. */
+    static void request(JSONObject body, String api, long requestBytes) {
+        if (!enabled()) return;
         try {
+            String requestRef = android.os.Process.myPid() + "-" + requests.incrementAndGet();
             JSONArray messages = body.optJSONArray("messages");
             if (messages == null) messages = body.optJSONArray("input");
-            int count = 0;
+            RequestCounts counts = new RequestCounts();
+            counts.text("system", body.opt("instructions"));
+            if (messages == null) counts.text("user", body.opt("input"));
+            int count = 0, associatedImages = 0;
+            long imageBase64Chars = 0;
             boolean phoneUse = false;
             if (messages != null) for (int i = 0; i < messages.length(); i++) {
                 JSONObject message = messages.optJSONObject(i);
-                JSONArray content = message == null ? null : message.optJSONArray("content");
-                if (message != null && message.opt("content") instanceof String text
+                if (message == null) continue;
+                String role = message.optString("role");
+                counts.text(role, message.opt("content"));
+                if ("function_call_output".equals(message.optString("type"))) {
+                    counts.functionResults++;
+                    counts.text("tool", message.opt("output"));
+                    if (message.optString("output").contains("CONTINUE：控屏尚未完成。")) phoneUse = true;
+                } else if ("tool".equals(role)) counts.functionResults++;
+                if ("function_call".equals(message.optString("type"))) {
+                    counts.functionCalls++;
+                    counts.argumentChars += message.optString("arguments").length();
+                }
+                JSONArray calls = message.optJSONArray("tool_calls");
+                if (calls != null) for (int j = 0; j < calls.length(); j++) {
+                    JSONObject call = calls.optJSONObject(j);
+                    JSONObject function = call == null ? null : call.optJSONObject("function");
+                    if (function != null) {
+                        counts.functionCalls++;
+                        counts.argumentChars += function.optString("arguments").length();
+                    }
+                }
+                if ("reasoning".equals(message.optString("type"))) counts.opaqueChars += message.optString("encrypted_content").length();
+                JSONArray opaque = message.optJSONArray("_responses_output");
+                if (opaque != null) for (int j = 0; j < opaque.length(); j++) {
+                    JSONObject item = opaque.optJSONObject(j);
+                    if (item != null && "reasoning".equals(item.optString("type")))
+                        counts.opaqueChars += item.optString("encrypted_content").length();
+                }
+                JSONArray content = message.optJSONArray("content");
+                if (message.opt("content") instanceof String text
                     && text.contains("CONTINUE：控屏尚未完成。")) phoneUse = true;
                 if (content == null) continue;
                 for (int j = 0; j < content.length(); j++) {
                     JSONObject part = content.optJSONObject(j);
                     if (part == null) continue;
                     String type = part.optString("type");
-                    if ((type.equals("text") || type.equals("input_text"))
-                        && part.optString("text").contains("CONTINUE：控屏尚未完成。")) phoneUse = true;
+                    if (type.equals("text") || type.equals("input_text") || type.equals("output_text")) {
+                        counts.text(role, part.opt("text"));
+                        if (part.optString("text").contains("CONTINUE：控屏尚未完成。")) phoneUse = true;
+                    }
                     if (!type.equals("image_url") && !type.equals("input_image")) continue;
                     count++;
                     Object image = part.opt("image_url");
                     String url = image instanceof JSONObject object ? object.optString("url") : String.valueOf(image);
                     int comma = url.indexOf(',');
-                    String digest = url.startsWith("data:") && comma >= 0 ? reference(url.substring(comma + 1)) : "non_inline";
+                    boolean inline = url.startsWith("data:") && comma >= 0;
+                    if (inline) imageBase64Chars += url.length() - comma - 1;
+                    String digest = inline ? reference(url.substring(comma + 1)) : "non_inline";
                     Trace trace;
                     boolean known;
                     synchronized (images) { known = images.containsKey(digest); trace = images.get(digest); }
                     if (known) {
+                        associatedImages++;
                         phoneUse = true;
                         try (Scope ignored = use(trace)) {
-                            event("request_image", "index", count, "messageIndex", i, "api", api, "imageDigest", digest);
+                            event("request_image", "requestRef", requestRef, "index", count, "messageIndex", i, "api", api, "imageDigest", digest);
                         }
                     }
                 }
             }
-            if (phoneUse || current.get() != null)
-                event("model_request", "api", api, "messages", messages == null ? 0 : messages.length(), "images", count);
+            if (phoneUse || current.get() != null) {
+                JSONArray tools = body.optJSONArray("tools");
+                event("model_request", "requestRef", requestRef, "api", api,
+                    "messages", messages == null ? 0 : messages.length(), "images", count,
+                    "associatedImages", associatedImages, "imageBase64Chars", imageBase64Chars,
+                    "requestBytes", requestBytes, "tools", tools == null ? 0 : tools.length(),
+                    "toolsBytes", tools == null ? 0 : tools.toString().getBytes(StandardCharsets.UTF_8).length,
+                    "textChars", counts.textChars, "systemTextChars", counts.systemTextChars,
+                    "userTextChars", counts.userTextChars, "assistantTextChars", counts.assistantTextChars,
+                    "toolTextChars", counts.toolTextChars, "otherTextChars", counts.otherTextChars,
+                    "functionCalls", counts.functionCalls, "functionResults", counts.functionResults,
+                    "argumentChars", counts.argumentChars, "opaqueChars", counts.opaqueChars);
+            }
         } catch (Exception ignored) { event("request_inspection_failed"); }
+    }
+    /** Text lengths are UTF-16 code units by protocol role, not tokens or inferred task facts. */
+    private static final class RequestCounts {
+        long textChars, systemTextChars, userTextChars, assistantTextChars, toolTextChars, otherTextChars;
+        long argumentChars, opaqueChars;
+        int functionCalls, functionResults;
+        void text(String role, Object value) {
+            if (!(value instanceof String text)) return;
+            int length = text.length();
+            textChars += length;
+            switch (role) {
+                case "system", "developer" -> systemTextChars += length;
+                case "user" -> userTextChars += length;
+                case "assistant" -> assistantTextChars += length;
+                case "tool" -> toolTextChars += length;
+                default -> otherTextChars += length;
+            }
+        }
     }
 }

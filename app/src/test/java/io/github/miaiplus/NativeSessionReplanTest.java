@@ -5,6 +5,7 @@ import android.app.Application;
 import android.graphics.Bitmap;
 import android.util.Base64;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.time.Duration;
@@ -26,7 +27,8 @@ import org.robolectric.shadows.ShadowSystemClock;
 
 @RunWith(RobolectricTestRunner.class)
 @org.robolectric.annotation.Config(sdk = 33, application = Application.class,
-    shadows = {NativeSessionReplanTest.ScreenShadow.class, NativeSessionReplanTest.RunShadow.class})
+    shadows = {NativeSessionReplanTest.ScreenShadow.class, NativeSessionReplanTest.RunShadow.class,
+        NativeSessionReplanTest.BackgroundShadow.class, NativeSessionReplanTest.BackgroundActionShadow.class})
 public final class NativeSessionReplanTest {
     private static final int OWNER = 1000;
     private static final String ROOT = "android.widget.FrameLayout [0,0][1000,1000] window=3 id=root enabled=true\n";
@@ -37,6 +39,7 @@ public final class NativeSessionReplanTest {
 
     @Before public void setUp() throws Exception {
         ScreenShadow.reset();
+        BackgroundShadow.closes = 0;
         FrameStore.clear();
         Bitmap bitmap = Bitmap.createBitmap(8, 8, Bitmap.Config.ARGB_8888);
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
@@ -68,9 +71,43 @@ public final class NativeSessionReplanTest {
         assertEquals(0, ScreenShadow.attempts);
         assertEquals(0, ScreenShadow.executions);
         assertSame(ScreenShadow.current, field(session.getClass(), "frame").get(session));
-        assertContinuing(step(500, 200));
+        assertExecuted(step(500, 200));
         assertEquals(1, ScreenShadow.executions);
         assertArrayEquals(new double[]{500, 200}, ScreenShadow.lastPoint, 0);
+    }
+
+    @Test public void initialObservationDoesNotReportAnExecutedAction() throws Exception {
+        ScreenService previous = ScreenService.instance;
+        ScreenService.instance = (ScreenService) field(session.getClass(), "screen").get(session);
+        field(NativeSession.class, "active").set(null, null);
+        try {
+            String result = NativeSession.handle(new Config(Map.of()), "查看当前页面", OWNER);
+            session = field(NativeSession.class, "active").get(null);
+            sessionRun = (RunState) field(session.getClass(), "run").get(session);
+            assertContinuing(result);
+            assertTrue(result, result.contains("上步动作=none；执行状态=initial\n"));
+            assertFalse(result, result.contains("执行状态=executed"));
+            assertEquals(0, ScreenShadow.attempts);
+        } finally {
+            ScreenService.instance = previous;
+        }
+    }
+
+    @Test public void foregroundHandoffReportsOldActionUnexecutedAndInvalidatesOldCoordinates() throws Exception {
+        field(session.getClass(), "background").setBoolean(session, true);
+        field(session.getClass(), "frame").set(session, ScreenService.Frame.background(image, ROOT + BUTTON,
+            1000, 1000, 8, 8, "example.app", 7, "fixture-generation"));
+        Constructor<BackgroundDisplay> constructor = BackgroundDisplay.class.getDeclaredConstructor(Process.class, File.class);
+        constructor.setAccessible(true);
+        field(session.getClass(), "display").set(session, constructor.newInstance(null, null));
+        String result = step(new JSONObject().put("action", "launch").put("app", "example.app"));
+        assertContinuing(result);
+        assertTrue(result, result.contains("上步动作=launch；执行状态=handoff\n"));
+        assertTrue(result, result.contains("本步未执行旧动作；旧后台截图和坐标已作废"));
+        assertTrue(result, result.contains("执行屏幕=foreground"));
+        assertFalse(result, result.contains("执行状态=executed"));
+        assertEquals(0, ScreenShadow.attempts);
+        assertEquals(1, BackgroundShadow.closes);
     }
 
     @Test public void manualConfirmationAndCriticalYoloUseConfirmationBeforeOneInput() throws Exception {
@@ -79,7 +116,7 @@ public final class NativeSessionReplanTest {
             JSONObject action = sensitiveAction();
             if (mode.equals("yolo")) action.put("risk_level", "critical");
             int confirmations = ScreenShadow.confirmations, executions = ScreenShadow.executions;
-            assertContinuing(step(action));
+            assertExecuted(step(action));
             assertEquals(confirmations + 1, ScreenShadow.confirmations);
             assertEquals(executions + 1, ScreenShadow.executions);
             assertTrue(ScreenShadow.lastApproved);
@@ -88,7 +125,7 @@ public final class NativeSessionReplanTest {
 
     @Test public void yoloApprovesOrdinarySensitiveActionAndManualReplansWhenConfirmationChangesTarget() throws Exception {
         field(session.getClass(), "permissionMode").set(session, "yolo");
-        assertContinuing(step(sensitiveAction()));
+        assertExecuted(step(sensitiveAction()));
         assertEquals(0, ScreenShadow.confirmations);
         assertEquals(1, ScreenShadow.executions);
         field(session.getClass(), "permissionMode").set(session, "manual");
@@ -104,13 +141,15 @@ public final class NativeSessionReplanTest {
         JSONObject action = sensitiveAction();
         String challengeResult = step(action);
         assertContinuing(challengeResult);
+        assertTrue(challengeResult, challengeResult.contains("上步动作=tap；执行状态=waiting_review\n"));
+        assertFalse(challengeResult, challengeResult.contains("执行状态=executed"));
         assertTrue(challengeResult, challengeResult.contains("审计挑战="));
         assertEquals(19, field(session.getClass(), "steps").getInt(session));
         assertEquals(0, ScreenShadow.executions);
         JSONObject challenge = (JSONObject) field(session.getClass(), "reviewChallenge").get(session);
         action.put("permission_review", new JSONObject().put("token", challenge.getString("token"))
             .put("decision", "allow").put("reason", "用户目标已授权该次提交，操作范围一致"));
-        assertContinuing(step(action));
+        assertExecuted(step(action));
         assertEquals(20, field(session.getClass(), "steps").getInt(session));
         assertEquals(0, ScreenShadow.confirmations);
         assertEquals(1, ScreenShadow.executions);
@@ -206,7 +245,7 @@ public final class NativeSessionReplanTest {
         assertEquals("All skipped actions must reach the injection boundary", 6, ScreenShadow.attempts);
         assertEquals("Injection rejection must not execute an action", 0, ScreenShadow.executions);
         ScreenShadow.rejectInjection = false;
-        assertContinuing(step(200, 200));
+        assertExecuted(step(200, 200));
         assertEquals(1, ScreenShadow.executions);
     }
 
@@ -214,7 +253,7 @@ public final class NativeSessionReplanTest {
         field(session.getClass(), "frame").set(session, frame(BUTTON + clock("10:00")));
         ScreenShadow.current = frame(BUTTON + clock("10:01"));
         String result = step(200, 200);
-        assertContinuing(result);
+        assertExecuted(result);
         assertFalse(result.contains("本步未执行"));
         assertEquals(1, ScreenShadow.executions);
     }
@@ -222,7 +261,7 @@ public final class NativeSessionReplanTest {
     @Test public void finalAllowedActionReturnsLastObservationAndStillAllowsFinish() throws Exception {
         field(session.getClass(), "steps").setInt(session, 19);
         String result = step(200, 200);
-        assertContinuing(result);
+        assertExecuted(result);
         assertTrue(result, result.contains("步数=20/20；剩余动作步数=0"));
         assertTrue(result, result.contains("下一次只允许finish、take_over或ask_user"));
         assertSame(ScreenShadow.current, field(session.getClass(), "frame").get(session));
@@ -342,11 +381,21 @@ public final class NativeSessionReplanTest {
     private void assertSkipped(String result) throws Exception {
         assertContinuing(result);
         assertTrue(result, result.contains("本步未执行"));
+        assertTrue(result, result.contains("上步动作=tap；执行状态=skipped\n"));
+        assertFalse(result, result.contains("执行状态=executed"));
+    }
+    private void assertExecuted(String result) throws Exception {
+        assertContinuing(result);
+        assertTrue(result, result.contains("上步动作=tap；执行状态=executed\n"));
+        assertTrue(result, result.contains("动作效果和任务是否完成仍须依据本次新观察核实"));
+        assertFalse(result, result.contains("执行状态=skipped"));
     }
     private void assertContinuing(String result) throws Exception {
         assertTrue(result, result.startsWith("CONTINUE："));
         assertTrue(result, result.contains("会话=" + sessionRun.id + "；"));
         assertTrue(result, result.contains("MIAIPLUS_FRAME:"));
+        assertEquals(sessionRun.id, NativeTurnLifecycle.continuationSession(result));
+        assertFalse(PhoneUseResult.endsNativeTurn(result));
         assertSame(session, field(NativeSession.class, "active").get(null));
         assertTrue(NativeSession.hasActiveSession());
         assertFalse(sessionRun.cancelled.get());
@@ -375,6 +424,8 @@ public final class NativeSessionReplanTest {
             current = afterConfirmation = null; rejectInjection = lastApproved = false; failure = null;
             attempts = executions = confirmations = 0; lastPoint = null;
         }
+        @Implementation protected static boolean isHealthy() { return true; }
+        @Implementation protected String apps() { return "示例 = example.app\n"; }
         @Implementation protected ScreenService.Frame capture(RunState run) { run.check(); return current; }
         @Implementation protected boolean confirm(String message, RunState run) {
             run.check(); confirmations++;
@@ -389,6 +440,24 @@ public final class NativeSessionReplanTest {
             if (failure != null) throw failure;
             executions++;
             lastPoint = action.point("element");
+        }
+    }
+
+    /** Handoff result fixture only; no helper process or actual display is created. */
+    @Implements(value = BackgroundDisplay.class, isInAndroidSdk = false)
+    public static final class BackgroundShadow {
+        static int closes;
+        @Implementation protected void __constructor__(Process helper, File frameDirectory) { }
+        @Implementation public void close() { closes++; }
+    }
+
+    @Implements(value = BackgroundActions.class, isInAndroidSdk = false)
+    public static final class BackgroundActionShadow {
+        @Implementation protected static String foregroundHandoff(BackgroundDisplay display, Action action,
+            RunState run, BackgroundActions.LaunchPolicy policy) throws Exception {
+            assertNotNull(display);
+            assertEquals("launch", action.name);
+            return action.data.getString("app");
         }
     }
 

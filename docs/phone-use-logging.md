@@ -48,6 +48,14 @@ adb logcat -v threadtime 'MiAIPlusPhoneUse:I' '*:S' > phone-use.log
 
 不记录用户目标、页面正文／完整树、输入内容、操作说明、确认／审计 token、图片数据、服务地址、模型名、API Key、HTTP 头或完整请求。会记录目标应用包名／组件、窗口状态、动作类型、坐标及长度等诊断元数据。
 
+### 请求负担计量
+
+受控外部传输的 `model_request` 增加纯长度／数量字段：`requestBytes` 为实际发送 JSON 的 UTF-8 字节；`tools`／`toolsBytes` 为工具数和工具 schema JSON 字节；`textChars` 及 `systemTextChars`／`userTextChars`／`assistantTextChars`／`toolTextChars`／`otherTextChars` 按协议角色统计文本。`functionCalls`／`functionResults`、`argumentChars` 和 `opaqueChars` 分别统计调用／结果、参数字符串和 encrypted reasoning 长度，不输出其内容。`requestRef` 关联同一次请求的汇总与 `request_image`，不作为任务授权或帧身份。
+
+所有 `*Chars` 均为 Java UTF-16 code units，不能当作 token。`imageBase64Chars` 是内联图片 Base64 字符数，不是 JPEG 解码字节或视觉 token；`associatedImages` 仅代表命中最近 32 个图片摘要，既不保证最新帧，也不证明服务端收图。Responses 的 `function_call_output.output` 同样参与观察文本识别；普通聊天不会仅因新增计数就生成控屏请求日志。关闭详细日志时不增加请求序列化或诊断 UTF-8 副本。
+
+这些字段没有提供服务端 usage、缓存／推理 token 或模型耗时；缺失不能按零处理。官方私有传输仍只覆盖宿主附图边界，不能用外部请求计量代替官方线上历史。
+
 ## 判断故障
 
 先对比同一会话中最后正常与首次异常的观察：

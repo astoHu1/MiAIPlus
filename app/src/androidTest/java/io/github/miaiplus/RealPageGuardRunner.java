@@ -75,6 +75,7 @@ final class RealPageGuardRunner {
             baseline = capture(service, run, request);
             save(baseline);
             response.put("package", baseline.foreground());
+            observationMetrics(baseline, response);
         } else if (op.equals("sample")) {
             if (baseline == null) throw new IllegalStateException("observe first");
             JSONArray points = request.getJSONArray("points"), samples = new JSONArray();
@@ -104,8 +105,11 @@ final class RealPageGuardRunner {
             var match = java.util.regex.Pattern.compile("会话=([a-f0-9-]{36})").matcher(observation);
             if (!match.find()) throw new IllegalStateException("session unavailable");
             session = match.group(1);
+            String executionStatus = executionStatus(observation, "none");
+            if (!executionStatus.equals("initial")) throw new IllegalStateException("unexpected initial execution status");
             FrameStore.clear();
-            response.put("continuing", observation.startsWith("CONTINUE："));
+            response.put("continuing", observation.startsWith("CONTINUE："))
+                .put("executionStatus", executionStatus);
         } else if (op.equals("tap")) {
             if (session == null) throw new IllegalStateException("begin first");
             capture(service, run, request);
@@ -113,8 +117,16 @@ final class RealPageGuardRunner {
             JSONObject action = new JSONObject().put("action", "tap").put("element", request.getJSONArray("point"));
             String observation = NativeSession.handle(config, "MIAIPLUS:" + new JSONObject().put("session", session)
                 .put("coordinate_space", "normalized").put("action", action), android.os.Process.myUid());
-            response.put("skipped", observation.contains("本步未执行"))
-                .put("continuing", observation.startsWith("CONTINUE："));
+            String executionStatus = executionStatus(observation, "tap");
+            if (!executionStatus.equals("executed") && !executionStatus.equals("skipped"))
+                throw new IllegalStateException("unexpected tap execution status");
+            int sessionHeader = observation.indexOf("\n会话=");
+            if (sessionHeader < 0 || executionStatus.equals("skipped")
+                != observation.substring(0, sessionHeader).contains("本步未执行"))
+                throw new IllegalStateException("tap skip status mismatch");
+            response.put("skipped", executionStatus.equals("skipped"))
+                .put("continuing", observation.startsWith("CONTINUE："))
+                .put("executionStatus", executionStatus);
             FrameStore.clear();
             run.pause(400); // Avoid Android's minimum interval immediately after NativeSession's final capture.
             save(capture(service, run, request));
@@ -138,6 +150,40 @@ final class RealPageGuardRunner {
         Files.writeString(new File(directory, "observation.json").toPath(), new JSONObject()
             .put("image", frame.image()).put("tree", frame.tree()).put("package", frame.foreground())
             .put("width", frame.width()).put("height", frame.height()).toString(), StandardCharsets.UTF_8);
+    }
+
+    /** Compare model views of exactly the same evidence; never serialize page content into probe status. */
+    private static void observationMetrics(ScreenService.Frame frame, JSONObject response) throws Exception {
+        String tree = frame.tree();
+        String legacyNative = tree.isEmpty() && frame.isBackground()
+            ? "（本机未提供后台屏的无障碍树，请只依据截图判断）"
+            : tree.substring(0, Math.min(tree.length(), 12000));
+        String nativeModel = ModelObservation.nativeTree(frame);
+        String externalModel = ModelObservation.externalTree(frame);
+        textMetrics(response, "tree", tree);
+        textMetrics(response, "legacyNativeTree", legacyNative);
+        textMetrics(response, "nativeModelTree", nativeModel);
+        textMetrics(response, "externalModelTree", externalModel);
+        response.put("nativeModelTreeTruncated", nativeModel.equals(externalModel) ? 0 : 1);
+    }
+
+    private static void textMetrics(JSONObject response, String prefix, String text) throws Exception {
+        response.put(prefix + "Chars", text.length())
+            .put(prefix + "Utf8Bytes", text.getBytes(StandardCharsets.UTF_8).length);
+    }
+
+    /** Read only the protocol status immediately after CONTINUE, never a matching line in page content. */
+    private static String executionStatus(String observation, String action) {
+        if (!observation.startsWith("CONTINUE：")) throw new IllegalStateException("native continuation unavailable");
+        int firstLineEnd = observation.indexOf('\n');
+        int statusEnd = observation.indexOf('\n', firstLineEnd + 1);
+        String prefix = "上步动作=" + action + "；执行状态=";
+        if (firstLineEnd < 0 || statusEnd < 0 || !observation.startsWith(prefix, firstLineEnd + 1))
+            throw new IllegalStateException("native execution status unavailable");
+        String status = observation.substring(firstLineEnd + 1 + prefix.length(), statusEnd);
+        if (!java.util.Set.of("initial", "executed", "skipped", "waiting_review", "handoff").contains(status))
+            throw new IllegalStateException("unknown native execution status");
+        return status;
     }
 
     private static void deleteFile(File file) {

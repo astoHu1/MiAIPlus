@@ -63,7 +63,8 @@ final class NativeResponsesAdapter {
         if ("responses".equals(api)) restore(chat, replayIdentity);
         JSONObject body = "responses".equals(api) ? ModelProtocol.request(chat) : chat;
         ReasoningPolicy.apply(body, model, api, reasoning);
-        PhoneUseLog.request(body, api);
+        String serialized = body.toString();
+        PhoneUseLog.request(body, api, serialized);
         Object builder = Reflector.callMethod(request, "newBuilder");
         Reflector.callMethod(builder, "header", "User-Agent", ModelHeaders.USER_AGENT);
         Object session = Reflector.callMethod(request, "header", ModelHeaders.SESSION);
@@ -71,7 +72,7 @@ final class NativeResponsesAdapter {
             Reflector.callMethod(builder, "header", ModelHeaders.SESSION, java.util.UUID.randomUUID().toString());
         if ("responses".equals(api))
             Reflector.callMethod(builder, "url", url.substring(0, url.length() - "/chat/completions".length()) + "/responses");
-        Object requestBody = Reflector.callStaticMethod(type("gg2.g0"), "create", jsonType(), body.toString());
+        Object requestBody = Reflector.callStaticMethod(type("gg2.g0"), "create", jsonType(), serialized);
         Reflector.callMethod(builder, "method", "POST", requestBody);
         Reflector.callMethod(builder, "removeHeader", "Content-Length");
         Object response = Reflector.callMethod(chain, "proceed", Reflector.callMethod(builder, "build"));

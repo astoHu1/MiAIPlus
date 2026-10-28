@@ -93,7 +93,7 @@ public final class AgentEngine {
                 // Preserve system/task and six recent observation/action/result groups.
                 while (messages.length() > 20) for (int i = 0; i < 3; i++) messages.remove(2);
                 JSONArray content = new JSONArray().put(new JSONObject().put("type", "text").put("text",
-                    "上步结果：" + outcome + "\n前台：" + frame.foreground() + "\n无障碍树（实际像素边界）：\n" + frame.tree()))
+                    "上步结果：" + outcome + "\n前台：" + frame.foreground() + "\n无障碍树（实际像素边界）：\n" + ModelObservation.externalTree(frame)))
                     .put(new JSONObject().put("type", "image_url").put("image_url", new JSONObject().put("url", "data:image/jpeg;base64," + frame.image())));
                 messages.put(ModelClient.message("user", content));
                 JSONObject response = ModelClient.complete(config, messages, tools, run);

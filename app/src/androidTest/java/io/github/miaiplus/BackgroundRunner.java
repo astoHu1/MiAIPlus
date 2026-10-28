@@ -51,15 +51,16 @@ final class BackgroundRunner {
             long serviceDeadline = SystemClock.elapsedRealtime() + 20_000;
             while (ScreenService.instance == null && SystemClock.elapsedRealtime() < serviceDeadline) Thread.sleep(100);
             check(ScreenService.instance != null, "accessibility service not connected");
-            // Placed here rather than by the host: `am instrument` restarts the target process, so a fixture the
-            // host launched beforehand is already gone by the time this runs. Taking the fixture up first and the
-            // baseline after keeps the invariant honest — everything measured below starts from the user's screen
-            // already being where it must stay.
-            test.startActivitySync(new android.content.Intent(context, FixtureActivity.class)
-                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
+            // Ask the host only after instrumentation has restarted the target process. A ROM may refuse an
+            // in-process background activity launch, leaving startActivitySync waiting without a timeout. The
+            // existing host handshake launches this owned fixture through adb; require its actual window focus
+            // before recording the physical-screen baseline, and fail within a bounded interval if setup fails.
+            signal(test, "MIAIPLUS_LAUNCH_FIXTURE");
             long fixtureDeadline = SystemClock.elapsedRealtime() + 10_000;
-            while (FixtureActivity.current == null && SystemClock.elapsedRealtime() < fixtureDeadline) Thread.sleep(100);
-            check(FixtureActivity.current != null, "could not place the physical fixture");
+            while ((FixtureActivity.current == null || !FixtureActivity.current.hasWindowFocus())
+                && SystemClock.elapsedRealtime() < fixtureDeadline) Thread.sleep(100);
+            check(FixtureActivity.current != null && FixtureActivity.current.hasWindowFocus(),
+                "could not place and focus the physical fixture");
             Thread.sleep(1200);
             // Native planner, no model configuration: the display backend is what is under test here.
             prefs.edit().putBoolean("enabled", true).putBoolean("backgroundDisplay", true)

@@ -155,6 +155,80 @@ public final class PhoneUseLogTest {
             assertFalse(output().contains("secret")); assertFalse(output().contains(frame.image()));
         }
     }
+    @Test public void requestBurdenCountsChatAndResponsesRolesCallsAndUtf8WithoutChangingBody() throws Exception {
+        enable(true);
+        String system = "规则-secret", user = "任务😀-secret", assistant = "结果-secret", result = "操作-secret";
+        JSONObject call = new JSONObject().put("id", "call-private-secret").put("type", "function")
+            .put("function", new JSONObject().put("name", "private-tool-secret").put("arguments", "{\"text\":\"私密-secret\"}"));
+        JSONArray tools = new JSONArray().put(new JSONObject().put("type", "function").put("function",
+            new JSONObject().put("name", "private-tool-secret").put("description", "工具-secret")
+                .put("parameters", new JSONObject().put("type", "object"))));
+        JSONObject chat = new JSONObject().put("model", "private-model-secret").put("tools", tools)
+            .put("messages", new JSONArray().put(ModelClient.message("system", system))
+                .put(ModelClient.message("user", user))
+                .put(ModelClient.message("assistant", assistant).put("tool_calls", new JSONArray().put(call)))
+                .put(ModelClient.message("tool", result).put("tool_call_id", call.getString("id"))));
+        try (PhoneUseLog.Scope ignored = PhoneUseLog.scope("task", 1)) {
+            for (JSONObject body : new JSONObject[]{chat, ModelProtocol.request(chat)}) {
+                ShadowLog.clear();
+                String serialized = body.toString();
+                PhoneUseLog.request(body, body == chat ? "chat" : "responses", serialized);
+                JSONObject record = lastRequest();
+                assertEquals(serialized.getBytes(java.nio.charset.StandardCharsets.UTF_8).length, record.getLong("requestBytes"));
+                assertEquals(system.length(), record.getLong("systemTextChars"));
+                assertEquals(user.length(), record.getLong("userTextChars"));
+                assertEquals(assistant.length(), record.getLong("assistantTextChars"));
+                assertEquals(result.length(), record.getLong("toolTextChars"));
+                assertEquals(system.length() + user.length() + assistant.length() + result.length(), record.getLong("textChars"));
+                assertEquals(0, record.getLong("otherTextChars"));
+                assertEquals(1, record.getInt("tools"));
+                assertEquals(body.getJSONArray("tools").toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length,
+                    record.getLong("toolsBytes"));
+                assertEquals(1, record.getInt("functionCalls"));
+                assertEquals(1, record.getInt("functionResults"));
+                assertEquals(call.getJSONObject("function").getString("arguments").length(), record.getLong("argumentChars"));
+                assertEquals(serialized, body.toString());
+                assertFalse(output().contains("secret"));
+            }
+        }
+    }
+    @Test public void responsesFunctionResultIdentifiesPhoneUseWithoutImagesOrThreadScope() throws Exception {
+        enable(true);
+        String result = "CONTINUE：控屏尚未完成。\n会话=private-session-secret；目标=private-goal-secret";
+        JSONObject reasoning = new JSONObject().put("type", "reasoning").put("encrypted_content", "opaque-private-secret");
+        JSONObject body = new JSONObject().put("input", new JSONArray().put(reasoning)
+            .put(new JSONObject().put("type", "function_call_output").put("call_id", "private-call-secret").put("output", result)));
+        PhoneUseLog.request(body, "responses");
+        JSONObject record = lastRequest();
+        assertEquals(result.length(), record.getLong("toolTextChars"));
+        assertEquals(reasoning.getString("encrypted_content").length(), record.getLong("opaqueChars"));
+        assertEquals(1, record.getInt("functionResults"));
+        assertEquals(0, record.getInt("images"));
+        assertFalse(output().contains("secret"));
+    }
+    @Test public void disabledRequestInspectionDoesNotSerializeOrReadDiagnosticCopies() {
+        enable(false);
+        JSONObject body = new JSONObject() {
+            @Override public String toString() { throw new AssertionError("disabled diagnostics serialized the request"); }
+        };
+        PhoneUseLog.request(body, "chat");
+        PhoneUseLog.request(body, "chat", (String)null);
+        PhoneUseLog.request(body, "chat", 1024L);
+        assertTrue(logs().isEmpty());
+    }
+    @Test public void unassociatedOrdinaryRequestDoesNotEmitPhoneUseMetadata() throws Exception {
+        enable(true);
+        PhoneUseLog.request(new JSONObject().put("messages", new JSONArray()
+            .put(ModelClient.message("user", "ordinary-private-secret"))), "chat");
+        assertTrue(logs().isEmpty());
+    }
+    private JSONObject lastRequest() throws Exception {
+        for (int i = logs().size() - 1; i >= 0; i--) {
+            JSONObject record = new JSONObject(logs().get(i).msg);
+            if ("model_request".equals(record.optString("event"))) return record;
+        }
+        throw new AssertionError("model_request missing");
+    }
     @Test
     @org.robolectric.annotation.Config(shadows = FailingLog.class)
     public void loggingBackendFailureDoesNotBreakFrameDelivery() throws Exception {
