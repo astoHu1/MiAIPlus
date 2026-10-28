@@ -11,6 +11,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
@@ -56,13 +57,18 @@ fun PluginPage(state: PluginState, phoneUseEnabled: Boolean, nativePlanner: Bool
             }, onClick = openPhoneUse)
         }
         Spacer(Modifier.height(16.dp))
-        Row(Modifier.fillMaxWidth().padding(horizontal = 28.dp),
+        Row(Modifier.fillMaxWidth().padding(start = 28.dp, end = 16.dp),
             verticalAlignment = Alignment.CenterVertically) {
-            Text("MCP 插件", Modifier.weight(1f), style = MiuixTheme.textStyles.footnote1,
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+            SmallTitle("MCP 插件", modifier = Modifier.weight(1f).testTag("mcp-section-title"),
+                insideMargin = PaddingValues(0.dp))
             TextButton("添加", { state.create() }, enabled = !state.busy,
-                modifier = Modifier.testTag("add-mcp-plugin"))
+                modifier = Modifier.height(48.dp).testTag("add-mcp-plugin"),
+                insideMargin = PaddingValues(horizontal = 12.dp),
+                textStyle = MiuixTheme.textStyles.footnote1,
+                colors = ButtonDefaults.textButtonColors(color = Color.Transparent,
+                    textColor = MiuixTheme.colorScheme.primary))
         }
+        Spacer(Modifier.height(8.dp))
         val remotes = state.entries.filter { it.kind() == "mcp" }
         if (remotes.isEmpty()) PluginCard { BasicComponent(title = "还没有 MCP 插件") }
         remotes.forEach { entry ->

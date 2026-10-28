@@ -6,6 +6,7 @@
 
 | 范围 | 已有证据 | 边界与详细记录 |
 | --- | --- | --- |
+| MCP 添加按钮与 1.0.2-preview 发布检查 | 525 项 JVM／Robolectric、7 项 guard、双变体完整 Lint 与各构建；320 dp 窄屏对齐回归及 API 37 优化 Preview 插件实机通过 | 标题／按钮几何、编辑与导航检查，原配置及测试包已恢复；签名发布产物单独核验。见 [按钮与发布记录](validation/plugin-add-release-2026-10-29.md) |
 | 设置文案精简与 Pluginify 主线整合 | 合并 main `8e9ff66` 与 Pluginify `4293f3e`；524 项 JVM／Robolectric 与 7 项 guard 测试、双变体完整 Lint 及各 APK 构建；优化 Preview 主线包通过两组 API 37 实机设置回归 | 原配置、既有测试包、无障碍与 ADB 映射恢复核对；保留 main Phone Use 优化。见 [本轮记录](validation/settings-copy-main-2026-10-29.md) |
 | `v1.0.1-preview` 发布基线 | 345 项 JVM／Robolectric 测试，Debug／Release Lint 与发布相关构建；Xiaomi API 37／小爱 8.3.30 的权限、chooser、动态页面、后台输入隔离确定性验收 | 审计回复为 fixture；不是最新日志功能的发布证据。见 [发布基线记录](validation/preview-1.0.1.md) 与 [发布说明](releases/v1.0.1-preview.md) |
 | 可选详细日志与私有轮转存储、ZIP 导出 | 364 项 JVM／Robolectric 测试、Debug／Release 构建与完整 Lint、Debug AndroidTest 构建；本地 mock 驱动真实前台／后台及宿主采集，核对双来源持久化与导出隐私 | 未调用真实模型，未复现原先间歇性故障；诊断能力不等于故障修复。见 [诊断验证记录](validation/diagnostics-2026-10-18.md) |

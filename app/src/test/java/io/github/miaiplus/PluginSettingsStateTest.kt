@@ -168,6 +168,21 @@ class PluginSettingsUiTest {
         Config.prefs(state.getApplication<Application>()).edit().clear().commit()
     }
 
+    @Test
+    @RobolectricConfig(qualifiers = "zh-rCN-w320dp-h873dp-xxhdpi")
+    fun mcpAddActionAlignsWithHeadingAndOpensEditorOnNarrowScreen() {
+        compose.onNodeWithTag("tab-Plugins").performClick()
+        val title = compose.onNodeWithTag("mcp-section-title").fetchSemanticsNode().boundsInRoot
+        val add = compose.onNodeWithTag("add-mcp-plugin").fetchSemanticsNode().boundsInRoot
+        val empty = compose.onNodeWithText("还没有 MCP 插件").fetchSemanticsNode().boundsInRoot
+        assertEquals(title.center.y, add.center.y, 1f)
+        assertTrue("Add action overlaps the section title", title.right <= add.left)
+        assertTrue("Add action overlaps the plugin card", add.bottom < empty.top)
+        compose.onNodeWithTag("add-mcp-plugin").assertIsDisplayed().performClick()
+        compose.onNodeWithText("添加 MCP 插件").assertExists()
+        compose.onNodeWithText("取消", substring = false).performClick()
+    }
+
     @Test fun pluginPageShowsPeerBuiltinsAndKeepsCredentialDraftMaskedAcrossRecreation() {
         val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
         compose.onNodeWithTag("tab-Plugins").performClick()

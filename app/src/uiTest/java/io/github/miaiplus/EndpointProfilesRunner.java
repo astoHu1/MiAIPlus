@@ -491,6 +491,12 @@ final class EndpointProfilesRunner {
         check(find(n -> "前台控屏".equals(text(n))) != null, "Foreground tool missing");
         check(find(n -> "后台控屏".equals(text(n))) != null, "Background tool missing");
         check(find(n -> "添加".equals(text(n))) != null, "Add button is not visible on plugin root");
+        Rect titleBounds = new Rect(), addBounds = new Rect();
+        find(n -> "MCP 插件".equals(text(n))).getBoundsInScreen(titleBounds);
+        find(n -> "添加".equals(text(n))).getBoundsInScreen(addBounds);
+        check(Math.abs(titleBounds.centerY() - addBounds.centerY()) <= 2,
+            "MCP title and add action are vertically misaligned");
+        check(titleBounds.right <= addBounds.left, "MCP title overlaps the add action");
         capture("plugins-root-device");
         click("添加");
         check(find(n -> "添加 MCP 插件".equals(text(n))) != null, "MCP editor missing");
