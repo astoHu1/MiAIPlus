@@ -170,11 +170,11 @@ class PluginSettingsUiTest {
 
     @Test fun pluginPageShowsPeerBuiltinsAndKeepsCredentialDraftMaskedAcrossRecreation() {
         val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
-        compose.onNodeWithText("插件", substring = false).performScrollTo().performClick()
+        compose.onNodeWithTag("tab-Plugins").performClick()
         compose.onNodeWithTag("plugin-settings").assertExists()
         compose.onNodeWithText("前台 Phone Use").assertExists()
         compose.onNodeWithText("后台 Phone Use").assertExists()
-        compose.onNodeWithTag("tab-Home").assertIsSelected()
+        compose.onNodeWithTag("tab-Plugins").assertIsSelected()
         capture("settings-plugins-light")
         RuntimeEnvironment.setQualifiers("+night")
         compose.activityRule.scenario.recreate()
@@ -216,7 +216,7 @@ class PluginSettingsUiTest {
             PluginSettings.updateTools(state.getApplication<Application>(), id, snapshot.revision(), listOf(tool))
             assertTrue(state.plugins.reload())
         }
-        compose.onNodeWithText("插件", substring = false).performScrollTo().performClick()
+        compose.onNodeWithTag("tab-Plugins").performClick()
         compose.onNodeWithText("工具列表", substring = false).performScrollTo().performClick()
         compose.onNodeWithText("来源名称：read_fixture").assertExists()
         compose.onNodeWithText("注入名称：${tool.name()}").assertExists()
@@ -229,7 +229,7 @@ class PluginSettingsUiTest {
 
     @Test fun mcpEditorSavesExplicitProtocolAndReopensSelection() {
         val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
-        compose.onNodeWithText("插件", substring = false).performScrollTo().performClick()
+        compose.onNodeWithTag("tab-Plugins").performClick()
         compose.onNodeWithText("添加 MCP 插件").performScrollTo().performClick()
         compose.onNodeWithTag("plugin-label").performTextInput("Termux compatibility")
         compose.onNodeWithTag("plugin-endpoint").performTextInput("http://127.0.0.1:18767/mcp")

@@ -79,10 +79,10 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class SettingsPage(val title: String, val depth: Int = 0) {
-    Home("MiAIPlus"), Model("模型 API"), Control("控屏"), Virtual("虚拟屏", 1), Status("运行状态", 1), Test("直接测试", 2), Logs("日志", 1), Plugins("插件", 1);
+    Home("MiAIPlus"), Model("模型 API"), Plugins("插件"), Control("控屏", 1), Virtual("虚拟屏", 2), Status("运行状态", 1), Test("直接测试", 2), Logs("日志", 1);
 
-    val tab: SettingsPage get() = when (this) { Virtual -> Control; Status, Test, Logs, Plugins -> Home; else -> this }
-    val parent: SettingsPage get() = when (this) { Test -> Status; Virtual -> Control; else -> Home }
+    val tab: SettingsPage get() = when (this) { Control, Virtual -> Plugins; Status, Test, Logs -> Home; else -> this }
+    val parent: SettingsPage get() = when (this) { Test -> Status; Virtual -> Control; Control -> Plugins; else -> Home }
 }
 
 @Composable
@@ -141,13 +141,13 @@ private fun SettingsApp(state: SettingsState, openSettings: (Boolean) -> Unit, o
                     }
                 }
                 NavigationBar {
-                    listOf(SettingsPage.Home, SettingsPage.Model, SettingsPage.Control).forEach { tab ->
+                    listOf(SettingsPage.Home, SettingsPage.Model, SettingsPage.Plugins).forEach { tab ->
                         NavigationBarItem(
                             selected = page.tab == tab, onClick = { navigate(tab) },
                             icon = when (tab) {
                                 SettingsPage.Home -> SettingsIcons.Home
                                 SettingsPage.Model -> SettingsIcons.Model
-                                else -> SettingsIcons.Control
+                                else -> SettingsIcons.Plugins
                             },
                             label = if (tab == SettingsPage.Home) "首页" else tab.title,
                             modifier = Modifier.testTag("tab-${tab.name}"),

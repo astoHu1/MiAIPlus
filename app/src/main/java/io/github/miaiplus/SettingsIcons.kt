@@ -44,13 +44,17 @@ internal object SettingsIcons {
         quadTo(3f, 17f, 3f, 15f); lineTo(3f, 6f); quadTo(3f, 4f, 5f, 4f)
         moveTo(7f, 9f); lineTo(17f, 9f); moveTo(7f, 13f); lineTo(13f, 13f)
     }
-    val Control = outline("Control") {
-        moveTo(15f, 21f); lineTo(6f, 21f); quadTo(4f, 21f, 4f, 19f)
-        lineTo(4f, 5f); quadTo(4f, 3f, 6f, 3f); lineTo(15f, 3f)
-        quadTo(17f, 3f, 17f, 5f); lineTo(17f, 9f)
-        moveTo(9f, 18f); lineTo(11f, 18f)
-        moveTo(13f, 11f); lineTo(21f, 15f); lineTo(17.5f, 16f)
-        lineTo(16f, 20f); close()
+    val Plugins = outline("Plugins") {
+        moveTo(9f, 5f); lineTo(9f, 4f); quadTo(9f, 2f, 11f, 2f)
+        quadTo(13f, 2f, 13f, 4f); lineTo(13f, 5f); lineTo(18f, 5f)
+        quadTo(19f, 5f, 19f, 6f); lineTo(19f, 10f); lineTo(20f, 10f)
+        quadTo(22f, 10f, 22f, 12f); quadTo(22f, 14f, 20f, 14f)
+        lineTo(19f, 14f); lineTo(19f, 20f); quadTo(19f, 21f, 18f, 21f)
+        lineTo(13f, 21f); lineTo(13f, 20f); quadTo(13f, 18f, 11f, 18f)
+        quadTo(9f, 18f, 9f, 20f); lineTo(9f, 21f); lineTo(4f, 21f)
+        quadTo(3f, 21f, 3f, 20f); lineTo(3f, 14f); lineTo(4f, 14f)
+        quadTo(6f, 14f, 6f, 12f); quadTo(6f, 10f, 4f, 10f)
+        lineTo(3f, 10f); lineTo(3f, 6f); quadTo(3f, 5f, 4f, 5f); close()
     }
     val Module = outline("Module") {
         moveTo(12f, 2f); lineTo(21f, 6f); lineTo(21f, 12f)

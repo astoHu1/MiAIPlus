@@ -85,12 +85,12 @@ class SettingsUiTest {
         var state = ViewModelProvider(compose.activity)[SettingsState::class.java]
         val background = state.config.backgroundDisplay
         val permission = state.config.phoneUsePermissionMode
-        compose.onNodeWithTag("tab-Control").performClick()
+        openControlPage()
         compose.onNodeWithText("Phone Use 详细日志").performScrollTo().performClick()
         compose.runOnIdle { assertEquals(true, state.config.phoneUseDetailedLog) }
         compose.activityRule.scenario.recreate()
         state = ViewModelProvider(compose.activity)[SettingsState::class.java]
-        compose.onNodeWithTag("tab-Control").performClick()
+        openControlPage()
         compose.onNodeWithText("Phone Use 详细日志").performScrollTo()
         compose.runOnIdle {
             assertEquals(true, state.config.phoneUseDetailedLog)
@@ -107,7 +107,7 @@ class SettingsUiTest {
 
     @Test fun permissionPresetsSaveAllModesSurviveRecreationAndRejectInvalidValues() {
         var state = ViewModelProvider(compose.activity)[SettingsState::class.java]
-        compose.onNodeWithTag("tab-Control").performClick()
+        openControlPage()
         compose.onNodeWithText("Phone Use 权限预设").performScrollTo()
         compose.onNodeWithText("Manual").assertExists()
         compose.runOnIdle { assertEquals("manual", state.config.phoneUsePermissionMode) }
@@ -132,7 +132,7 @@ class SettingsUiTest {
         }
         compose.activityRule.scenario.recreate()
         state = ViewModelProvider(compose.activity)[SettingsState::class.java]
-        compose.onNodeWithTag("tab-Control").performClick()
+        openControlPage()
         compose.onNodeWithText("Phone Use 权限预设").performScrollTo()
         compose.onNodeWithText("Auto").assertExists()
         compose.onNodeWithText("模型自动审计，无法确定时请求你确认").assertExists()
@@ -154,7 +154,7 @@ class SettingsUiTest {
             assertEquals("native", io.github.miaiplus.Config.prefs(state.getApplication<Application>()).getString("planner", null))
             assertEquals(false, state.setOption("planner", "external"))
         }
-        compose.onNodeWithTag("tab-Control").performClick()
+        openControlPage()
         compose.onNodeWithText("规划模型").assertIsNotEnabled()
         compose.onNodeWithText("小爱当前模型").assertExists()
         capture("control-global-model")
@@ -198,10 +198,10 @@ class SettingsUiTest {
         compose.onNodeWithText("暂无注入报告").assertExists()
         compose.onNodeWithTag("tab-Home").assertIsSelected()
         compose.onNodeWithTag("tab-Model").assertIsNotSelected()
-        compose.onNodeWithTag("tab-Control").assertIsNotSelected()
+        compose.onNodeWithTag("tab-Plugins").assertIsNotSelected()
         compose.onNodeWithText("启用控屏工具").assertDoesNotExist()
         compose.onNodeWithText("API 协议").assertDoesNotExist()
-        val tabs = listOf("Home", "Model", "Control").map { compose.onNodeWithTag("tab-$it").getBoundsInRoot().left }
+        val tabs = listOf("Home", "Model", "Plugins").map { compose.onNodeWithTag("tab-$it").getBoundsInRoot().left }
         assert(tabs.zipWithNext().all { (left, right) -> left < right })
         capture("settings-light")
         RuntimeEnvironment.setQualifiers("+night")
@@ -209,7 +209,7 @@ class SettingsUiTest {
         capture("settings-dark")
         RuntimeEnvironment.setQualifiers("+notnight")
         compose.activityRule.scenario.recreate()
-        compose.onNodeWithTag("tab-Control").performClick()
+        openControlPage()
         compose.onNodeWithText("启用控屏工具").assertExists()
         compose.onNodeWithText("小爱当前模型").assertExists()
         compose.onNodeWithText("动作协议").assertExists()
@@ -227,6 +227,41 @@ class SettingsUiTest {
         compose.onNodeWithText("200 步").assertExists()
         val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
         assertEquals(200, state.config.maxSteps)
+    }
+
+    @Test fun pluginsTabOwnsControlAndVirtualPagesAndReturnsThroughParents() {
+        compose.onNodeWithTag("tab-Control").assertDoesNotExist()
+        compose.onNodeWithTag("tab-Plugins").performClick()
+        compose.onNodeWithTag("page-Plugins").assertExists()
+        compose.onNodeWithContentDescription("返回").assertDoesNotExist()
+        compose.onNodeWithText("添加 MCP 插件").assertExists()
+        capture("plugins-light")
+        RuntimeEnvironment.setQualifiers("+night")
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithTag("tab-Plugins").assertIsSelected()
+        compose.onNodeWithContentDescription("返回").assertDoesNotExist()
+        capture("plugins-dark")
+        RuntimeEnvironment.setQualifiers("+notnight")
+        compose.activityRule.scenario.recreate()
+        compose.onAllNodesWithText("控屏配置").onFirst().performScrollTo().performClick()
+        compose.onNodeWithTag("page-Control").assertExists()
+        compose.onNodeWithTag("tab-Plugins").assertIsSelected()
+        compose.onNodeWithText("虚拟屏").performClick()
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithTag("page-Virtual").assertExists()
+        compose.onNodeWithTag("tab-Plugins").assertIsSelected()
+        compose.onNodeWithContentDescription("返回").performClick()
+        compose.onNodeWithTag("page-Control").assertExists()
+        compose.runOnIdle { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.onNodeWithTag("page-Plugins").assertExists()
+        compose.onNodeWithTag("tab-Plugins").assertIsSelected()
+        compose.runOnIdle { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.onNodeWithTag("page-Home").assertExists()
+        compose.onNodeWithTag("tab-Home").assertIsSelected()
+        compose.onNode(hasText("插件") and hasAnyAncestor(hasTestTag("page-Home")))
+            .performScrollTo().performClick()
+        compose.onNodeWithTag("page-Plugins").assertExists()
+        compose.onNodeWithTag("tab-Plugins").assertIsSelected()
     }
 
     @Test fun conversationTimeoutSavesMinutesRejectsInvalidValuesAndCanBeDisabled() {
@@ -332,15 +367,15 @@ class SettingsUiTest {
             val origin = compose.onNodeWithTag("page-Home").getUnclippedBoundsInRoot().left.value
             compose.mainClock.autoAdvance = false
             try {
-                for ((tab, direction) in listOf("Model" to 1, "Control" to 1, "Model" to -1, "Home" to -1)) {
+                for ((tab, direction) in listOf("Model" to 1, "Plugins" to 1, "Model" to -1, "Home" to -1)) {
                     compose.onNodeWithTag("tab-$tab").performClick()
                     compose.mainClock.advanceTimeBy(80)
                     val page = compose.onNodeWithTag("page-$tab")
                     val offset = page.getUnclippedBoundsInRoot().left.value - origin
                     check(offset * direction > 0.5f) { "$tab must still be sliding in, offset=$offset" }
-                    compose.onAllNodes(hasTestTag("page-Home") or hasTestTag("page-Model") or hasTestTag("page-Control"))
+                    compose.onAllNodes(hasTestTag("page-Home") or hasTestTag("page-Model") or hasTestTag("page-Plugins"))
                         .assertCountEquals(1)
-                    if (tab == "Control") capture("tab-enter-${if (dark) "dark" else "light"}")
+                    if (tab == "Plugins") capture("tab-enter-${if (dark) "dark" else "light"}")
                     compose.mainClock.advanceTimeBy(300)
                     assertEquals(origin, page.getUnclippedBoundsInRoot().left.value, 0.01f)
                     compose.onNodeWithTag("tab-$tab").assertIsSelected()
@@ -367,17 +402,17 @@ class SettingsUiTest {
             compose.onNodeWithTag("page-Model").assertExists()
             compose.onNodeWithTag("page-Home").assertDoesNotExist()
             compose.onNodeWithTag("page-Status").assertDoesNotExist()
-            compose.onNodeWithTag("tab-Control").performSemanticsAction(SemanticsActions.OnClick) { it() }
+            compose.onNodeWithTag("tab-Plugins").performSemanticsAction(SemanticsActions.OnClick) { it() }
             compose.mainClock.advanceTimeByFrame()
-            compose.onNodeWithTag("tab-Control").assertIsSelected()
-            compose.onNodeWithTag("page-Control").assertExists()
+            compose.onNodeWithTag("tab-Plugins").assertIsSelected()
+            compose.onNodeWithTag("page-Plugins").assertExists()
             compose.onNodeWithTag("page-Model").assertDoesNotExist()
             compose.mainClock.advanceTimeBy(64)
-            check(compose.onNodeWithTag("page-Control").getUnclippedBoundsInRoot().left.value > 0.5f)
+            check(compose.onNodeWithTag("page-Plugins").getUnclippedBoundsInRoot().left.value > 0.5f)
             compose.onNodeWithTag("tab-Home").performClick()
             compose.mainClock.advanceTimeBy(80)
             check(compose.onNodeWithTag("page-Home").getUnclippedBoundsInRoot().left.value < -0.5f)
-            compose.onNodeWithTag("page-Control").assertDoesNotExist()
+            compose.onNodeWithTag("page-Plugins").assertDoesNotExist()
             compose.mainClock.advanceTimeBy(400)
             assertEquals(0f, compose.onNodeWithTag("page-Home").getUnclippedBoundsInRoot().left.value, 0.01f)
             compose.onNodeWithTag("tab-Home").assertIsSelected()
@@ -421,9 +456,9 @@ class SettingsUiTest {
         compose.runOnIdle {
             assertEquals("我的 API", state.draft?.name)
         }
-        compose.onNodeWithTag("tab-Control").performClick()
+        compose.onNodeWithTag("tab-Plugins").performClick()
         compose.onNodeWithText("保存并离开").performClick()
-        compose.onNodeWithTag("tab-Control").assertIsSelected()
+        compose.onNodeWithTag("tab-Plugins").assertIsSelected()
         compose.runOnIdle {
             assertEquals("我的 API", EndpointProfiles(io.github.miaiplus.Config.prefs(state.getApplication<Application>())).active().name)
         }
@@ -436,7 +471,7 @@ class SettingsUiTest {
         compose.onNodeWithTag("tab-Model").performClick()
         compose.onNodeWithTag("model-settings").performScrollToNode(hasText("另存为新配置"))
         compose.onNodeWithText("另存为新配置").assertIsDisplayed()
-        compose.onNodeWithTag("tab-Control").performClick()
+        compose.onNodeWithTag("tab-Plugins").performClick()
         compose.onNodeWithTag("tab-Model").performClick()
         compose.onNodeWithText("另存为新配置").assertIsDisplayed()
         compose.activityRule.scenario.recreate()
@@ -490,7 +525,7 @@ class SettingsUiTest {
     @Test fun virtualCanvasSavesCustomGeometryAndFillsCurrentDeviceValues() {
         val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
         val device = state.currentDisplayGeometry()
-        compose.onNodeWithTag("tab-Control").performClick()
+        openControlPage()
         compose.onNodeWithText("虚拟屏").performClick()
         compose.onNodeWithText("自定义分辨率").performClick()
         compose.onNodeWithText("宽度（像素）").performTextReplacement("1440")
@@ -520,9 +555,9 @@ class SettingsUiTest {
             attachInfo(compose.activity, ProviderInfo().apply { authority = BridgeProvider.URI.authority })
         }
         ShadowContentResolver.registerProviderInternal(BridgeProvider.URI.authority, provider)
-        compose.onNodeWithTag("tab-Control").performClick()
+        openControlPage()
         compose.onNodeWithText("虚拟屏").performClick()
-        compose.onNodeWithTag("tab-Control").assertIsSelected()
+        compose.onNodeWithTag("tab-Plugins").assertIsSelected()
         assertEquals(0, calls.get())
         compose.onNodeWithText("检查前置条件").performScrollTo().performClick()
         compose.waitUntil { calls.get() == 1 }
@@ -545,7 +580,7 @@ class SettingsUiTest {
             attachInfo(compose.activity, ProviderInfo().apply { authority = BridgeProvider.URI.authority })
         }
         ShadowContentResolver.registerProviderInternal(BridgeProvider.URI.authority, provider)
-        compose.onNodeWithTag("tab-Control").performClick()
+        openControlPage()
         compose.onNodeWithText("虚拟屏").performClick()
         compose.onNodeWithText("开始检测").performClick()
         assertEquals(0, calls.get())
@@ -575,7 +610,7 @@ class SettingsUiTest {
                     applicationInfo = ApplicationInfo().apply { packageName = "org.example.virtualfixture" }
                 }
             })
-        compose.onNodeWithTag("tab-Control").performClick()
+        openControlPage()
         compose.onNodeWithText("虚拟屏").performClick()
         compose.onNodeWithText("测试应用").performClick()
         compose.waitUntil(timeoutMillis = 5000) {
@@ -598,7 +633,7 @@ class SettingsUiTest {
             attachInfo(compose.activity, ProviderInfo().apply { authority = BridgeProvider.URI.authority })
         }
         ShadowContentResolver.registerProviderInternal(BridgeProvider.URI.authority, provider)
-        compose.onNodeWithTag("tab-Control").performClick()
+        openControlPage()
         compose.onNodeWithText("虚拟屏").performClick()
         compose.onNodeWithText("开始检测").performClick()
         compose.onNodeWithText("开始", useUnmergedTree = true).performClick()
@@ -674,6 +709,12 @@ class SettingsUiTest {
             assertEquals(label, expectedHandoffs, handoffs.get())
             assertEquals(label, "fixture complete", state.result)
         }
+    }
+
+    private fun openControlPage() {
+        if (compose.onAllNodesWithTag("page-Control").fetchSemanticsNodes().isNotEmpty()) return
+        compose.onNodeWithTag("tab-Plugins").performClick()
+        compose.onAllNodesWithText("控屏配置").onFirst().performScrollTo().performClick()
     }
 
     private fun capture(name: String) {

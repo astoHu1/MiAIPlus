@@ -37,6 +37,8 @@ final class EndpointProfilesRunner {
 
     static void runPerformance(Instrumentation test) { new EndpointProfilesRunner(test).run(true); }
 
+    static void runPlugins(Instrumentation test) { new EndpointProfilesRunner(test).run(false, true); }
+
     static void runVirtual(Instrumentation test) { new EndpointProfilesRunner(test).runVirtual(false); }
 
     static void runVirtualIdle(Instrumentation test) { new EndpointProfilesRunner(test).runVirtual(true); }
@@ -257,7 +259,7 @@ final class EndpointProfilesRunner {
             activity = (MainActivity) test.startActivitySync(new Intent(context, MainActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
             onMain(() -> state = new ViewModelProvider(activity).get(SettingsState.class));
-            click("控屏");
+            enterControlPage();
             click("虚拟屏");
             check(state.getVirtualScreen().getAvailability() == null && state.getVirtualScreen().getReport() == null,
                 "Virtual checks ran automatically");
@@ -325,6 +327,10 @@ final class EndpointProfilesRunner {
     }
 
     private void run(boolean performance) {
+        run(performance, false);
+    }
+
+    private void run(boolean performance, boolean plugins) {
         var context = test.getTargetContext();
         var prefs = Config.prefs(context);
         Map<String, ?> original = prefs.getAll();
@@ -344,7 +350,12 @@ final class EndpointProfilesRunner {
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
             onMain(() -> state = new ViewModelProvider(activity).get(SettingsState.class));
             settle();
-            if (performance) {
+            if (plugins) {
+                checkPluginNavigation();
+                result.putString("stream", "PASS: plugin bottom tab, selected tab on control/virtual pages, "
+                    + "activity recreation, toolbar/system back hierarchy, child-to-tab return and model draft confirmation. "
+                    + "No model requests or display probes.\n");
+            } else if (performance) {
                 runPerformancePages();
                 result.putString("stream", "PASS: settings performance samples completed. No model requests or display probes.\n");
             } else {
@@ -403,7 +414,7 @@ final class EndpointProfilesRunner {
                 checkGlobalPlanner();
                 click("首页");
                 capture("home");
-                click("控屏");
+                enterControlPage();
                 check(!new Config(context).backgroundDisplay, "Background display default changed");
                 checkPhoneUsePermissionPresets();
                 click("最大步数");
@@ -472,6 +483,56 @@ final class EndpointProfilesRunner {
         test.finish(code, result);
     }
 
+    private void checkPluginNavigation() throws Exception {
+        click("插件");
+        check(find(n -> "小爱插件".equals(text(n))) != null, "Plugin page missing");
+        check(find(n -> "返回".equals(n.getContentDescription() == null ? "" : n.getContentDescription().toString())) == null, "Root plugin page has a back button");
+        checkSelectedTab("插件");
+        capture("plugins-root-device");
+        click("控屏配置");
+        check(find(n -> "启用控屏工具".equals(text(n))) != null, "Control configuration missing");
+        checkSelectedTab("插件");
+        capture("plugins-control-device");
+        click("虚拟屏");
+        checkSelectedTab("插件");
+        check(state.getVirtualScreen().getAvailability() == null && state.getVirtualScreen().getReport() == null,
+            "Navigation started a display check");
+        capture("plugins-virtual-device");
+        recreate();
+        settle();
+        check(find(n -> "自定义分辨率".equals(text(n))) != null, "Virtual page lost on recreation");
+        checkSelectedTab("插件");
+        click("返回");
+        check(find(n -> "启用控屏工具".equals(text(n))) != null, "Virtual back skipped control page");
+        test.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
+        settle();
+        check(find(n -> "小爱插件".equals(text(n))) != null, "Control back skipped plugin page");
+        checkSelectedTab("插件");
+        test.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
+        settle();
+        checkSelectedTab("首页");
+        click("插件");
+        click("控屏配置");
+        click("插件");
+        check(find(n -> "小爱插件".equals(text(n))) != null, "Tab did not return from control to plugin root");
+        check(find(n -> "返回".equals(n.getContentDescription() == null ? "" : n.getContentDescription().toString())) == null, "Plugin root kept child back button");
+        click("模型 API");
+        edit("默认配置", "插件导航草稿");
+        click("插件");
+        check(find(n -> "保存当前配置？".equals(text(n))) != null, "Plugin tab bypassed draft confirmation");
+        click("取消");
+        checkSelectedTab("模型 API");
+        click("插件");
+        click("放弃修改");
+        checkSelectedTab("插件");
+        check(!state.getDirty() && state.getJob() == null, "Navigation left a dirty draft or started a model job");
+    }
+
+    private void checkSelectedTab(String label) {
+        check(find(n -> n.isSelected() && findAny(n, child -> label.equals(text(child))) != null) != null,
+            "Bottom tab not selected: " + label);
+    }
+
     private void checkPhoneUsePermissionPresets() throws Exception {
         var context = test.getTargetContext();
         var prefs = Config.prefs(context);
@@ -537,7 +598,10 @@ final class EndpointProfilesRunner {
         // can precede the same-named navigation item in the accessibility tree.
         if (find(n -> "Phone Use 权限预设".equals(text(n)) || "最大步数".equals(text(n))
             || "动作协议".equals(text(n)) || "启用控屏工具".equals(text(n))
-            || "任务前检查无障碍".equals(text(n))) == null) click("控屏");
+            || "任务前检查无障碍".equals(text(n))) == null) {
+            if (find(n -> "控屏配置".equals(text(n))) == null) click("插件");
+            click("控屏配置");
+        }
     }
 
     private void checkPermissionSelection(String label, String summary) {
@@ -555,7 +619,7 @@ final class EndpointProfilesRunner {
             "Global model did not force native planner");
         check("native".equals(Config.prefs(test.getTargetContext()).getString("planner", "")),
             "Native planner was not persisted");
-        click("控屏");
+        enterControlPage();
         // Disabled merged Compose semantics may expose the row's title, summary and value as one text.
         waitFor(() -> find(n -> text(n).contains("规划模型")) != null, "Planner selector was not visible");
         var planner = find(n -> text(n).contains("规划模型"));
@@ -577,7 +641,7 @@ final class EndpointProfilesRunner {
         capture("control-global-model-device");
         click("模型 API"); click("使用外部模型");
         waitFor(() -> !state.getConfig().globalModel, "Global model switch did not turn off");
-        click("控屏"); click("规划模型"); click("外部模型");
+        enterControlPage(); click("规划模型"); click("外部模型");
         waitFor(() -> "external".equals(state.getConfig().planner), "Planner did not unlock");
         click("规划模型"); click("小爱当前模型");
         waitFor(() -> "native".equals(state.getConfig().planner), "Native planner selection failed");
@@ -590,7 +654,7 @@ final class EndpointProfilesRunner {
         sample("home-idle", () -> SystemClock.sleep(5000));
         sample("tabs", () -> {
             for (int i = 0; i < 4; i++) {
-                click("模型 API"); click("控屏"); click("首页");
+                click("模型 API"); click("插件"); click("首页");
             }
         });
         click("模型 API");
@@ -603,7 +667,7 @@ final class EndpointProfilesRunner {
             }
         });
         click("还原");
-        click("控屏");
+        enterControlPage();
         sample("control-scroll", this::performanceScroll);
         click("虚拟屏");
         sample("virtual-idle", () -> SystemClock.sleep(5000));
