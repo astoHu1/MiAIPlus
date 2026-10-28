@@ -513,7 +513,7 @@ final class EndpointProfilesRunner {
         checkSelectedTab("首页");
         click("插件");
         click("控屏配置");
-        click("插件");
+        touchSelectedTab("插件");
         check(find(n -> "小爱插件".equals(text(n))) != null, "Tab did not return from control to plugin root");
         check(find(n -> "返回".equals(n.getContentDescription() == null ? "" : n.getContentDescription().toString())) == null, "Plugin root kept child back button");
         click("模型 API");
@@ -531,6 +531,23 @@ final class EndpointProfilesRunner {
     private void checkSelectedTab(String label) {
         check(find(n -> n.isSelected() && findAny(n, child -> label.equals(text(child))) != null) != null,
             "Bottom tab not selected: " + label);
+    }
+
+    private void touchSelectedTab(String label) {
+        // Android omits ACTION_CLICK for a selected Compose tab; exercise the user's touch path.
+        var tab = find(n -> n.isSelected() && findAny(n, child -> label.equals(text(child))) != null);
+        check(tab != null, "Selected tab missing: " + label);
+        Rect bounds = new Rect();
+        tab.getBoundsInScreen(bounds);
+        long downTime = SystemClock.uptimeMillis();
+        for (int action : new int[]{MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP}) {
+            MotionEvent event = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), action,
+                bounds.centerX(), bounds.centerY(), 0);
+            event.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
+            check(ui.injectInputEvent(event, true), "Tab touch injection failed");
+            event.recycle();
+        }
+        settle();
     }
 
     private void checkPhoneUsePermissionPresets() throws Exception {

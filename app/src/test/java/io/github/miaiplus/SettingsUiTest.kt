@@ -262,6 +262,15 @@ class SettingsUiTest {
             .performScrollTo().performClick()
         compose.onNodeWithTag("page-Plugins").assertExists()
         compose.onNodeWithTag("tab-Plugins").assertIsSelected()
+        openControlPage()
+        compose.onNodeWithTag("tab-Plugins").performTouchInput { click() }
+        compose.onNodeWithTag("page-Plugins").assertExists()
+        compose.onNodeWithContentDescription("返回").assertDoesNotExist()
+        openControlPage()
+        compose.onNodeWithText("虚拟屏").performClick()
+        compose.onNodeWithTag("tab-Plugins").performTouchInput { click() }
+        compose.onNodeWithTag("page-Plugins").assertExists()
+        compose.onNodeWithContentDescription("返回").assertDoesNotExist()
     }
 
     @Test fun conversationTimeoutSavesMinutesRejectsInvalidValuesAndCanBeDisabled() {
