@@ -255,7 +255,8 @@ private fun HomePage(state: SettingsState, openStatus: () -> Unit, openLogs: () 
         }
     }
     Spacer(Modifier.height(12.dp))
-    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).padding(horizontal = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         DashboardTile("版本", BuildConfig.VERSION_NAME, Modifier.weight(1f))
         DashboardTile("无障碍", if (state.accessible) "已连接" else "未连接", Modifier.weight(1f))
     }
@@ -295,11 +296,8 @@ private fun HomePage(state: SettingsState, openStatus: () -> Unit, openLogs: () 
 
 @Composable
 private fun DashboardTile(label: String, value: String, modifier: Modifier) {
-    Card(modifier) {
-        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(label, style = MiuixTheme.textStyles.footnote2, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
-            Text(value, style = MiuixTheme.textStyles.body2)
-        }
+    Card(modifier.fillMaxHeight()) {
+        BasicComponent(title = label, summary = value)
     }
 }
 
