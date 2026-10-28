@@ -37,6 +37,8 @@ final class EndpointProfilesRunner {
 
     static void runPerformance(Instrumentation test) { new EndpointProfilesRunner(test).run(true); }
 
+    static void runPlugins(Instrumentation test) { new EndpointProfilesRunner(test).run(false, true); }
+
     static void runVirtual(Instrumentation test) { new EndpointProfilesRunner(test).runVirtual(false); }
 
     static void runVirtualIdle(Instrumentation test) { new EndpointProfilesRunner(test).runVirtual(true); }
@@ -257,7 +259,7 @@ final class EndpointProfilesRunner {
             activity = (MainActivity) test.startActivitySync(new Intent(context, MainActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
             onMain(() -> state = new ViewModelProvider(activity).get(SettingsState.class));
-            click("控屏");
+            enterControlPage();
             click("虚拟屏");
             check(state.getVirtualScreen().getAvailability() == null && state.getVirtualScreen().getReport() == null,
                 "Virtual checks ran automatically");
@@ -325,6 +327,10 @@ final class EndpointProfilesRunner {
     }
 
     private void run(boolean performance) {
+        run(performance, false);
+    }
+
+    private void run(boolean performance, boolean plugins) {
         var context = test.getTargetContext();
         var prefs = Config.prefs(context);
         Map<String, ?> original = prefs.getAll();
@@ -344,7 +350,12 @@ final class EndpointProfilesRunner {
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
             onMain(() -> state = new ViewModelProvider(activity).get(SettingsState.class));
             settle();
-            if (performance) {
+            if (plugins) {
+                checkPluginNavigation();
+                result.putString("stream", "PASS: plugin bottom tab, selected tab on control/virtual pages, "
+                    + "MCP editor/cancel/recreation, toolbar/system back hierarchy, child-to-tab return and model draft confirmation. "
+                    + "No model requests or display probes.\n");
+            } else if (performance) {
                 runPerformancePages();
                 result.putString("stream", "PASS: settings performance samples completed. No model requests or display probes.\n");
             } else {
@@ -403,7 +414,7 @@ final class EndpointProfilesRunner {
                 checkGlobalPlanner();
                 click("首页");
                 capture("home");
-                click("控屏");
+                enterControlPage();
                 check(!new Config(context).backgroundDisplay, "Background display default changed");
                 checkPhoneUsePermissionPresets();
                 click("最大步数");
@@ -472,19 +483,99 @@ final class EndpointProfilesRunner {
         test.finish(code, result);
     }
 
+    private void checkPluginNavigation() throws Exception {
+        click("插件");
+        check(find(n -> "内置工具".equals(text(n))) != null, "Plugin page missing");
+        check(find(n -> "返回".equals(n.getContentDescription() == null ? "" : n.getContentDescription().toString())) == null, "Root plugin page has a back button");
+        checkSelectedTab("插件");
+        check(find(n -> "前台控屏".equals(text(n))) != null, "Foreground tool missing");
+        check(find(n -> "后台控屏".equals(text(n))) != null, "Background tool missing");
+        check(find(n -> "添加".equals(text(n))) != null, "Add button is not visible on plugin root");
+        capture("plugins-root-device");
+        click("添加");
+        check(find(n -> "添加 MCP 插件".equals(text(n))) != null, "MCP editor missing");
+        edit("", "Fixture MCP");
+        recreate();
+        check(find(n -> "Fixture MCP".equals(text(n))) != null, "Plugin draft lost on recreation");
+        hideKeyboard();
+        capture("plugins-editor-device");
+        click("取消");
+        check(state.getPlugins().getEntries().stream().noneMatch(entry -> "mcp".equals(entry.kind())),
+            "Canceled MCP draft was saved");
+        click("控屏配置");
+        check(find(n -> "启用控屏工具".equals(text(n))) != null, "Control configuration missing");
+        checkSelectedTab("插件");
+        capture("plugins-control-device");
+        click("虚拟屏");
+        checkSelectedTab("插件");
+        check(state.getVirtualScreen().getAvailability() == null && state.getVirtualScreen().getReport() == null,
+            "Navigation started a display check");
+        capture("plugins-virtual-device");
+        recreate();
+        settle();
+        check(find(n -> "自定义分辨率".equals(text(n))) != null, "Virtual page lost on recreation");
+        checkSelectedTab("插件");
+        click("返回");
+        check(find(n -> "启用控屏工具".equals(text(n))) != null, "Virtual back skipped control page");
+        test.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
+        settle();
+        check(find(n -> "内置工具".equals(text(n))) != null, "Control back skipped plugin page");
+        checkSelectedTab("插件");
+        test.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
+        settle();
+        checkSelectedTab("首页");
+        click("插件");
+        click("控屏配置");
+        touchSelectedTab("插件");
+        check(find(n -> "内置工具".equals(text(n))) != null, "Tab did not return from control to plugin root");
+        check(find(n -> "返回".equals(n.getContentDescription() == null ? "" : n.getContentDescription().toString())) == null, "Plugin root kept child back button");
+        click("模型 API");
+        edit("默认配置", "插件导航草稿");
+        click("插件");
+        check(find(n -> "保存当前配置？".equals(text(n))) != null, "Plugin tab bypassed draft confirmation");
+        click("取消");
+        checkSelectedTab("模型 API");
+        click("插件");
+        click("放弃修改");
+        checkSelectedTab("插件");
+        check(!state.getDirty() && state.getJob() == null, "Navigation left a dirty draft or started a model job");
+    }
+
+    private void checkSelectedTab(String label) {
+        check(find(n -> n.isSelected() && findAny(n, child -> label.equals(text(child))) != null) != null,
+            "Bottom tab not selected: " + label);
+    }
+
+    private void touchSelectedTab(String label) {
+        // Android omits ACTION_CLICK for a selected Compose tab; exercise the user's touch path.
+        var tab = find(n -> n.isSelected() && findAny(n, child -> label.equals(text(child))) != null);
+        check(tab != null, "Selected tab missing: " + label);
+        Rect bounds = new Rect();
+        tab.getBoundsInScreen(bounds);
+        long downTime = SystemClock.uptimeMillis();
+        for (int action : new int[]{MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP}) {
+            MotionEvent event = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), action,
+                bounds.centerX(), bounds.centerY(), 0);
+            event.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
+            check(ui.injectInputEvent(event, true), "Tab touch injection failed");
+            event.recycle();
+        }
+        settle();
+    }
+
     private void checkPhoneUsePermissionPresets() throws Exception {
         var context = test.getTargetContext();
         var prefs = Config.prefs(context);
         check(Config.PHONE_USE_PERMISSION_MANUAL.equals(new Config(context).phoneUsePermissionMode),
             "Phone Use permission default is not Manual");
         String[][] modes = {
-            {"Auto", Config.PHONE_USE_PERMISSION_AUTO, "模型自动审计，无法确定时请求你确认"},
-            {"YOLO", Config.PHONE_USE_PERMISSION_YOLO, "除严重安全问题外自动同意，安全限制始终生效"},
-            {"Manual", Config.PHONE_USE_PERMISSION_MANUAL, "敏感操作由你逐次确认"}
+            {"智能判断", Config.PHONE_USE_PERMISSION_AUTO, "由模型判断，必要时询问"},
+            {"自动执行", Config.PHONE_USE_PERMISSION_YOLO, "自动同意，仍保留安全拦截"},
+            {"手动确认", Config.PHONE_USE_PERMISSION_MANUAL, "敏感操作逐次询问"}
         };
         for (int i = 0; i < modes.length; i++) {
             String label = modes[i][0], mode = modes[i][1], summary = modes[i][2];
-            click("Phone Use 权限预设");
+            click("操作确认");
             for (String[] option : modes) {
                 check(find(n -> option[0].equals(text(n))) != null,
                     "Phone Use permission menu is missing " + option[0]);
@@ -535,9 +626,12 @@ final class EndpointProfilesRunner {
         settle();
         // Recreation restores the current page and scroll. Its non-clickable toolbar title
         // can precede the same-named navigation item in the accessibility tree.
-        if (find(n -> "Phone Use 权限预设".equals(text(n)) || "最大步数".equals(text(n))
+        if (find(n -> "操作确认".equals(text(n)) || "最大步数".equals(text(n))
             || "动作协议".equals(text(n)) || "启用控屏工具".equals(text(n))
-            || "任务前检查无障碍".equals(text(n))) == null) click("控屏");
+            || "任务前检查无障碍".equals(text(n))) == null) {
+            if (find(n -> "控屏配置".equals(text(n))) == null) click("插件");
+            click("控屏配置");
+        }
     }
 
     private void checkPermissionSelection(String label, String summary) {
@@ -555,7 +649,7 @@ final class EndpointProfilesRunner {
             "Global model did not force native planner");
         check("native".equals(Config.prefs(test.getTargetContext()).getString("planner", "")),
             "Native planner was not persisted");
-        click("控屏");
+        enterControlPage();
         // Disabled merged Compose semantics may expose the row's title, summary and value as one text.
         waitFor(() -> find(n -> text(n).contains("规划模型")) != null, "Planner selector was not visible");
         var planner = find(n -> text(n).contains("规划模型"));
@@ -577,7 +671,7 @@ final class EndpointProfilesRunner {
         capture("control-global-model-device");
         click("模型 API"); click("使用外部模型");
         waitFor(() -> !state.getConfig().globalModel, "Global model switch did not turn off");
-        click("控屏"); click("规划模型"); click("外部模型");
+        enterControlPage(); click("规划模型"); click("外部模型");
         waitFor(() -> "external".equals(state.getConfig().planner), "Planner did not unlock");
         click("规划模型"); click("小爱当前模型");
         waitFor(() -> "native".equals(state.getConfig().planner), "Native planner selection failed");
@@ -590,7 +684,7 @@ final class EndpointProfilesRunner {
         sample("home-idle", () -> SystemClock.sleep(5000));
         sample("tabs", () -> {
             for (int i = 0; i < 4; i++) {
-                click("模型 API"); click("控屏"); click("首页");
+                click("模型 API"); click("插件"); click("首页");
             }
         });
         click("模型 API");
@@ -603,7 +697,7 @@ final class EndpointProfilesRunner {
             }
         });
         click("还原");
-        click("控屏");
+        enterControlPage();
         sample("control-scroll", this::performanceScroll);
         click("虚拟屏");
         sample("virtual-idle", () -> SystemClock.sleep(5000));

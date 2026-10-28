@@ -8,7 +8,7 @@ import java.util.function.Consumer;
 
 /** On-demand root preflight. No background daemon or boot-time repair. */
 public final class AccessibilityGuard {
-    private static final String BASE = "/data/adb/miaiplus-accessibility";
+    private static final String LEGACY_BASE = "/data/adb/miaiplus-accessibility";
     private static final java.util.concurrent.ExecutorService WORKER = Executors.newSingleThreadExecutor();
     private static volatile String status = "";
     private static volatile boolean changing;
@@ -25,16 +25,17 @@ public final class AccessibilityGuard {
         if (enabled(context) && !Config.prefs(context).getBoolean("accessibility_preflight_migrated", false))
             setEnabled(context, true, null);
     }
-    /** Retire only this module's previous persistent guard, including its boot entry. */
-    private static String retireLegacy() {
-        return "[ \"$(id -u)\" = 0 ] || exit 3\n"
-            + "rm -f /data/adb/service.d/miaiplus-accessibility.sh\n"
-            + "for state in " + BASE + "/user*; do\n"
+    /** Only the original install identity owns the old persistent guard and boot entry. */
+    static String legacyRetirementScript(String applicationId) {
+        String rootCheck = "[ \"$(id -u)\" = 0 ] || exit 3\n";
+        if (!"io.github.miaiplus".equals(applicationId)) return rootCheck;
+        return rootCheck + "rm -f /data/adb/service.d/miaiplus-accessibility.sh\n"
+            + "for state in " + LEGACY_BASE + "/user*; do\n"
             + "  rm -f \"$state/enabled\"\n"
             + "  [ -f \"$state/pid\" ] || continue\n"
             + "  read -r guard_pid < \"$state/pid\"\n"
             + "  case \"$guard_pid\" in ''|*[!0-9]*) continue ;; esac\n"
-            + "  if tr '\\000' ' ' < \"/proc/$guard_pid/cmdline\" 2>/dev/null | grep -Fq '" + BASE + "/daemon.sh '; then\n"
+            + "  if tr '\\000' ' ' < \"/proc/$guard_pid/cmdline\" 2>/dev/null | grep -Fq '" + LEGACY_BASE + "/daemon.sh '; then\n"
             + "    kill -TERM \"$guard_pid\" 2>/dev/null || true\n"
             + "  fi\ndone\n";
     }
@@ -47,7 +48,7 @@ public final class AccessibilityGuard {
         WORKER.execute(() -> {
             try {
                 if (enable || !Config.prefs(app).getBoolean("accessibility_preflight_migrated", false))
-                    root(retireLegacy(), null);
+                    root(legacyRetirementScript(BuildConfig.APPLICATION_ID), null);
                 if (!Config.prefs(app).edit().putBoolean("accessibility_guard", enable)
                     .putBoolean("accessibility_preflight_migrated", true).commit())
                     throw new java.io.IOException("preference write failed");
@@ -71,13 +72,17 @@ public final class AccessibilityGuard {
         try (var input = context.getAssets().open("accessibility-preflight.sh")) {
             encoded = Base64.encodeToString(input.readAllBytes(), Base64.NO_WRAP);
         }
-        // The UUID and UID are generated locally; model text never enters a shell command.
-        String command = retireLegacy() + "printf '%s' '" + encoded + "' | base64 -d | /system/bin/sh -s -- " + user + " " + run.id;
+        // The UUID/UID are local and applicationId is a build constant; model text never enters this command.
+        String command = preflightCommand(encoded, user, run.id);
         try { root(command, run); }
         catch (java.util.concurrent.CancellationException cancelled) { throw cancelled; }
         catch (Exception failure) { throw new IllegalStateException("无障碍恢复失败，请检查 MiAIPlus 的 root 授权与系统设置"); }
         run.check();
         if (!ScreenService.isHealthy()) throw new IllegalStateException("无障碍未恢复连接，已停止任务");
+    }
+    static String preflightCommand(String encoded, int user, String runId) {
+        return legacyRetirementScript(BuildConfig.APPLICATION_ID) + "printf '%s' '" + encoded
+            + "' | base64 -d | /system/bin/sh -s -- " + user + " " + runId + " " + BuildConfig.APPLICATION_ID;
     }
     private static void root(String script, RunState run) throws Exception {
         Process process = new ProcessBuilder("su", "-c", script).redirectErrorStream(true).start();

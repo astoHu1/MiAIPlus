@@ -13,9 +13,9 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <provider android:name=".BridgeProvider" android:authorities="io.github.miaiplus.bridge"
+        <provider android:name=".BridgeProvider" android:authorities="${applicationId}.bridge"
             android:exported="true" />
-        <provider android:name="androidx.core.content.FileProvider" android:authorities="io.github.miaiplus.log-files"
+        <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.log-files"
             android:exported="false" android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/log_file_paths" />
         </provider>

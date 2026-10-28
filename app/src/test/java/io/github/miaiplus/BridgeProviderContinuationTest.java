@@ -35,7 +35,7 @@ public final class BridgeProviderContinuationTest {
             .putString("planner", "native").commit();
         provider = new BridgeProvider();
         ProviderInfo info = new ProviderInfo();
-        info.authority = "io.github.miaiplus.bridge";
+        info.authority = BridgeProvider.URI.getAuthority();
         provider.attachInfo(context, info);
         jobs = jobs();
         resetState();

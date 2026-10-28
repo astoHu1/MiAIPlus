@@ -1,11 +1,12 @@
 # 实现与验证状态
 
-更新日期：2026-10-28。这里汇总当前源码的验证依据与限制；具体操作、失败尝试和恢复情况保留在分阶段记录中。源码、正式发布包和本地测试安装包应分别判断，不能因版本名相同而视为同一构建。
+更新日期：2026-10-29。这里汇总当前源码的验证依据与限制；具体操作、失败尝试和恢复情况保留在分阶段记录中。源码、正式发布包和本地测试安装包应分别判断，不能因版本名相同而视为同一构建。
 
 ## 当前源码与发布基线
 
 | 范围 | 已有证据 | 边界与详细记录 |
 | --- | --- | --- |
+| 设置文案精简与 Pluginify 主线整合 | 合并 main `8e9ff66` 与 Pluginify `4293f3e`；524 项 JVM／Robolectric 与 7 项 guard 测试、双变体完整 Lint 及各 APK 构建；优化 Preview 主线包通过两组 API 37 实机设置回归 | 原配置、既有测试包、无障碍与 ADB 映射恢复核对；保留 main Phone Use 优化。见 [本轮记录](validation/settings-copy-main-2026-10-29.md) |
 | `v1.0.1-preview` 发布基线 | 345 项 JVM／Robolectric 测试，Debug／Release Lint 与发布相关构建；Xiaomi API 37／小爱 8.3.30 的权限、chooser、动态页面、后台输入隔离确定性验收 | 审计回复为 fixture；不是最新日志功能的发布证据。见 [发布基线记录](validation/preview-1.0.1.md) 与 [发布说明](releases/v1.0.1-preview.md) |
 | 可选详细日志与私有轮转存储、ZIP 导出 | 364 项 JVM／Robolectric 测试、Debug／Release 构建与完整 Lint、Debug AndroidTest 构建；本地 mock 驱动真实前台／后台及宿主采集，核对双来源持久化与导出隐私 | 未调用真实模型，未复现原先间歇性故障；诊断能力不等于故障修复。见 [诊断验证记录](validation/diagnostics-2026-10-18.md) |
 | 最新日志页布局 | 同为 364 项测试，双变体构建与 Lint；真实设备完成搜索／筛选、菜单、ZIP 保存读回、分享面板及清空 | 此轮 UI 测试使用合成元数据，不重新证明宿主采集或控屏链路。见 [日志页验证](validation/diagnostics-2026-10-18.md#日志页精简与-lsposed-布局参考2026-10-18) |
@@ -13,8 +14,11 @@
 | 全屏／浮窗自动新建对话修复 | 375 项 JVM／Robolectric 测试，Debug／Release 完整 Lint 与构建、Debug AndroidTest 构建通过；API 37／小爱 8.3.30.4420 的全屏／实际浮窗连续性、四轮超时新建／重开后的原生回复及屏幕正文、通知返回与焦点回归通过 | 回复来自本地 mock，与工具返回专项独立，未验证真实模型工具一体链路；未测实体键／热词、进程重启、多窗口及旧版设备。旧探针局限及本轮实际浮窗身份、唯一正文 OCR 验证见 [会话生命周期修复](validation/conversation-lifecycle-2026-10-19.md) |
 | 模型 API 列表底部空白修复 | 376 项 JVM／Robolectric 测试，Debug／Release 完整 Lint 与构建、Debug AndroidTest 构建通过；深浅色及未保存状态的布局断言与渲染检查 | 本轮未安装或操作手机，未实测系统导航栏与软键盘。见 [底部布局记录](validation/settings-bottom-layout-2026-10-19.md) |
 | 首页概览卡字号与等高布局 | 376 项 JVM／Robolectric 测试，Debug／Release 完整 Lint、Debug／Release／Preview APK 与 Debug AndroidTest 构建通过；API 37 实机覆盖安装后核对首页、配置恢复及无障碍连接 | 深色使用 Robolectric 渲染；未运行控屏、真实模型或宿主 Hook 回归。见 [首页字号记录](validation/settings-home-typography-2026-10-28.md) |
+| 插件底栏入口与控屏层级 | 已推送源码独立快照 506 项 JVM／Robolectric、双变体完整 Lint 与 Debug／Release／Preview／Preview AndroidTest 构建通过；API 37 优化 Preview 实机验证入口、选中态、返回、重建与草稿确认 | 原配置逐项恢复，无障碍／ADB 映射和主线安装路径未变；未重做 Hook、MCP 网络或真实模型回归。见 [插件底栏记录](validation/settings-plugins-tab-2026-10-28.md) |
 | 底栏切页动画 | 377 项 JVM／Robolectric 测试，Debug／Release 完整 Lint 与各 APK 构建；深浅色和中断过渡断言、API 37 优化 Preview 设置回归与性能采样通过 | 底栏采样 P95 19 ms、1/660 帧超时，仍有 150 ms 长帧；未重做真实模型或 Hook 回归。见 [底栏动画记录](validation/settings-tab-animation-2026-10-28.md) |
 | Phone Use 模型观察、明确执行状态与请求计量 | 395 项 JVM／Robolectric 测试、双变体完整 Lint／构建、Preview／AndroidTest；真实应用安全导航、Chat／Responses mock 与实际宿主 Hook／附图／续调通过 | 仅模型树投影，内部安全证据不变；历史 48 帧树 UTF-8 体积减少约 4.53%／6.43%，不等于整体请求或 token 收益。后台与部分依赖 su 的设备专项受权限限制，未验证真实模型质量 A/B。见 [观察与状态记录](validation/phone-use-observation-2026-10-28.md) |
+| `Pluginify` 分支的统一 Plugin 层、独立包与 MCP tools 首阶段 | 506 项 JVM／Robolectric、双变体 Lint 零错误及各 APK 构建；独立包并装，API 37／小爱 8.3.30 实际注册表／MCP proxy、Android 合成 MCP HTTP、前台及空后台屏截图／wait／finish 通过 | 固定 MCP `2025-11-25` tools 子集；未测真实模型选择、第三方生产 MCP 或复杂应用任务。测试后恢复主线作用域、撤销新包临时 root；保留 Pluginify 优化安装包但模块停用。见 [本地首轮](validation/plugin-platform-2026-10-28.md) 与 [独立包实机记录](validation/plugin-platform-device-2026-10-28.md) |
+| 现有 Termux MCP 与显式协议兼容 | 513 项本地回归、双变体 Lint 零错误及各构建；真实开源 `termuxgpt/termux-mcp` 在手机 Termux 非 root UID 运行，Android Provider 和小爱实际代理的 shell／文件管道／错误语义通过 | 用户显式选择 `2025-06-18`，默认仍为 `2025-11-25`，不自动降级；隔离 HOME，只操作自有文件，未测模型自主任务、持久终端或 root shell。见 [Termux 实机记录](validation/termux-mcp-2026-10-28.md) |
 
 各行按其日期和验证范围独立判断；2026-10-19 会话修复重跑了本地测试、Lint 与构建，并安装测试包完成上述设备专项，未运行 CI。详细日志、日志页及会话修复属于发布基线之后的源码改动，未据此创建新的正式签名发布版本。
 

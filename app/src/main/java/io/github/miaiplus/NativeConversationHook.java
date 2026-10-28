@@ -19,7 +19,8 @@ import org.json.JSONObject;
 
 /** One user-driven conversation lifetime for the host's fullscreen and system-window entries. */
 final class NativeConversationHook {
-    private static final String PREFS = "miaiplus_conversation";
+    private static final String PREFS = "io.github.miaiplus".equals(BuildConfig.APPLICATION_ID)
+        ? "miaiplus_conversation" : BuildConfig.APPLICATION_ID + ".conversation";
     private static final String PAGE = "page_navigation_data";
     private static ConversationPolicy policy;
     private static SharedPreferences preferences;
@@ -615,7 +616,7 @@ final class NativeConversationHook {
     private static void explicitRoute(Intent intent) {
         if (disposed) return;
         try {
-            boolean moduleReturn = intent.getBooleanExtra("io.github.miaiplus.CONVERSATION_RETURN", false);
+            boolean moduleReturn = ConversationReturn.isModuleReturn(intent);
             boolean nativeNotification = isNativeNotification(intent);
             // startTabHostMainActivity fills a missing PAGE from the currently visible route.
             // During a pending wake that inherited page is initialization, not a history choice.

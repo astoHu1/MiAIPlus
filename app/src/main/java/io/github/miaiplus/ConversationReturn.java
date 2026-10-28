@@ -13,7 +13,7 @@ import java.util.concurrent.TimeUnit;
 final class ConversationReturn {
     private static final ThreadLocal<String> ORIGIN = new ThreadLocal<>();
     private static final String NAVIGATION = "page_navigation_data";
-    private static final String RETURN_ROUTE = "io.github.miaiplus.CONVERSATION_RETURN";
+    static final String RETURN_ROUTE = BuildConfig.APPLICATION_ID + ".CONVERSATION_RETURN";
     private ConversationReturn() {}
 
     static String currentIdentity() { return ORIGIN.get(); }
@@ -166,9 +166,13 @@ final class ConversationReturn {
             .putExtra(RETURN_ROUTE, true);
     }
 
+    static boolean isModuleReturn(Intent intent) {
+        return intent != null && intent.getBooleanExtra(RETURN_ROUTE, false);
+    }
+
     /** The new navigator does not consume a conversation extra on an ordinary onNewIntent. */
     static Runnable navigation(android.app.Activity activity, Intent intent, ClassLoader loader) {
-        if (!HostCompatibility.modern() || intent == null || !intent.getBooleanExtra(RETURN_ROUTE, false)) return null;
+        if (!HostCompatibility.modern() || !isModuleReturn(intent)) return null;
         Object page = intent.getParcelableExtra(NAVIGATION);
         if (page == null) return null;
         intent.removeExtra(RETURN_ROUTE);

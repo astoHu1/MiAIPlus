@@ -178,3 +178,17 @@ Hook 仅安装在精确校验的小爱版本：工具入口、描述构造、Pro
 ## 应用启动
 
 `AppLaunchTarget` 从可见的 MAIN/LAUNCHER 列表解析包名或唯一名称；`ScreenService` 提交标准显式 launcher Intent。`LaunchPrompt` 只匹配小米安全中心当前发起方/目标的启动确认，执行器最多点击一次“本次允许”；`LaunchVerifier` 等待稳定前台，遇可读应用选择或授权窗口则返回同会话观察，由模型选应用或进入权限策略。真正启动超时仍 PAUSE，点击确认本身不是成功依据。原生首次观察提供应用列表，控屏规划引导模型统一用 launch。详细边界与设备验证见 [应用启动](app-launch.md)。
+
+## 统一 Plugin 层（Pluginify 分支，2026-10-28）
+
+本分支将既有 Phone Use 的代理注册、工具定义注入与清理提取为 `NativePluginTools`。前后台 Phone Use 作为 `PhoneUsePlugin` 的两个第一方插件，与用户配置的 HTTP MCP 插件由同一 `PluginToolSpec`／`PluginSettings`／`PluginRuntime` 目录驱动；原生主 Agent、模型与历史管理仍由小爱持有。上文「两个代理」描述原 Phone Use 结构；本分支的统一注册层还按当前启用目录管理 MCP 代理。
+
+模块进程持有 MCP 地址、认证、发现结果及有界远程任务，宿主经 UID 校验 IPC 仅获得脱敏工具目录和调用结果。工具使用稳定 namespace，配置 revision 约束发现提交与新调用准入；已接收的 MCP 调用只重验自身插件的启停、连接身份与所调用工具契约，不因 Phone Use、其他插件或本插件纯显示名称变更而取消。注册表查询复用快照，不做网络发现；配置提交前原子校验最终目录预算，超限启用拒绝写入。远程队列与控屏 `active`／`screen_task` 分离，取消绑定 UID 与请求 ID，热重载等待实际退出。远端正文不能冒充 Phone Use 帧 token 或终止语义，且不会获得 root／无障碍执行接口。
+
+统一层只按对象身份移除本代创建的工具定义，保留来源不明的宿主缓存副本，避免跨 DI 注册表误删；旧定义可能在当前模型请求中继续显示，停用后旧代理仍重验拒绝执行。两版原生 `Tool.onCancel` 尚无可靠调用归属，MCP 保持 `isStoppable=false`，不保证小爱原生停止按钮取消远端。插件页提供模块本地「停止 MCP 调用」，只取消远程请求；线程中断、超时与自身配置失效也可中止本地等待。取消不回滚远端副作用，worker 实际退出前继续阻止重载。上述为源码及本地元数据核查边界，非设备验收结论。
+
+Phone Use 继续沿用原 `controlApp`、会话来源、确认、PageGuard、截图、后台交接与原对话返回路径；内置插件开关也在兼容入口和直接测试入口校验。旧控屏总开关仍只约束 Phone Use，MCP 不依赖外部模型配置或开启控屏。
+
+首轮远程适配为 MCP `2025-11-25` 的 tools-only Streamable HTTP 子集；后续增加 `2025-06-18` 显式兼容选项，默认保持前者。初始化响应必须严格匹配插件所选版本，不自动降级；改变协议身份会清除该插件旧目录。两版均只支持已实现的初始化、分页工具发现、JSON／SSE 和文本／结构化结果，不包含 stdio、OAuth、新协议形态或任意代码加载。
+
+2026-10-28 独立包在小爱 8.3.30.4420 实测通过统一工具注册、受控合成 MCP 服务调用，以及前台／空后台屏的截图、同会话续调与结束，详见 [独立包实机验证](validation/plugin-platform-device-2026-10-28.md)。随后固定上游 `termuxgpt/termux-mcp` 服务由真实 Termux UID 运行，模块 Provider 完成 shell 环境、中文文件管道及失败语义验证；小爱当前模块工具代理另行执行固定身份命令，详见 [Termux 实机验证](validation/termux-mcp-2026-10-28.md)。服务代码不打包进模块，测试独立 HOME 仅隔离状态，不限制 Termux UID 的 shell 能力；模块对 MCP `isError` 返回脱敏失败，不透传错误正文。这些结果不代表任意生产 MCP、真实模型自主选择、复杂应用任务或其他小爱版本已经验收。架构、操作步骤、能力限制与后续适配原则见 [Plugin 平台](plugin-platform.md) 和 [MCP 调研](plugin-platform-mcp-research.md)。

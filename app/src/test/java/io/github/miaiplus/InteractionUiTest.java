@@ -21,7 +21,7 @@ import org.robolectric.shadows.ShadowSystemClock;
 @RunWith(RobolectricTestRunner.class)
 @org.robolectric.annotation.Config(sdk = 33, application = Application.class)
 public final class InteractionUiTest {
-    private static final String RETURN_TOKEN = "io.github.miaiplus.RETURN_CONVERSATION";
+    private static final String RETURN_TOKEN = BuildConfig.APPLICATION_ID + ".RETURN_CONVERSATION";
 
     @Test public void pendingActionPublishesFullConfirmationDespiteEmptyOrUnchangedPlannerProgress() {
         String message = "确认发送给指定收件人：\n" + "完整操作说明".repeat(50);
@@ -140,5 +140,27 @@ public final class InteractionUiTest {
         assertTrue(InteractionUi.isCompletionEntry(false, current, "current-task"));
         assertTrue(window.userEntered(false));
         assertFalse(window.active(false));
+    }
+
+    @Test public void separatelyInstalledModuleKeepsHostActionsAndConversationStateSeparate() throws Exception {
+        if ("io.github.miaiplus".equals(BuildConfig.APPLICATION_ID)) return;
+        Intent own = InteractionUi.consentIntent("com.miui.voiceassist", "task-a", "token-a", true);
+        assertTrue(own.getAction().startsWith(BuildConfig.APPLICATION_ID + "."));
+        assertEquals(BuildConfig.APPLICATION_ID, own.getScheme());
+        assertFalse(InteractionUi.consentFilter().hasAction("com.miui.voiceassist.MIAIPLUS_FOREGROUND_ALLOW"));
+        assertFalse(InteractionUi.isCompletionEntry(false,
+            new Intent().putExtra("io.github.miaiplus.RETURN_CONVERSATION", "task-a"), "task-a"));
+        assertEquals(BuildConfig.APPLICATION_ID + ".CONVERSATION_RETURN", ConversationReturn.RETURN_ROUTE);
+        assertTrue(ConversationReturn.isModuleReturn(new Intent().putExtra(ConversationReturn.RETURN_ROUTE, true)));
+        assertFalse(ConversationReturn.isModuleReturn(new Intent().putExtra("io.github.miaiplus.CONVERSATION_RETURN", true)));
+        var preferences = NativeConversationHook.class.getDeclaredField("PREFS");
+        preferences.setAccessible(true);
+        assertEquals(BuildConfig.APPLICATION_ID + ".conversation", preferences.get(null));
+        var channel = InteractionUi.class.getDeclaredField("CHANNEL");
+        channel.setAccessible(true);
+        assertEquals(BuildConfig.APPLICATION_ID + ".computer", channel.get(null));
+        var notification = InteractionUi.class.getDeclaredField("NOTIFICATION");
+        notification.setAccessible(true);
+        assertNotEquals(0x4d494149, notification.getInt(null));
     }
 }

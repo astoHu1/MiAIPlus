@@ -4,15 +4,18 @@ PATH=/system/bin:/system/xbin
 export PATH
 USER_ID=$1
 RUN_ID=$2
+APPLICATION_ID=$3
 case "$USER_ID" in ''|*[!0-9]*) exit 2 ;; esac
 case "$RUN_ID" in ''|*[!a-f0-9-]*) exit 2 ;; esac
+case "$APPLICATION_ID" in ''|*[!a-zA-Z0-9_.]*|.*|*.|*..*) exit 2 ;; esac
+case "$APPLICATION_ID" in *.*) ;; *) exit 2 ;; esac
 [ "$(id -u)" = 0 ] || exit 3
 [ "$(am get-current-user)" = "$USER_ID" ] || exit 4
 [ "$(am get-started-user-state "$USER_ID")" = RUNNING_UNLOCKED ] || exit 4
-COMPONENT=io.github.miaiplus/io.github.miaiplus.ScreenService
-SHORT_COMPONENT=io.github.miaiplus/.ScreenService
+COMPONENT="$APPLICATION_ID/io.github.miaiplus.ScreenService"
+SHORT_COMPONENT="$APPLICATION_ID/.ScreenService"
 health() {
-    report=$(timeout 3 content call --user "$USER_ID" --uri content://io.github.miaiplus.bridge --method accessibility_health 2>/dev/null) || return 1
+    report=$(timeout 3 content call --user "$USER_ID" --uri "content://${APPLICATION_ID}.bridge" --method accessibility_health 2>/dev/null) || return 1
     case "$report" in *preflight_enabled=true*) ;; *) return 1 ;; esac
     case "$report" in *"preflight_id=$RUN_ID"*) ;; *) return 1 ;; esac
     case "$report" in *preparing=true*) ;; *) return 1 ;; esac
