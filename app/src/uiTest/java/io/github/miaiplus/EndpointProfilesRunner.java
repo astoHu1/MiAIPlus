@@ -807,7 +807,7 @@ final class EndpointProfilesRunner {
         SystemClock.sleep(2000); // Let confirmation toasts disappear.
         Bitmap bitmap = ui.takeScreenshot();
         check(bitmap != null, "Fixture screenshot failed");
-        File directory = new File(test.getTargetContext().getExternalFilesDir(null), "settings-ui-test");
+        File directory = new File(test.getTargetContext().getCacheDir(), "settings-ui-test");
         check(directory.isDirectory() || directory.mkdirs(), "Screenshot directory unavailable");
         try (var output = new FileOutputStream(new File(directory, name + ".png"))) {
             check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output), "Screenshot write failed");

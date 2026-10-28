@@ -10,6 +10,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.snap
@@ -191,13 +192,19 @@ private fun SettingsApp(state: SettingsState, openSettings: (Boolean) -> Unit, o
     }
 }
 
-/** Tabs replace their content immediately; only secondary navigation keeps an outgoing page. */
+/** Tabs animate only the incoming page; secondary navigation also retains an outgoing page. */
 @Composable
 private fun PageTransition(page: SettingsPage, modifier: Modifier, content: @Composable (SettingsPage) -> Unit) {
     val transition = updateTransition(page, label = "page")
     val tabSwitch = transition.targetState.tab != transition.currentState.tab
+    val tabEntry = remember(page) { Animatable(if (tabSwitch) 0f else 1f) }
+    val tabDirection = remember(page) { if (page.tab.ordinal > transition.currentState.tab.ordinal) 1f else -1f }
+    LaunchedEffect(tabEntry) {
+        if (tabEntry.value < 1f) tabEntry.animateTo(1f, tween(220, easing = FastOutSlowInEasing))
+    }
     val forward = transition.targetState.depth >= transition.currentState.depth
     val distance = with(LocalDensity.current) { 40.dp.toPx() }
+    val tabDistance = with(LocalDensity.current) { 24.dp.toPx() }
     val destinations = if (tabSwitch) listOf(page)
         else listOf(transition.currentState, transition.targetState).distinct()
     Box(modifier.clipToBounds()) {
@@ -208,12 +215,16 @@ private fun PageTransition(page: SettingsPage, modifier: Modifier, content: @Com
                     else tween(240, easing = FastOutSlowInEasing)
                 }, label = "page-${destination.name}") { if (it == destination) 1f else 0f }
                 val incoming = destination == transition.targetState
-                Box(Modifier.fillMaxSize().testTag("page-${destination.name}")
+                Box(Modifier.fillMaxSize()
                     .graphicsLayer {
-                        alpha = if (tabSwitch) 1f else visibility.value
-                        translationX = (1f - alpha) * distance *
+                        val secondaryVisibility = if (tabSwitch) 1f else visibility.value
+                        val entry = if (incoming) tabEntry.value else 1f
+                        alpha = secondaryVisibility * entry
+                        translationX = (1f - secondaryVisibility) * distance *
                             (if (incoming) { if (forward) 1f else -0.3f } else { if (forward) -0.3f else 1f })
+                        if (incoming) translationX += (1f - entry) * tabDistance * tabDirection
                     }
+                    .testTag("page-${destination.name}")
                     .then(if (!incoming) Modifier.clearAndSetSemantics { hideFromAccessibility() }
                         .pointerInput(Unit) {
                             awaitPointerEventScope {

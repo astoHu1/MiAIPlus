@@ -322,7 +322,38 @@ class SettingsUiTest {
         compose.mainClock.autoAdvance = true
     }
 
-    @Test fun switchingTabsDuringSecondaryNavigationReleasesThePreviousPagesImmediately() {
+    @Test fun tabsAnimateInBothDirectionsAndSettleWithoutRetainingThePreviousPage() {
+        for (dark in listOf(false, true)) {
+            if (dark) {
+                RuntimeEnvironment.setQualifiers("+night")
+                compose.activityRule.scenario.recreate()
+            }
+            val origin = compose.onNodeWithTag("page-Home").getUnclippedBoundsInRoot().left.value
+            compose.mainClock.autoAdvance = false
+            try {
+                for ((tab, direction) in listOf("Model" to 1, "Control" to 1, "Model" to -1, "Home" to -1)) {
+                    compose.onNodeWithTag("tab-$tab").performClick()
+                    compose.mainClock.advanceTimeBy(80)
+                    val page = compose.onNodeWithTag("page-$tab")
+                    val offset = page.getUnclippedBoundsInRoot().left.value - origin
+                    check(offset * direction > 0.5f) { "$tab must still be sliding in, offset=$offset" }
+                    compose.onAllNodes(hasTestTag("page-Home") or hasTestTag("page-Model") or hasTestTag("page-Control"))
+                        .assertCountEquals(1)
+                    if (tab == "Control") capture("tab-enter-${if (dark) "dark" else "light"}")
+                    compose.mainClock.advanceTimeBy(300)
+                    assertEquals(origin, page.getUnclippedBoundsInRoot().left.value, 0.01f)
+                    compose.onNodeWithTag("tab-$tab").assertIsSelected()
+                    compose.onNodeWithTag("tab-$tab").performClick()
+                    compose.mainClock.advanceTimeBy(80)
+                    assertEquals(origin, page.getUnclippedBoundsInRoot().left.value, 0.01f)
+                }
+            } finally {
+                compose.mainClock.autoAdvance = true
+            }
+        }
+    }
+
+    @Test fun switchingTabsDuringAnimationReleasesThePreviousPagesAndSettlesOnTheLatestTab() {
         compose.mainClock.autoAdvance = false
         try {
             compose.onNodeWithText("运行状态").performScrollTo().performClick()
@@ -339,6 +370,15 @@ class SettingsUiTest {
             compose.onNodeWithTag("tab-Control").assertIsSelected()
             compose.onNodeWithTag("page-Control").assertExists()
             compose.onNodeWithTag("page-Model").assertDoesNotExist()
+            compose.mainClock.advanceTimeBy(64)
+            check(compose.onNodeWithTag("page-Control").getUnclippedBoundsInRoot().left.value > 0.5f)
+            compose.onNodeWithTag("tab-Home").performClick()
+            compose.mainClock.advanceTimeBy(80)
+            check(compose.onNodeWithTag("page-Home").getUnclippedBoundsInRoot().left.value < -0.5f)
+            compose.onNodeWithTag("page-Control").assertDoesNotExist()
+            compose.mainClock.advanceTimeBy(400)
+            assertEquals(0f, compose.onNodeWithTag("page-Home").getUnclippedBoundsInRoot().left.value, 0.01f)
+            compose.onNodeWithTag("tab-Home").assertIsSelected()
         } finally {
             compose.mainClock.autoAdvance = true
         }
