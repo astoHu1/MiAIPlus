@@ -16,7 +16,7 @@ import org.json.JSONObject;
 
 /** Scoped IPC: small commands, ephemeral image pipes, and opt-in external model configuration. */
 public final class BridgeProvider extends ContentProvider {
-    public static final Uri URI = Uri.parse("content://io.github.miaiplus.bridge");
+    public static final Uri URI = Uri.parse("content://" + BuildConfig.APPLICATION_ID + ".bridge");
     private static final Map<String, RunState> JOBS = new ConcurrentHashMap<>();
     private static final java.util.concurrent.ExecutorService WORKER = Executors.newSingleThreadExecutor();
     private static final java.util.concurrent.ScheduledExecutorService WATCHDOG = Executors.newSingleThreadScheduledExecutor();
@@ -58,6 +58,18 @@ public final class BridgeProvider extends ContentProvider {
             return backgroundDisplay(method.equals("background_display_probe"), arg, extras);
         }
         enforceCaller();
+        // Remote plugin jobs have their own bounded executor and never claim a screen task.
+        if (method.startsWith("plugin_")) {
+            int uid = Binder.getCallingUid();
+            return switch (method) {
+                case "plugin_catalog" -> PluginRuntime.catalog(getContext());
+                case "plugin_start" -> PluginRuntime.start(getContext(), uid, extras);
+                case "plugin_poll" -> PluginRuntime.poll(getContext(), uid, arg);
+                case "plugin_cancel" -> PluginRuntime.cancel(uid, arg);
+                case "plugin_busy" -> PluginRuntime.busy(uid);
+                default -> throw new SecurityException("Plugin configuration is module-local only");
+            };
+        }
         Bundle b = new Bundle();
         if (method.equals("phone_use_log_settings")) {
             b.putBoolean("enabled", PhoneUseLog.enabled());
@@ -176,6 +188,20 @@ public final class BridgeProvider extends ContentProvider {
             try { route = mode.equals("screen") ? PhoneUseRouting.decode(query, config.backgroundDisplay)
                 : new PhoneUseRouting.Request(query, false, ""); }
             catch (Exception e) { b.putString("error", publicError(e)); return b; }
+            if (mode.equals("screen")) {
+                try {
+                    boolean originalBackground = route.sourceTool().isEmpty() ? route.background()
+                        : PhoneUseRouting.background(route.sourceTool());
+                    if (config.planner.equals("native") && query != null && query.startsWith("MIAIPLUS:"))
+                        originalBackground = NativeSession.continuationBackground(query, Binder.getCallingUid(), route.sourceTool());
+                    String pluginId = originalBackground ? PluginSettings.BACKGROUND_ID : PluginSettings.FOREGROUND_ID;
+                    if (!PluginSettings.load(getContext()).find(pluginId).enabled()) {
+                        b.putString("error", PhoneUseResult.stopped("对应 Phone Use 插件已停用")); return b;
+                    }
+                } catch (Exception invalid) {
+                    b.putString("error", PhoneUseResult.stopped("插件配置不可用、会话已失效或工具不匹配")); return b;
+                }
+            }
             query = route.query();
             final String taskQuery = query;
             if (!mode.equals("screen") && !mode.equals("chat")) { b.putString("error", "未知模式"); return b; }

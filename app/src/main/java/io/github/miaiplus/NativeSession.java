@@ -27,6 +27,7 @@ public final class NativeSession {
         final ActionPermissionReview permissionReview = new ActionPermissionReview();
         JSONObject reviewChallenge;
         boolean background;
+        final boolean initialBackground;
         final BackgroundActions.LaunchPolicy launchPolicy = new BackgroundActions.LaunchPolicy();
         int steps, repeats;
         String previous = "";
@@ -39,7 +40,7 @@ public final class NativeSession {
         }
         State(String goal, int owner, int maxSteps, ScreenService screen, boolean background, String sourceTool) {
             this.goal = goal; this.run = new RunState(id, owner); this.maxSteps = maxSteps; this.screen = screen;
-            this.background = background; this.sourceTool = sourceTool;
+            this.background = background; this.initialBackground = background; this.sourceTool = sourceTool;
         }
     }
     public static synchronized String handle(Config config, String query, int owner) throws Exception {
@@ -288,6 +289,13 @@ public final class NativeSession {
         if (query == null || !query.startsWith("MIAIPLUS:"))
             throw new IllegalArgumentException("缺少控屏会话动作");
         verifyContinuation(active, new JSONObject(query.substring(9)), owner, sourceTool);
+    }
+    /** Original plugin ownership survives compatibility preference changes and explicit handoff. */
+    static boolean continuationBackground(String query, int owner, String sourceTool) throws Exception {
+        if (query == null || !query.startsWith("MIAIPLUS:")) throw new IllegalArgumentException("缺少控屏会话动作");
+        State state = active;
+        verifyContinuation(state, new JSONObject(query.substring(9)), owner, sourceTool);
+        return state.initialBackground;
     }
     private static void verifyContinuation(State s, JSONObject request, int owner, String sourceTool) {
         if (s == null || s.run.cancelled.get() || android.os.SystemClock.elapsedRealtime() >= s.run.deadline

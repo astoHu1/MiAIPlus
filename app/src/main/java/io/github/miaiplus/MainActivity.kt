@@ -79,9 +79,9 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class SettingsPage(val title: String, val depth: Int = 0) {
-    Home("MiAIPlus"), Model("模型 API"), Control("控屏"), Virtual("虚拟屏", 1), Status("运行状态", 1), Test("直接测试", 2), Logs("日志", 1);
+    Home("MiAIPlus"), Model("模型 API"), Control("控屏"), Virtual("虚拟屏", 1), Status("运行状态", 1), Test("直接测试", 2), Logs("日志", 1), Plugins("插件", 1);
 
-    val tab: SettingsPage get() = when (this) { Virtual -> Control; Status, Test, Logs -> Home; else -> this }
+    val tab: SettingsPage get() = when (this) { Virtual -> Control; Status, Test, Logs, Plugins -> Home; else -> this }
     val parent: SettingsPage get() = when (this) { Test -> Status; Virtual -> Control; else -> Home }
 }
 
@@ -171,13 +171,16 @@ private fun SettingsApp(state: SettingsState, openSettings: (Boolean) -> Unit, o
                             Spacer(Modifier.height(12.dp))
                         }
                         when (destination) {
-                            SettingsPage.Home -> HomePage(state, { navigate(SettingsPage.Status) }, { navigate(SettingsPage.Logs) })
+                            SettingsPage.Home -> HomePage(state, { navigate(SettingsPage.Status) }, { navigate(SettingsPage.Logs) }, { navigate(SettingsPage.Plugins) })
                             SettingsPage.Model -> ModelPage(state)
                             SettingsPage.Control -> ControlPage(state, openSettings) { navigate(SettingsPage.Virtual) }
                             SettingsPage.Virtual -> VirtualScreenPage(state)
                             SettingsPage.Status -> StatusPage(state, openSettings, { navigate(SettingsPage.Virtual) }) { navigate(SettingsPage.Test) }
                             SettingsPage.Test -> TestPage(state, onScreenTask)
                             SettingsPage.Logs -> DiagnosticLogPage(state, followLogs)
+                            SettingsPage.Plugins -> PluginPage(state.plugins, state.config.enabled, state.config.planner == "native") {
+                                navigate(SettingsPage.Control)
+                            }
                         }
                     }
                 }
@@ -239,7 +242,7 @@ private fun PageTransition(page: SettingsPage, modifier: Modifier, content: @Com
 }
 
 @Composable
-private fun HomePage(state: SettingsState, openStatus: () -> Unit, openLogs: () -> Unit) {
+private fun HomePage(state: SettingsState, openStatus: () -> Unit, openLogs: () -> Unit, openPlugins: () -> Unit) {
     var editConversationTimeout by remember { mutableStateOf(false) }
     var conversationTimeout by remember { mutableStateOf("") }
     val reported = state.hookRecordedAt > 0L
@@ -272,6 +275,7 @@ private fun HomePage(state: SettingsState, openStatus: () -> Unit, openLogs: () 
         DashboardTile("无障碍", if (state.accessible) "已连接" else "未连接", Modifier.weight(1f))
     }
     Section("当前配置") {
+        ArrowPreference(title = "插件", summary = state.plugins.summary, onClick = openPlugins)
         BasicComponent(title = "控屏工具", summary = if (state.config.enabled) "已开启" else "已关闭")
         BasicComponent(title = "规划模型", summary = if (state.config.planner == "external")
             state.profiles?.active()?.model?.ifBlank { "未选择" } ?: "未配置" else "小爱当前模型")

@@ -29,7 +29,7 @@ public class BridgeProviderProbeTest {
         Config.prefs(context).edit().clear().putBoolean("enabled", true).commit();
         provider = new BridgeProvider();
         ProviderInfo info = new ProviderInfo();
-        info.authority = "io.github.miaiplus.bridge";
+        info.authority = BridgeProvider.URI.getAuthority();
         provider.attachInfo(context, info);
         resetState();
     }

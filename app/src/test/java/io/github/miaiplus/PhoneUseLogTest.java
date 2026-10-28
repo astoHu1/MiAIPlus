@@ -73,7 +73,7 @@ public final class PhoneUseLogTest {
         var application = RuntimeEnvironment.getApplication();
         LogSettingsProvider provider = new LogSettingsProvider();
         android.content.pm.ProviderInfo info = new android.content.pm.ProviderInfo();
-        info.authority = "io.github.miaiplus.bridge";
+        info.authority = BridgeProvider.URI.getAuthority();
         provider.attachInfo(application, info);
         org.robolectric.shadows.ShadowContentResolver.registerProviderInternal(info.authority, provider);
         var field = PhoneUseLog.class.getDeclaredField("preferences"); field.setAccessible(true); field.set(null, null);

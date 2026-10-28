@@ -4,7 +4,7 @@
         <package android:name="com.miui.voiceassist" />
         <intent><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent>
     </queries>
-    <application android:name=".ModuleApplication" android:label="MiAIPlus" android:theme="@style/Theme.MiAIPlus"
+    <application android:name=".ModuleApplication" android:label="MiAIPlus Pluginify" android:theme="@style/Theme.MiAIPlus"
         android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher"
         android:description="@string/module_description" android:allowBackup="false" android:usesCleartextTraffic="true" android:supportsRtl="true">
         <activity android:name=".MainActivity" android:exported="true">
@@ -13,9 +13,9 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <provider android:name=".BridgeProvider" android:authorities="io.github.miaiplus.bridge"
+        <provider android:name=".BridgeProvider" android:authorities="${applicationId}.bridge"
             android:exported="true" />
-        <provider android:name="androidx.core.content.FileProvider" android:authorities="io.github.miaiplus.log-files"
+        <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.log-files"
             android:exported="false" android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/log_file_paths" />
         </provider>

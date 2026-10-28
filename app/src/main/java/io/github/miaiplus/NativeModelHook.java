@@ -39,7 +39,7 @@ public final class NativeModelHook {
     }
     public static void install(Context context, ClassLoader loader, List<HookCallback.Unhook> hooks) throws Exception {
         PhoneUseLog.initRemote(context);
-        NativePhoneUseTool.install(context, loader, hooks);
+        NativePluginTools.install(context, loader, hooks);
         NativeTurnLifecycle.install(context, loader, hooks);
         NativeIntentHook.install(context, loader, hooks);
         NativeReasoningHook.install(context, loader, hooks);
@@ -130,7 +130,7 @@ public final class NativeModelHook {
             hooks.add(Hooks.hookMethod(stream, new HookCallback() {
                 @Override protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                     if (delegating.get()) return;
-                    NativePhoneUseTool.addDefinition(context, param);
+                    NativePluginTools.addDefinition(context, param);
                     Bundle setting;
                     try { setting = requestConfig(context); }
                     catch (Exception unavailable) {

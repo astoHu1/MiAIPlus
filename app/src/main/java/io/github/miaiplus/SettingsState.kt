@@ -35,6 +35,7 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
     private val prefs = Config.prefs(context)
     val virtualScreen = VirtualScreenState(application, viewModelScope)
     val logs = DiagnosticLogState(application, viewModelScope)
+    val plugins = PluginState(application, viewModelScope)
     var config by mutableStateOf(Config(context))
         private set
     var profiles by mutableStateOf<EndpointProfiles?>(null)

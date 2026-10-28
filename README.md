@@ -49,7 +49,7 @@ LLM存在不可避免的错误，该插件权限极高，请自行监控设备�
 
 试用 APK：`app/build/outputs/apk/preview/app-preview.apk`。Preview 为优化开销后的开发签名版本。Debug请勿使用。
 
-GitHub Actions 在 main 推送、PR 和手动触发时执行测试、Lint 与构建；成功后在该次运行的 **Artifacts** 下载 APK、源码包和校验文件。
+GitHub Actions 在 main／Pluginify 推送、PR 和手动触发时执行测试、Lint 与构建；成功后在该次运行的 **Artifacts** 下载 APK、源码包和校验文件。
 
 ## TODO
 - 优化Phone Use的工作效率
@@ -61,5 +61,6 @@ GitHub Actions 在 main 推送、PR 和手动触发时执行测试、Lint 与构
 
 - [后台虚拟屏与限制](docs/background-display.md) · [应用启动](docs/app-launch.md) · [无障碍前置检查](docs/accessibility-guard.md)
 - [配置界面](docs/settings-ui.md) · [API 102 与热重载](docs/api102-migration.md)
+- [Plugin 平台与 HTTP MCP（Pluginify 分支）](docs/plugin-platform.md)
 - [开发指南](AGENTS.md) · [架构与验证](docs/architecture.md)
 - [第三方许可](NOTICE)

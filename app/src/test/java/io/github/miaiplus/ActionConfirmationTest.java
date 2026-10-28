@@ -47,7 +47,7 @@ public final class ActionConfirmationTest {
         field(BridgeProvider.class, "screenTaskActive").setBoolean(null, true);
         provider = new BridgeProvider();
         ProviderInfo info = new ProviderInfo();
-        info.authority = "io.github.miaiplus.bridge";
+        info.authority = BridgeProvider.URI.getAuthority();
         provider.attachInfo(RuntimeEnvironment.getApplication(), info);
     }
 

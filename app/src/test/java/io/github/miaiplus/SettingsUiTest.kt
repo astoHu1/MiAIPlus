@@ -295,8 +295,9 @@ class SettingsUiTest {
     }
 
     @Test fun secondaryPagesAnimateBothWaysAndReturnToTheirParent() {
+        compose.onNodeWithText("运行状态").performScrollTo()
         compose.mainClock.autoAdvance = false
-        compose.onNodeWithText("运行状态").performScrollTo().performClick()
+        compose.onNodeWithText("运行状态").performClick()
         compose.mainClock.advanceTimeBy(80)
         compose.onNodeWithTag("page-Home").assertExists()
         compose.onNodeWithTag("page-Status").assertExists()
@@ -354,9 +355,10 @@ class SettingsUiTest {
     }
 
     @Test fun switchingTabsDuringAnimationReleasesThePreviousPagesAndSettlesOnTheLatestTab() {
+        compose.onNodeWithText("运行状态").performScrollTo()
         compose.mainClock.autoAdvance = false
         try {
-            compose.onNodeWithText("运行状态").performScrollTo().performClick()
+            compose.onNodeWithText("运行状态").performClick()
             compose.mainClock.advanceTimeBy(80)
             compose.onNodeWithTag("page-Home").assertExists()
             compose.onNodeWithTag("page-Status").assertExists()
@@ -515,9 +517,9 @@ class SettingsUiTest {
     @Test fun backgroundCheckIsExplicitAndSurvivesStatusRefresh() {
         val calls = AtomicInteger()
         val provider = BackgroundStatusProvider(calls).apply {
-            attachInfo(compose.activity, ProviderInfo().apply { authority = "io.github.miaiplus.bridge" })
+            attachInfo(compose.activity, ProviderInfo().apply { authority = BridgeProvider.URI.authority })
         }
-        ShadowContentResolver.registerProviderInternal("io.github.miaiplus.bridge", provider)
+        ShadowContentResolver.registerProviderInternal(BridgeProvider.URI.authority, provider)
         compose.onNodeWithTag("tab-Control").performClick()
         compose.onNodeWithText("虚拟屏").performClick()
         compose.onNodeWithTag("tab-Control").assertIsSelected()
@@ -540,9 +542,9 @@ class SettingsUiTest {
     @Test fun virtualProbeRequiresConfirmationAndKeepsIndividualVerdicts() {
         val calls = AtomicInteger()
         val provider = BackgroundStatusProvider(calls).apply {
-            attachInfo(compose.activity, ProviderInfo().apply { authority = "io.github.miaiplus.bridge" })
+            attachInfo(compose.activity, ProviderInfo().apply { authority = BridgeProvider.URI.authority })
         }
-        ShadowContentResolver.registerProviderInternal("io.github.miaiplus.bridge", provider)
+        ShadowContentResolver.registerProviderInternal(BridgeProvider.URI.authority, provider)
         compose.onNodeWithTag("tab-Control").performClick()
         compose.onNodeWithText("虚拟屏").performClick()
         compose.onNodeWithText("开始检测").performClick()
@@ -593,13 +595,16 @@ class SettingsUiTest {
     @Test fun virtualProbeRefusesToRunDuringAnActiveTask() {
         val calls = AtomicInteger()
         val provider = BackgroundStatusProvider(calls, active = true).apply {
-            attachInfo(compose.activity, ProviderInfo().apply { authority = "io.github.miaiplus.bridge" })
+            attachInfo(compose.activity, ProviderInfo().apply { authority = BridgeProvider.URI.authority })
         }
-        ShadowContentResolver.registerProviderInternal("io.github.miaiplus.bridge", provider)
+        ShadowContentResolver.registerProviderInternal(BridgeProvider.URI.authority, provider)
         compose.onNodeWithTag("tab-Control").performClick()
         compose.onNodeWithText("虚拟屏").performClick()
         compose.onNodeWithText("开始检测").performClick()
         compose.onNodeWithText("开始", useUnmergedTree = true).performClick()
+        compose.waitUntil(timeoutMillis = 5000) {
+            compose.onAllNodesWithText("请先结束当前控屏任务").fetchSemanticsNodes().isNotEmpty()
+        }
         compose.onNodeWithText("请先结束当前控屏任务").assertExists()
         assertEquals(0, calls.get())
     }
@@ -645,8 +650,8 @@ class SettingsUiTest {
                 }
                 return super.call(method, arg, extras)
             }
-        }.apply { attachInfo(compose.activity, ProviderInfo().apply { authority = "io.github.miaiplus.bridge" }) }
-        ShadowContentResolver.registerProviderInternal("io.github.miaiplus.bridge", provider)
+        }.apply { attachInfo(compose.activity, ProviderInfo().apply { authority = BridgeProvider.URI.authority }) }
+        ShadowContentResolver.registerProviderInternal(BridgeProvider.URI.authority, provider)
         val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
         val handoffs = AtomicInteger()
         compose.runOnIdle {

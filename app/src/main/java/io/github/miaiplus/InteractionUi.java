@@ -24,15 +24,20 @@ import org.json.JSONObject;
 
 /** Runs in XiaoAi's UID so HyperOS applies XiaoAi's existing focus-notification permission. */
 final class InteractionUi implements Application.ActivityLifecycleCallbacks {
-    private static final int NOTIFICATION = 0x4d494149;
-    // Keep the existing notification channel ID so upgrades preserve the user's channel settings.
-    private static final String CHANNEL = "miaiplus_computer";
-    private static final String STOP = "com.miui.voiceassist.MIAIPLUS_STOP";
-    private static final String FOREGROUND_ALLOW = "com.miui.voiceassist.MIAIPLUS_FOREGROUND_ALLOW";
-    private static final String FOREGROUND_DENY = "com.miui.voiceassist.MIAIPLUS_FOREGROUND_DENY";
-    private static final String CONFIRM_ACTION = "com.miui.voiceassist.MIAIPLUS_CONFIRM_ACTION";
-    private static final String DENY_ACTION = "com.miui.voiceassist.MIAIPLUS_DENY_ACTION";
-    private static final String RETURN_TOKEN = "io.github.miaiplus.RETURN_CONVERSATION";
+    private static final boolean MAINLINE = "io.github.miaiplus".equals(BuildConfig.APPLICATION_ID);
+    private static final int NOTIFICATION = MAINLINE ? 0x4d494149 : BuildConfig.APPLICATION_ID.hashCode();
+    // XiaoAi owns these notifications, so a separate module install needs its own channel and identity.
+    // Preserve the original channel on mainline upgrades to retain the user's channel settings.
+    private static final String CHANNEL = MAINLINE ? "miaiplus_computer" : BuildConfig.APPLICATION_ID + ".computer";
+    private static final String ACTION_PREFIX = MAINLINE ? "com.miui.voiceassist.MIAIPLUS_"
+        : BuildConfig.APPLICATION_ID + ".MIAIPLUS_";
+    private static final String STOP = ACTION_PREFIX + "STOP";
+    private static final String FOREGROUND_ALLOW = ACTION_PREFIX + "FOREGROUND_ALLOW";
+    private static final String FOREGROUND_DENY = ACTION_PREFIX + "FOREGROUND_DENY";
+    private static final String CONFIRM_ACTION = ACTION_PREFIX + "CONFIRM_ACTION";
+    private static final String DENY_ACTION = ACTION_PREFIX + "DENY_ACTION";
+    private static final String RETURN_TOKEN = BuildConfig.APPLICATION_ID + ".RETURN_CONVERSATION";
+    private static final String CONSENT_SCHEME = MAINLINE ? "miaiplus" : BuildConfig.APPLICATION_ID;
     private final Application app;
     private final Context receiverContext;
     private final ClassLoader loader;
@@ -472,7 +477,7 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
     static IntentFilter consentFilter() {
         IntentFilter filter = new IntentFilter(FOREGROUND_ALLOW);
         filter.addAction(FOREGROUND_DENY); filter.addAction(CONFIRM_ACTION); filter.addAction(DENY_ACTION);
-        filter.addDataScheme("miaiplus");
+        filter.addDataScheme(CONSENT_SCHEME);
         return filter;
     }
     static Intent consentIntent(String hostPackage, String task, String token, boolean allow) {
@@ -480,7 +485,7 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
     }
     static Intent consentIntent(String hostPackage, String task, String token, boolean allow, boolean confirmAction) {
         return new Intent(confirmAction ? allow ? CONFIRM_ACTION : DENY_ACTION : allow ? FOREGROUND_ALLOW : FOREGROUND_DENY).setPackage(hostPackage)
-            .setData(android.net.Uri.parse("miaiplus://" + (confirmAction ? "confirmation/" : "foreground/") + token + "/" + (allow ? "allow" : "deny")))
+            .setData(android.net.Uri.parse(CONSENT_SCHEME + "://" + (confirmAction ? "confirmation/" : "foreground/") + token + "/" + (allow ? "allow" : "deny")))
             .putExtra("token", token).putExtra("screen_task", task);
     }
     private void clearConsentActions() {

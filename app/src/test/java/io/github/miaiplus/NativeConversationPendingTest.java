@@ -33,7 +33,7 @@ public final class NativeConversationPendingTest {
         context = RuntimeEnvironment.getApplication();
         provider = new SettingsProvider();
         ProviderInfo info = new ProviderInfo();
-        info.authority = "io.github.miaiplus.bridge";
+        info.authority = BridgeProvider.URI.getAuthority();
         provider.attachInfo(context, info);
         ShadowContentResolver.registerProviderInternal(info.authority, provider);
         replace("disposed", false);

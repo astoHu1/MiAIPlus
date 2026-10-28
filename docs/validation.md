@@ -14,6 +14,8 @@
 | 模型 API 列表底部空白修复 | 376 项 JVM／Robolectric 测试，Debug／Release 完整 Lint 与构建、Debug AndroidTest 构建通过；深浅色及未保存状态的布局断言与渲染检查 | 本轮未安装或操作手机，未实测系统导航栏与软键盘。见 [底部布局记录](validation/settings-bottom-layout-2026-10-19.md) |
 | 首页概览卡字号与等高布局 | 376 项 JVM／Robolectric 测试，Debug／Release 完整 Lint、Debug／Release／Preview APK 与 Debug AndroidTest 构建通过；API 37 实机覆盖安装后核对首页、配置恢复及无障碍连接 | 深色使用 Robolectric 渲染；未运行控屏、真实模型或宿主 Hook 回归。见 [首页字号记录](validation/settings-home-typography-2026-10-28.md) |
 | 底栏切页动画 | 377 项 JVM／Robolectric 测试，Debug／Release 完整 Lint 与各 APK 构建；深浅色和中断过渡断言、API 37 优化 Preview 设置回归与性能采样通过 | 底栏采样 P95 19 ms、1/660 帧超时，仍有 150 ms 长帧；未重做真实模型或 Hook 回归。见 [底栏动画记录](validation/settings-tab-animation-2026-10-28.md) |
+| `Pluginify` 分支的统一 Plugin 层、独立包与 MCP tools 首阶段 | 506 项 JVM／Robolectric、双变体 Lint 零错误及各 APK 构建；独立包并装，API 37／小爱 8.3.30 实际注册表／MCP proxy、Android 合成 MCP HTTP、前台及空后台屏截图／wait／finish 通过 | 固定 MCP `2025-11-25` tools 子集；未测真实模型选择、第三方生产 MCP 或复杂应用任务。测试后恢复主线作用域、撤销新包临时 root；保留 Pluginify 优化安装包但模块停用。见 [本地首轮](validation/plugin-platform-2026-10-28.md) 与 [独立包实机记录](validation/plugin-platform-device-2026-10-28.md) |
+| 现有 Termux MCP 与显式协议兼容 | 513 项本地回归、双变体 Lint 零错误及各构建；真实开源 `termuxgpt/termux-mcp` 在手机 Termux 非 root UID 运行，Android Provider 和小爱实际代理的 shell／文件管道／错误语义通过 | 用户显式选择 `2025-06-18`，默认仍为 `2025-11-25`，不自动降级；隔离 HOME，只操作自有文件，未测模型自主任务、持久终端或 root shell。见 [Termux 实机记录](validation/termux-mcp-2026-10-28.md) |
 
 各行按其日期和验证范围独立判断；2026-10-19 会话修复重跑了本地测试、Lint 与构建，并安装测试包完成上述设备专项，未运行 CI。详细日志、日志页及会话修复属于发布基线之后的源码改动，未据此创建新的正式签名发布版本。
 
