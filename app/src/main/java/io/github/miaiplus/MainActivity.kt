@@ -187,7 +187,7 @@ private fun SettingsApp(state: SettingsState, openSettings: (Boolean) -> Unit, o
             }
         }
         ConfirmDialog(
-            show = leaveTo != null, title = "保存当前配置？", summary = "还有未保存的修改。",
+            show = leaveTo != null, title = "保存当前配置？", summary = null,
             confirm = "保存并离开", onDismiss = { leaveTo = null }, error = state.error,
             onConfirm = { if (state.saveProfile()) { page = leaveTo!!; leaveTo = null } },
             alternative = "放弃修改", onAlternative = { state.discard(); page = leaveTo!!; leaveTo = null },
@@ -295,7 +295,7 @@ private fun HomePage(state: SettingsState, openStatus: () -> Unit, openLogs: () 
         ArrowPreference(title = "运行状态", summary = "连接与诊断", onClick = openStatus)
     }
     OverlayDialog(show = editConversationTimeout, title = "自动新建对话",
-        summary = "每次打开全屏或浮窗都重新计时，操作也会延长计时。超过设定时长后，下次打开时新建对话；时长内继续同一对话。支持 0–${Config.MAX_CONVERSATION_TIMEOUT_MINUTES} 分钟，0 关闭，默认 ${Config.DEFAULT_CONVERSATION_TIMEOUT_MINUTES} 分钟。",
+        summary = "闲置超时后，下次打开小爱会新建对话。填 0 关闭。",
         onDismissRequest = { editConversationTimeout = false; state.error = null }) {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Input("时长（分钟）", conversationTimeout, { conversationTimeout = it }, type = KeyboardType.Number)
@@ -318,7 +318,7 @@ private fun DashboardTile(label: String, value: String, modifier: Modifier) {
 
 @Composable
 private fun ModelPage(state: SettingsState) {
-    val draft = state.draft ?: run { Hint("配置读取失败。请保留应用数据，重新打开设置。"); return }
+    val draft = state.draft ?: run { Hint("配置读取失败，请重新打开设置。"); return }
     val profiles = state.profiles ?: return
     var confirmGlobal by remember { mutableStateOf(false) }
     var switchTo by remember { mutableStateOf<String?>(null) }
@@ -356,9 +356,9 @@ private fun ModelPage(state: SettingsState) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Input("配置名称", draft.name, { state.updateProfile(name = it) })
                     Input("服务地址", draft.endpoint, { state.updateProfile(endpoint = it) }, type = KeyboardType.Uri)
-                    Text("Base URL，如 https://api.example.com/v1", style = MiuixTheme.textStyles.footnote1,
+                    Text("例如 https://api.example.com/v1", style = MiuixTheme.textStyles.footnote1,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary, modifier = Modifier.padding(horizontal = 4.dp))
-                    TextField(value = draft.apiKey, onValueChange = { state.updateProfile(key = it) }, label = "API 密钥（可留空）",
+                    TextField(value = draft.apiKey, onValueChange = { state.updateProfile(key = it) }, label = "API 密钥（选填）",
                         singleLine = true, modifier = Modifier.fillMaxWidth(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                         visualTransformation = if (revealKey) VisualTransformation.None else PasswordVisualTransformation())
@@ -396,10 +396,10 @@ private fun ModelPage(state: SettingsState) {
         }
     }
     ConfirmDialog(show = confirmGlobal, title = "使用外部模型对话？",
-        summary = "聊天记录和工具上下文将发送至当前 API 服务。更改后重启小爱。",
+        summary = "对话和工具信息将发送到当前 API 服务。",
         confirm = "开启", onDismiss = { confirmGlobal = false },
         onConfirm = { state.setOption("globalModel", true); confirmGlobal = false })
-    ConfirmDialog(show = switchTo != null, title = "切换前保存修改？", summary = "还有未保存的修改。",
+    ConfirmDialog(show = switchTo != null, title = "切换前保存修改？", summary = null,
         confirm = "保存并切换", onDismiss = { switchTo = null },
         error = state.error,
         onConfirm = { val id = switchTo!!; if (state.saveProfile() && state.switchProfile(id)) switchTo = null },
@@ -412,7 +412,7 @@ private fun ModelPage(state: SettingsState) {
         }
     }
     ConfirmDialog(show = showDelete, title = "删除「${profiles.active().name}」？",
-        summary = "删除配置和密钥，未保存的修改也会丢弃。",
+        summary = "配置和密钥将一并删除。",
         confirm = "删除", onDismiss = { showDelete = false },
         error = state.error,
         onConfirm = { if (state.deleteProfile()) showDelete = false })
@@ -437,7 +437,7 @@ private fun ControlPage(state: SettingsState, openSettings: (Boolean) -> Unit, o
     Section("执行") {
         OverlayDropdownPreference(title = "规划模型", items = listOf("小爱当前模型", "外部模型"),
             enabled = !state.config.globalModel,
-            summary = if (state.config.globalModel) "已启用全局外部模型，控屏跟随小爱当前模型" else null,
+            summary = if (state.config.globalModel) "跟随小爱对话的模型" else null,
             selectedIndex = if (state.config.planner == "external") 1 else 0,
             onSelectedIndexChange = { state.setOption("planner", if (it == 1) "external" else "native") })
         OverlayDropdownPreference(title = "动作协议", items = listOf("Phone Use", "AutoGLM"),
@@ -445,18 +445,18 @@ private fun ControlPage(state: SettingsState, openSettings: (Boolean) -> Unit, o
             onSelectedIndexChange = { state.setOption("protocol", if (it == 1) "autoglm" else "phone_use") })
         ArrowPreference(title = "最大步数", summary = "${state.config.maxSteps} 步",
             onClick = { steps = state.config.maxSteps.toString(); editSteps = true })
-        ArrowPreference(title = "虚拟屏", summary = "能力检测 · 兼容入口默认屏幕",
+        ArrowPreference(title = "虚拟屏", summary = "分辨率与检测",
             onClick = openVirtual)
     }
     Section("权限") {
         val permissionModes = listOf(Config.PHONE_USE_PERMISSION_MANUAL,
             Config.PHONE_USE_PERMISSION_AUTO, Config.PHONE_USE_PERMISSION_YOLO)
-        OverlayDropdownPreference(title = "Phone Use 权限预设", items = listOf("Manual", "Auto", "YOLO"),
+        OverlayDropdownPreference(title = "操作确认", items = listOf("手动确认", "智能判断", "自动执行"),
             selectedIndex = permissionModes.indexOf(state.config.phoneUsePermissionMode).coerceAtLeast(0),
             summary = when (state.config.phoneUsePermissionMode) {
-                Config.PHONE_USE_PERMISSION_AUTO -> "模型自动审计，无法确定时请求你确认"
-                Config.PHONE_USE_PERMISSION_YOLO -> "除严重安全问题外自动同意，安全限制始终生效"
-                else -> "敏感操作由你逐次确认"
+                Config.PHONE_USE_PERMISSION_AUTO -> "由模型判断，必要时询问"
+                Config.PHONE_USE_PERMISSION_YOLO -> "自动同意，仍保留安全拦截"
+                else -> "敏感操作逐次询问"
             },
             onSelectedIndexChange = { state.setPhoneUsePermissionMode(permissionModes[it]) })
         ArrowPreference(title = "无障碍服务", summary = if (state.accessible) "已连接" else "前往开启",
@@ -467,10 +467,10 @@ private fun ControlPage(state: SettingsState, openSettings: (Boolean) -> Unit, o
     }
     Section("诊断") {
         SwitchPreference(title = "Phone Use 详细日志", checked = state.config.phoneUseDetailedLog,
-            summary = "记录前台与虚拟屏的观察、动作、输入和截图传递；不记录页面正文或输入内容。关闭后停止记录，无需重启。",
+            summary = "记录运行过程，方便排查问题",
             onCheckedChange = { state.setOption(Config.PHONE_USE_LOG_KEY, it) })
     }
-    OverlayDialog(show = editSteps, title = "最大步数", summary = "设置 1–${Config.MAX_PHONE_USE_STEPS} 步，默认 30 步。", onDismissRequest = { editSteps = false }) {
+    OverlayDialog(show = editSteps, title = "最大步数", summary = "1–${Config.MAX_PHONE_USE_STEPS} 步", onDismissRequest = { editSteps = false }) {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Input("步数", steps, { steps = it }, type = KeyboardType.Number)
             state.error?.let { Hint(it) }
@@ -495,7 +495,7 @@ private fun StatusPage(state: SettingsState, openSettings: (Boolean) -> Unit, op
         BasicComponent(title = "任务前检查", summary = state.guardStatus)
     }
     Section("诊断") {
-        ArrowPreference(title = "虚拟屏", summary = "检查与能力检测", onClick = openVirtual)
+        ArrowPreference(title = "虚拟屏", summary = "分辨率与检测", onClick = openVirtual)
         ArrowPreference(title = "直接测试", onClick = openTest)
     }
 }
@@ -513,7 +513,7 @@ private fun VirtualScreenPage(state: SettingsState) {
     var detail by remember { mutableStateOf<DisplayProbeItem?>(null) }
     Group {
         SwitchPreference(title = "兼容入口默认使用虚拟屏", checked = state.config.backgroundDisplay,
-            summary = "旧控屏入口 · 不可用时停止而非转主屏",
+            summary = "用于旧版控屏入口",
             enabled = !screen.busy, onCheckedChange = { state.setOption("backgroundDisplay", it) })
     }
     Section("画布") {
@@ -538,7 +538,7 @@ private fun VirtualScreenPage(state: SettingsState) {
             summary = screen.selectedApp?.name ?: "不启动应用", enabled = !screen.busy && !screen.loadingApps,
             onClick = { appQuery = ""; screen.loadApps() })
         ArrowPreference(title = if (screen.probing) "正在检测…" else "开始检测",
-            summary = "创建虚拟屏 · 主屏保持不动", enabled = !screen.busy, onClick = { confirmProbe = true })
+            summary = "在虚拟屏测试显示和输入", enabled = !screen.busy, onClick = { confirmProbe = true })
     }
     screen.error?.let { Group { BasicComponent(title = "未能完成", summary = it) } }
     screen.report?.let { report ->
@@ -550,12 +550,12 @@ private fun VirtualScreenPage(state: SettingsState) {
         }
     }
     ConfirmDialog(show = confirmProbe, title = "检测虚拟屏？",
-        summary = if (screen.selectedApp == null) "会短暂创建虚拟屏并发送测试输入，不启动应用。期间请勿操作主屏。"
-            else "会在虚拟屏打开「${screen.selectedApp!!.name}」，发送点击和按键，结束后关闭。请选择无个人数据的测试应用，期间请勿操作主屏。",
+        summary = if (screen.selectedApp == null) "将创建虚拟屏并测试输入。检测期间请勿操作手机。"
+            else "将在虚拟屏打开「${screen.selectedApp!!.name}」并测试点击和按键。检测期间请勿操作手机。",
         confirm = "开始", onDismiss = { confirmProbe = false },
         onConfirm = { confirmProbe = false; screen.probe() })
     OverlayDialog(show = editCanvas, title = "虚拟屏画布分辨率",
-        summary = "宽高支持 ${Config.MIN_DISPLAY_SIZE}–${Config.MAX_DISPLAY_SIZE} 像素，密度支持 ${Config.MIN_DISPLAY_DENSITY}–${Config.MAX_DISPLAY_DENSITY} dpi。修改仅应用于新任务。",
+        summary = "下次任务生效",
         onDismissRequest = { editCanvas = false; canvasError = null }) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Input("宽度（像素）", canvasWidth, { canvasWidth = it }, type = KeyboardType.Number)
@@ -681,7 +681,7 @@ private fun DialogButtons(confirm: String, onConfirm: () -> Unit, onDismiss: () 
 }
 
 @Composable
-private fun ConfirmDialog(show: Boolean, title: String, summary: String, confirm: String,
+private fun ConfirmDialog(show: Boolean, title: String, summary: String?, confirm: String,
                           onDismiss: () -> Unit, onConfirm: () -> Unit,
                           error: String? = null,
                           alternative: String? = null, onAlternative: () -> Unit = {}) {

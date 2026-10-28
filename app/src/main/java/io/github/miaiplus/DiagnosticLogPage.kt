@@ -80,7 +80,7 @@ internal fun DiagnosticLogActions(settings: SettingsState, follow: Boolean, onFo
             }
         }
     }
-    OverlayDialog(show = confirmClear, title = "清空日志？", summary = "已导出的压缩包不受影响。",
+    OverlayDialog(show = confirmClear, title = "清空日志？",
         onDismissRequest = { confirmClear = false }) {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             TextButton("取消", { confirmClear = false }, Modifier.weight(1f))

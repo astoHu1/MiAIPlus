@@ -112,11 +112,11 @@ class PluginState(private val application: Application, private val scope: Corou
                     PluginRuntime.refresh(application, entry.id(), source.revision())
                 }
                 snapshot = updated
-                notice = "工具目录已刷新；启用后可供小爱选择"
+                notice = "工具已更新"
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) {
                 // Server bodies, endpoint query strings and credential values are never UI errors.
-                error = "刷新失败，请检查服务地址、协议和认证；原工具目录保持不变。配置已变更时请重新刷新。"
+                error = "连接失败，请检查地址、协议版本和 Token"
                 reloadPreservingError()
             }
             finally { refreshingId = null }
@@ -132,8 +132,8 @@ class PluginState(private val application: Application, private val scope: Corou
     } catch (failure: IllegalArgumentException) {
         error = failure.message ?: "插件配置无效，请检查后重试"; false
     } catch (failure: IllegalStateException) {
-        error = failure.message ?: "插件配置不可用，请保留数据后重试"; false
+        error = failure.message ?: "无法读取插件配置"; false
     } catch (_: Exception) {
-        error = "插件配置操作失败，请保留数据后重试"; false
+        error = "无法保存插件配置"; false
     }
 }

@@ -353,7 +353,7 @@ final class EndpointProfilesRunner {
             if (plugins) {
                 checkPluginNavigation();
                 result.putString("stream", "PASS: plugin bottom tab, selected tab on control/virtual pages, "
-                    + "activity recreation, toolbar/system back hierarchy, child-to-tab return and model draft confirmation. "
+                    + "MCP editor/cancel/recreation, toolbar/system back hierarchy, child-to-tab return and model draft confirmation. "
                     + "No model requests or display probes.\n");
             } else if (performance) {
                 runPerformancePages();
@@ -485,10 +485,23 @@ final class EndpointProfilesRunner {
 
     private void checkPluginNavigation() throws Exception {
         click("插件");
-        check(find(n -> "小爱插件".equals(text(n))) != null, "Plugin page missing");
+        check(find(n -> "内置工具".equals(text(n))) != null, "Plugin page missing");
         check(find(n -> "返回".equals(n.getContentDescription() == null ? "" : n.getContentDescription().toString())) == null, "Root plugin page has a back button");
         checkSelectedTab("插件");
+        check(find(n -> "前台控屏".equals(text(n))) != null, "Foreground tool missing");
+        check(find(n -> "后台控屏".equals(text(n))) != null, "Background tool missing");
+        check(find(n -> "添加".equals(text(n))) != null, "Add button is not visible on plugin root");
         capture("plugins-root-device");
+        click("添加");
+        check(find(n -> "添加 MCP 插件".equals(text(n))) != null, "MCP editor missing");
+        edit("", "Fixture MCP");
+        recreate();
+        check(find(n -> "Fixture MCP".equals(text(n))) != null, "Plugin draft lost on recreation");
+        hideKeyboard();
+        capture("plugins-editor-device");
+        click("取消");
+        check(state.getPlugins().getEntries().stream().noneMatch(entry -> "mcp".equals(entry.kind())),
+            "Canceled MCP draft was saved");
         click("控屏配置");
         check(find(n -> "启用控屏工具".equals(text(n))) != null, "Control configuration missing");
         checkSelectedTab("插件");
@@ -506,7 +519,7 @@ final class EndpointProfilesRunner {
         check(find(n -> "启用控屏工具".equals(text(n))) != null, "Virtual back skipped control page");
         test.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
         settle();
-        check(find(n -> "小爱插件".equals(text(n))) != null, "Control back skipped plugin page");
+        check(find(n -> "内置工具".equals(text(n))) != null, "Control back skipped plugin page");
         checkSelectedTab("插件");
         test.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
         settle();
@@ -514,7 +527,7 @@ final class EndpointProfilesRunner {
         click("插件");
         click("控屏配置");
         touchSelectedTab("插件");
-        check(find(n -> "小爱插件".equals(text(n))) != null, "Tab did not return from control to plugin root");
+        check(find(n -> "内置工具".equals(text(n))) != null, "Tab did not return from control to plugin root");
         check(find(n -> "返回".equals(n.getContentDescription() == null ? "" : n.getContentDescription().toString())) == null, "Plugin root kept child back button");
         click("模型 API");
         edit("默认配置", "插件导航草稿");
@@ -556,13 +569,13 @@ final class EndpointProfilesRunner {
         check(Config.PHONE_USE_PERMISSION_MANUAL.equals(new Config(context).phoneUsePermissionMode),
             "Phone Use permission default is not Manual");
         String[][] modes = {
-            {"Auto", Config.PHONE_USE_PERMISSION_AUTO, "模型自动审计，无法确定时请求你确认"},
-            {"YOLO", Config.PHONE_USE_PERMISSION_YOLO, "除严重安全问题外自动同意，安全限制始终生效"},
-            {"Manual", Config.PHONE_USE_PERMISSION_MANUAL, "敏感操作由你逐次确认"}
+            {"智能判断", Config.PHONE_USE_PERMISSION_AUTO, "由模型判断，必要时询问"},
+            {"自动执行", Config.PHONE_USE_PERMISSION_YOLO, "自动同意，仍保留安全拦截"},
+            {"手动确认", Config.PHONE_USE_PERMISSION_MANUAL, "敏感操作逐次询问"}
         };
         for (int i = 0; i < modes.length; i++) {
             String label = modes[i][0], mode = modes[i][1], summary = modes[i][2];
-            click("Phone Use 权限预设");
+            click("操作确认");
             for (String[] option : modes) {
                 check(find(n -> option[0].equals(text(n))) != null,
                     "Phone Use permission menu is missing " + option[0]);
@@ -613,7 +626,7 @@ final class EndpointProfilesRunner {
         settle();
         // Recreation restores the current page and scroll. Its non-clickable toolbar title
         // can precede the same-named navigation item in the accessibility tree.
-        if (find(n -> "Phone Use 权限预设".equals(text(n)) || "最大步数".equals(text(n))
+        if (find(n -> "操作确认".equals(text(n)) || "最大步数".equals(text(n))
             || "动作协议".equals(text(n)) || "启用控屏工具".equals(text(n))
             || "任务前检查无障碍".equals(text(n))) == null) {
             if (find(n -> "控屏配置".equals(text(n))) == null) click("插件");

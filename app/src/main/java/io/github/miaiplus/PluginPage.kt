@@ -9,6 +9,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -39,52 +40,60 @@ fun PluginPage(state: PluginState, phoneUseEnabled: Boolean, nativePlanner: Bool
             PluginCard { BasicComponent(title = "未能完成", summary = it) }
             Spacer(Modifier.height(12.dp))
         }
+        SmallTitle("内置工具")
         PluginCard {
-            BasicComponent(title = "小爱插件", summary = state.summary)
-            ArrowPreference(title = "添加 MCP 插件", summary = "Streamable HTTP · 手动发现工具",
-                enabled = !state.busy, onClick = { state.create() })
-            ArrowPreference(title = "停止 MCP 调用", summary = "停止当前远程请求；已执行的远端操作无法撤销",
-                onClick = { state.stopRemoteCalls() })
+            state.entries.filter { it.kind() == "builtin" }.forEach { entry ->
+                val background = entry.id() == PluginSettings.BACKGROUND_ID
+                SwitchPreference(title = if (background) "后台控屏" else "前台控屏",
+                    checked = entry.enabled(), enabled = !state.busy,
+                    summary = if (background) "在虚拟屏中操作" else "在当前屏幕操作",
+                    onCheckedChange = { state.setEnabled(entry.id(), it) })
+            }
+            ArrowPreference(title = "控屏配置", summary = when {
+                !phoneUseEnabled -> "未开启"
+                !nativePlanner -> "请选择小爱当前模型"
+                else -> null
+            }, onClick = openPhoneUse)
         }
-        state.entries.forEach { entry ->
-            val builtin = entry.kind() == "builtin"
-            Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(16.dp))
+        Row(Modifier.fillMaxWidth().padding(horizontal = 28.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Text("MCP 插件", Modifier.weight(1f), style = MiuixTheme.textStyles.footnote1,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+            TextButton("添加", { state.create() }, enabled = !state.busy,
+                modifier = Modifier.testTag("add-mcp-plugin"))
+        }
+        val remotes = state.entries.filter { it.kind() == "mcp" }
+        if (remotes.isEmpty()) PluginCard { BasicComponent(title = "还没有 MCP 插件") }
+        remotes.forEach { entry ->
             PluginCard {
                 SwitchPreference(title = entry.label(), checked = entry.enabled(), enabled = !state.busy,
-                    summary = if (builtin) "内置 · ${if (entry.id() == PluginSettings.BACKGROUND_ID) "独立虚拟屏" else "用户当前主屏"}"
-                        else "MCP · ${entry.tools().size} 个已发现工具",
+                    summary = if (entry.tools().isEmpty()) "待获取工具" else "${entry.tools().size} 个工具",
                     onCheckedChange = { enabled ->
-                        if (enabled && !builtin) confirmEnable = entry.id()
-                        else state.setEnabled(entry.id(), enabled)
+                        if (enabled) confirmEnable = entry.id() else state.setEnabled(entry.id(), false)
                     })
-                if (builtin) {
-                    ArrowPreference(title = "控屏配置", summary = when {
-                        !phoneUseEnabled -> "还需开启控屏工具；此开关只控制该插件"
-                        !nativePlanner -> "还需选择小爱当前模型作为规划模型"
-                        else -> "沿用控屏权限、会话和停止规则"
-                    }, onClick = openPhoneUse)
-                } else {
-                    ArrowPreference(title = "工具列表", summary = if (entry.tools().isEmpty()) "尚未发现，请手动刷新"
-                        else entry.tools().joinToString(" · ") { it.displayName() }.take(160),
-                        onClick = { inspectTools = entry.id() })
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton("编辑", { state.edit(entry.id()) }, Modifier.weight(1f), enabled = !state.busy)
-                        TextButton(if (state.refreshingId == entry.id()) "正在刷新…" else "刷新工具",
-                            { state.refreshTools(entry.id()) }, Modifier.weight(1f), enabled = !state.busy)
-                        TextButton("删除", { confirmDelete = entry.id() }, Modifier.weight(1f), enabled = !state.busy)
-                    }
+                if (entry.tools().isNotEmpty()) ArrowPreference(title = "工具列表",
+                    summary = entry.tools().joinToString(" · ") { it.displayName() }.take(80),
+                    onClick = { inspectTools = entry.id() })
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton("编辑", { state.edit(entry.id()) }, Modifier.weight(1f), enabled = !state.busy)
+                    TextButton(if (state.refreshingId == entry.id()) "连接中…"
+                        else if (entry.tools().isEmpty()) "获取工具" else "刷新工具",
+                        { state.refreshTools(entry.id()) }, Modifier.weight(1f), enabled = !state.busy)
+                    TextButton("删除", { confirmDelete = entry.id() }, Modifier.weight(1f), enabled = !state.busy)
                 }
             }
+            Spacer(Modifier.height(12.dp))
         }
-        PluginHint("MCP 插件独立于控屏开关。只有启用且已发现的工具才会提供给小爱；保存配置不会自动连接服务器。")
-        PluginHint("MCP 工具参数会发送至你配置的服务器。建议使用 HTTPS；HTTP 局域网连接没有传输加密。支持显式选择 2025-11-25 或 2025-06-18 的 Streamable HTTP 工具，不包含 stdio、OAuth 或任意代码加载。")
+        if (remotes.isNotEmpty()) TextButton("停止调用", { state.stopRemoteCalls() },
+            Modifier.padding(horizontal = 12.dp).fillMaxWidth())
     }
-
     McpPluginEditor(state)
     val enableEntry = state.entries.firstOrNull { it.id() == confirmEnable }
     OverlayDialog(show = enableEntry != null, title = "启用 MCP 插件？",
-        summary = "小爱可选择该插件的工具，并将工具参数发送至「${enableEntry?.label().orEmpty()}」的服务器。请只启用你信任的服务；HTTP 连接没有传输加密。",
+        summary = "调用参数将发送给「${enableEntry?.label().orEmpty()}」。" +
+            if (enableEntry?.endpoint()?.startsWith("http://") == true) "当前连接未加密。" else "",
         onDismissRequest = { confirmEnable = null }) {
         PluginDialogButtons("启用", {
             enableEntry?.let { state.setEnabled(it.id(), true) }
@@ -92,8 +101,7 @@ fun PluginPage(state: PluginState, phoneUseEnabled: Boolean, nativePlanner: Bool
         }, { confirmEnable = null })
     }
     val deleteEntry = state.entries.firstOrNull { it.id() == confirmDelete }
-    OverlayDialog(show = deleteEntry != null, title = "删除插件？",
-        summary = "将删除「${deleteEntry?.label().orEmpty()}」的连接配置、认证和工具目录。",
+    OverlayDialog(show = deleteEntry != null, title = "删除插件？", summary = deleteEntry?.label().orEmpty(),
         onDismissRequest = { confirmDelete = null }) {
         PluginDialogButtons("删除", {
             deleteEntry?.let { state.delete(it.id()) }
@@ -103,31 +111,28 @@ fun PluginPage(state: PluginState, phoneUseEnabled: Boolean, nativePlanner: Bool
     val toolsEntry = state.entries.firstOrNull { it.id() == inspectTools }
     OverlayDialog(show = toolsEntry != null, title = "${toolsEntry?.label().orEmpty()} · 工具",
         onDismissRequest = { inspectTools = null }) {
-        LazyColumn(Modifier.heightIn(max = 440.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (toolsEntry?.tools().isNullOrEmpty()) item { Text("尚未发现工具，请返回后点击「刷新工具」。") }
+        LazyColumn(Modifier.heightIn(max = 440.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             items(toolsEntry?.tools().orEmpty(), key = { it.name() }) { tool ->
                 var expanded by remember(tool.name(), tool.inputSchema()) { mutableStateOf(false) }
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     SelectionContainer {
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text(tool.displayName(), style = MiuixTheme.textStyles.body2)
-                            Text("来源名称：${tool.sourceName()}", style = MiuixTheme.textStyles.footnote1,
-                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
-                            Text("注入名称：${tool.name()}", style = MiuixTheme.textStyles.footnote1,
-                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
                             tool.description().takeIf { it.isNotBlank() }?.let {
                                 Text(it, style = MiuixTheme.textStyles.footnote1,
                                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
                             }
                         }
                     }
-                    TextButton(if (expanded) "收起参数结构" else "查看参数结构", { expanded = !expanded },
-                        Modifier.fillMaxWidth())
+                    TextButton(if (expanded) "收起详情" else "参数详情", { expanded = !expanded }, Modifier.fillMaxWidth())
                     if (expanded) SelectionContainer {
-                        Text(tool.inputSchema(), modifier = Modifier.fillMaxWidth().testTag("plugin-schema-${tool.name()}"),
-                            fontFamily = FontFamily.Monospace, style = MiuixTheme.textStyles.footnote1,
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("来源：${tool.sourceName()}", style = MiuixTheme.textStyles.footnote1)
+                            Text("工具名：${tool.name()}", style = MiuixTheme.textStyles.footnote1)
+                            Text(tool.inputSchema(), modifier = Modifier.fillMaxWidth().testTag("plugin-schema-${tool.name()}"),
+                                fontFamily = FontFamily.Monospace, style = MiuixTheme.textStyles.footnote1,
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                        }
                     }
                 }
             }
@@ -149,22 +154,19 @@ private fun McpPluginEditor(state: PluginState) {
             TextField(value = draft.endpoint, onValueChange = { state.updateDraft(endpoint = it) }, label = "MCP 服务地址",
                 singleLine = true, modifier = Modifier.fillMaxWidth().testTag("plugin-endpoint"),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrectEnabled = false))
-            Text("填写完整 Streamable HTTP 地址，如 https://example.com/mcp。修改连接或认证后需重新刷新工具。",
-                style = MiuixTheme.textStyles.footnote1, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+            Text("例如 https://example.com/mcp", style = MiuixTheme.textStyles.footnote1,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
             TextField(value = draft.bearerToken, onValueChange = { state.updateDraft(bearerToken = it) },
-                label = "Bearer Token（可留空）", singleLine = true,
+                label = "Token（选填）", singleLine = true,
                 modifier = Modifier.fillMaxWidth().testTag("plugin-token"),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
                 visualTransformation = if (revealToken) VisualTransformation.None else PasswordVisualTransformation())
-            SwitchPreference(title = "显示认证", checked = revealToken, onCheckedChange = { revealToken = it })
-            val protocolVersions = PluginSettings.MCP_PROTOCOL_VERSIONS
-            OverlayDropdownPreference(title = "MCP 协议版本", enabled = !state.busy,
-                items = protocolVersions.map { if (it == PluginSettings.MCP_PROTOCOL_VERSION) "$it（默认）" else "$it（兼容）" },
-                selectedIndex = protocolVersions.indexOf(draft.protocolVersion).coerceAtLeast(0),
-                summary = "按服务器支持版本选择；不自动降级。修改后需重新刷新工具。",
-                onSelectedIndexChange = { state.updateDraft(protocolVersion = protocolVersions[it]) })
-            Text("兼容协议 ${draft.protocolVersion} · 新插件默认停用。保存后，请手动刷新工具并确认启用。工具参数会发送至此服务器，建议使用 HTTPS。",
-                style = MiuixTheme.textStyles.footnote1, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+            SwitchPreference(title = "显示 Token", checked = revealToken, onCheckedChange = { revealToken = it })
+            val versions = PluginSettings.MCP_PROTOCOL_VERSIONS
+            OverlayDropdownPreference(title = "协议版本", enabled = !state.busy,
+                items = versions.map { if (it == PluginSettings.MCP_PROTOCOL_VERSION) "$it（默认）" else "$it（兼容）" },
+                selectedIndex = versions.indexOf(draft.protocolVersion).coerceAtLeast(0),
+                onSelectedIndexChange = { state.updateDraft(protocolVersion = versions[it]) })
             state.error?.let { Text(it, color = MiuixTheme.colorScheme.error) }
             PluginDialogButtons("保存", { state.save() }, { state.discardDraft() })
         }
@@ -174,12 +176,6 @@ private fun McpPluginEditor(state: PluginState) {
 @Composable
 private fun PluginCard(content: @Composable ColumnScope.() -> Unit) {
     Card(Modifier.padding(horizontal = 12.dp).fillMaxWidth(), content = content)
-}
-
-@Composable
-private fun PluginHint(text: String) {
-    Text(text, Modifier.fillMaxWidth().padding(horizontal = 28.dp, vertical = 10.dp),
-        style = MiuixTheme.textStyles.footnote1, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
 }
 
 @Composable

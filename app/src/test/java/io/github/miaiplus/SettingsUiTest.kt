@@ -108,11 +108,11 @@ class SettingsUiTest {
     @Test fun permissionPresetsSaveAllModesSurviveRecreationAndRejectInvalidValues() {
         var state = ViewModelProvider(compose.activity)[SettingsState::class.java]
         openControlPage()
-        compose.onNodeWithText("Phone Use 权限预设").performScrollTo()
-        compose.onNodeWithText("Manual").assertExists()
+        compose.onNodeWithText("操作确认").performScrollTo()
+        compose.onNodeWithText("手动确认").assertExists()
         compose.runOnIdle { assertEquals("manual", state.config.phoneUsePermissionMode) }
-        for ((label, mode) in listOf("Auto" to "auto", "YOLO" to "yolo", "Manual" to "manual")) {
-            compose.onNodeWithText("Phone Use 权限预设").performScrollTo().performClick()
+        for ((label, mode) in listOf("智能判断" to "auto", "自动执行" to "yolo", "手动确认" to "manual")) {
+            compose.onNodeWithText("操作确认").performScrollTo().performClick()
             compose.onNodeWithText(label).performClick()
             compose.runOnIdle {
                 assertEquals(mode, state.config.phoneUsePermissionMode)
@@ -133,9 +133,9 @@ class SettingsUiTest {
         compose.activityRule.scenario.recreate()
         state = ViewModelProvider(compose.activity)[SettingsState::class.java]
         openControlPage()
-        compose.onNodeWithText("Phone Use 权限预设").performScrollTo()
-        compose.onNodeWithText("Auto").assertExists()
-        compose.onNodeWithText("模型自动审计，无法确定时请求你确认").assertExists()
+        compose.onNodeWithText("操作确认").performScrollTo()
+        compose.onNodeWithText("智能判断").assertExists()
+        compose.onNodeWithText("由模型判断，必要时询问").assertExists()
         compose.runOnIdle {
             assertEquals("auto", state.config.phoneUsePermissionMode)
             assertEquals("auto", io.github.miaiplus.Config(state.getApplication<Application>()).phoneUsePermissionMode)
@@ -234,7 +234,7 @@ class SettingsUiTest {
         compose.onNodeWithTag("tab-Plugins").performClick()
         compose.onNodeWithTag("page-Plugins").assertExists()
         compose.onNodeWithContentDescription("返回").assertDoesNotExist()
-        compose.onNodeWithText("添加 MCP 插件").assertExists()
+        compose.onNodeWithTag("add-mcp-plugin").assertExists()
         capture("plugins-light")
         RuntimeEnvironment.setQualifiers("+night")
         compose.activityRule.scenario.recreate()
