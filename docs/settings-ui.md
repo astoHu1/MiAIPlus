@@ -85,6 +85,8 @@ API 协议、当前配置、规划模型、动作协议和测试类型等小型�
 | --- | --- | --- |
 | ![深色首页](images/settings-dark.png) | ![深色插件](images/settings-plugins-dark.png) | ![控屏配置](images/settings-control.png) |
 
+插件底栏另在 API 37 的优化 Preview 实机通过入口、选中态、返回层级、页面重建和草稿确认；原配置已恢复。使用合成配置并裁去系统栏的实机图见 [插件底栏记录](validation/settings-plugins-tab-2026-10-28.md#设备结果)。
+
 以下虚拟屏图为历史 Robolectric fixture，未展示后续新增的全部设置：
 
 | 虚拟屏 | 深色虚拟屏 |
