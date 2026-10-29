@@ -163,6 +163,72 @@ class PluginSettingsStateTest {
 class PluginSettingsUiTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
+    @Test fun mcpEditorPreservesCursorAcrossIncrementalInputAndSelectionChanges() {
+        val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
+        compose.onNodeWithTag("tab-Plugins").performClick()
+        compose.onNodeWithTag("add-mcp-plugin").performClick()
+        for ((tag, chunks) in listOf(
+            "plugin-label" to listOf("测试", " MCP", " 插件"),
+            "plugin-endpoint" to listOf("https://", "example.test", "/mcp"),
+            "plugin-token" to listOf("fixture", "-token", "-123"),
+        )) {
+            val field = compose.onNodeWithTag(tag).performScrollTo()
+            var expected = ""
+            for (chunk in chunks) {
+                field.performTextInput(chunk)
+                expected += chunk
+                field.assert(SemanticsMatcher.expectValue(SemanticsProperties.InputText,
+                    androidx.compose.ui.text.AnnotatedString(expected)))
+                field.assert(SemanticsMatcher.expectValue(SemanticsProperties.TextSelectionRange,
+                    androidx.compose.ui.text.TextRange(expected.length)))
+            }
+            field.performTextInputSelection(androidx.compose.ui.text.TextRange(0))
+            field.performTextInput("prefix-")
+            field.assert(SemanticsMatcher.expectValue(SemanticsProperties.InputText,
+                androidx.compose.ui.text.AnnotatedString("prefix-$expected")))
+        }
+        compose.runOnIdle {
+            assertEquals("prefix-测试 MCP 插件", state.plugins.draft?.label)
+            assertEquals("prefix-https://example.test/mcp", state.plugins.draft?.endpoint)
+            assertEquals("prefix-fixture-token-123", state.plugins.draft?.bearerToken)
+        }
+    }
+
+    @Test fun mcpEditorKeepsSelectionWhenRevealingTokenAndDropsCancelledInput() {
+        val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
+        compose.runOnIdle {
+            state.plugins.create()
+            state.plugins.updateDraft(label = "Fixture MCP", endpoint = "https://example.test/mcp",
+                bearerToken = "fixture-token")
+            assertTrue(state.plugins.save())
+        }
+        compose.onNodeWithTag("tab-Plugins").performClick()
+        compose.onNodeWithText("编辑", substring = false).performScrollTo().performClick()
+        val token = compose.onNodeWithTag("plugin-token").performScrollTo()
+        token.performTextInput("-123")
+        token.performTextInputSelection(androidx.compose.ui.text.TextRange(8, 13))
+        compose.onNodeWithText("显示 Token").performScrollTo().performClick()
+        token.assert(SemanticsMatcher.expectValue(SemanticsProperties.TextSelectionRange,
+            androidx.compose.ui.text.TextRange(8, 13)))
+        token.performTextInput("changed")
+        token.assert(SemanticsMatcher.expectValue(SemanticsProperties.InputText,
+            androidx.compose.ui.text.AnnotatedString("fixture-changed-123")))
+        compose.onNodeWithText("取消", substring = false).performScrollTo().performClick()
+        compose.onNodeWithText("编辑", substring = false).performScrollTo().performClick()
+        compose.onNodeWithTag("plugin-token").assert(SemanticsMatcher.expectValue(SemanticsProperties.InputText,
+            androidx.compose.ui.text.AnnotatedString("fixture-token")))
+        compose.onNodeWithTag("plugin-token").assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.Password))
+        compose.onNodeWithText("取消", substring = false).performScrollTo().performClick()
+        compose.onNodeWithTag("add-mcp-plugin").performClick()
+        for (tag in listOf("plugin-label", "plugin-endpoint", "plugin-token")) {
+            compose.onNodeWithTag(tag).assert(SemanticsMatcher.expectValue(SemanticsProperties.InputText,
+                androidx.compose.ui.text.AnnotatedString("")))
+        }
+        compose.runOnIdle {
+            assertEquals("fixture-token", state.plugins.entries.first { it.kind() == "mcp" }.bearerToken())
+        }
+    }
+
     @After fun clearPreferences() {
         val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
         Config.prefs(state.getApplication<Application>()).edit().clear().commit()

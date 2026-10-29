@@ -14,9 +14,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import top.yukonga.miuix.kmp.basic.*
@@ -151,19 +153,30 @@ fun PluginPage(state: PluginState, phoneUseEnabled: Boolean, nativePlanner: Bool
 private fun McpPluginEditor(state: PluginState) {
     val draft = state.draft
     var revealToken by remember(draft?.id) { mutableStateOf(false) }
+    // Keep editing state above the overlay host so delayed draft snapshots cannot reset the cursor.
+    // Plain remember also keeps credentials out of SavedState.
+    var labelValue by remember(draft?.id) { mutableStateOf(pluginEditingValue(draft?.label.orEmpty())) }
+    var endpointValue by remember(draft?.id) { mutableStateOf(pluginEditingValue(draft?.endpoint.orEmpty())) }
+    var tokenValue by remember(draft?.id) { mutableStateOf(pluginEditingValue(draft?.bearerToken.orEmpty())) }
     OverlayDialog(show = draft != null, title = if (draft?.id.isNullOrEmpty()) "添加 MCP 插件" else "编辑 MCP 插件",
         onDismissRequest = { state.discardDraft() }) {
         if (draft != null) Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            TextField(value = draft.label, onValueChange = { state.updateDraft(label = it) }, label = "插件名称",
-                singleLine = true, modifier = Modifier.fillMaxWidth().testTag("plugin-label"))
-            TextField(value = draft.endpoint, onValueChange = { state.updateDraft(endpoint = it) }, label = "MCP 服务地址",
-                singleLine = true, modifier = Modifier.fillMaxWidth().testTag("plugin-endpoint"),
+            TextField(value = labelValue, onValueChange = {
+                labelValue = it
+                if (it.text != state.draft?.label) state.updateDraft(label = it.text)
+            }, label = "插件名称", singleLine = true, modifier = Modifier.fillMaxWidth().testTag("plugin-label"))
+            TextField(value = endpointValue, onValueChange = {
+                endpointValue = it
+                if (it.text != state.draft?.endpoint) state.updateDraft(endpoint = it.text)
+            }, label = "MCP 服务地址", singleLine = true, modifier = Modifier.fillMaxWidth().testTag("plugin-endpoint"),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrectEnabled = false))
             Text("例如 https://example.com/mcp", style = MiuixTheme.textStyles.footnote1,
                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
-            TextField(value = draft.bearerToken, onValueChange = { state.updateDraft(bearerToken = it) },
-                label = "Token（选填）", singleLine = true,
+            TextField(value = tokenValue, onValueChange = {
+                tokenValue = it
+                if (it.text != state.draft?.bearerToken) state.updateDraft(bearerToken = it.text)
+            }, label = "Token（选填）", singleLine = true,
                 modifier = Modifier.fillMaxWidth().testTag("plugin-token"),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
                 visualTransformation = if (revealToken) VisualTransformation.None else PasswordVisualTransformation())
@@ -178,6 +191,8 @@ private fun McpPluginEditor(state: PluginState) {
         }
     }
 }
+
+private fun pluginEditingValue(text: String) = TextFieldValue(text, TextRange(text.length))
 
 @Composable
 private fun PluginCard(content: @Composable ColumnScope.() -> Unit) {

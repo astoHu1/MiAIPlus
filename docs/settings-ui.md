@@ -117,6 +117,8 @@ MCP 提供新增、编辑、删除、启停、手动「获取工具／刷新工�
 
 「停止调用」请求取消模块当前所有远程工具请求，不影响 Phone Use；已发生的远端操作无法撤销。当前没有可靠的原生 `Tool.onCancel` 调用归属，MCP 代理保持 `isStoppable=false`，不保证小爱原生停止按钮会取消远端。设置页停止、执行线程中断、超时或自身连接／启用／工具契约变化可中止本地等待；切换 Phone Use 或其他插件、仅修改本插件显示名称不会取消已接收的 MCP 调用。模块 worker 实际退出前仍拒绝热重载。这些行为按源码与本地元数据核对，尚不能替代设备证明。
 
+MCP 名称、地址和 Token 输入框在 OverlayDialog 宿主外保留完整 `TextFieldValue`，让光标、选区与输入法合成区随输入同步更新，避免延迟的草稿快照将光标重置到开头，导致后输入内容插到前面。编辑状态使用普通 `remember`，不写 SavedState；取消后重新打开从已保存配置或空白草稿重新初始化。2026-10-29 的本地 Compose／Robolectric 回归覆盖三个字段的分段连续输入、移动光标后插入，以及编辑已有插件、切换 Token 显示后替换选区和取消重开；尚未做本轮实机输入法验证。
+
 Bearer Token 默认遮挡，编辑草稿仅保留在 ViewModel，不写 SavedState，持久化配置留在模块私有存储。启用时说明工具参数将发往所选服务器，HTTP 局域网连接没有传输加密。当前实现支持所选协议的 Streamable HTTP 工具子集。真实 Termux MCP 服务使用兼容 `2025-06-18` 的验证另见 [Termux 实机记录](validation/termux-mcp-2026-10-28.md)，不等同于模型自主调用或全部第三方服务兼容。
 
 `PluginPage.kt`／`PluginState.kt` 分别管理界面与状态，不增加自动发现轮询。支持范围、权限边界、目录与超时限制见 [Plugin 平台](plugin-platform.md)；本轮真实设备与模型验证状态仍以 [验证记录](validation.md) 为准。

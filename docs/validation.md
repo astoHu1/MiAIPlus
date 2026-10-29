@@ -8,6 +8,7 @@
 
 | 范围 | 已有证据 | 边界与详细记录 |
 | --- | --- | --- |
+| MCP 添加／编辑输入顺序 | 2 项输入回归及全部 6 项插件 UI 测试通过；Debug／Release 完整 Lint 零错误，Debug／Release／Debug AndroidTest 构建通过 | 完整 JVM／Robolectric 共 528 项，527 通过；工作区原有的首页无障碍恢复用例因找不到「自动拉起无障碍」控件失败。本轮未做设备输入法验证，见 [插件编辑行为](settings-ui.md#插件页) |
 | MCP 添加按钮与 1.0.2-preview 发布检查 | 525 项 JVM／Robolectric、7 项 guard、双变体完整 Lint 与各构建；320 dp 窄屏对齐回归及 API 37 优化 Preview 插件实机通过 | 标题／按钮几何、编辑与导航检查，原配置及测试包已恢复；签名发布产物单独核验。见 [按钮与发布记录](validation/plugin-add-release-2026-10-29.md) |
 | 设置文案精简与 Pluginify 主线整合 | 合并 main `8e9ff66` 与 Pluginify `4293f3e`；524 项 JVM／Robolectric 与 7 项 guard 测试、双变体完整 Lint 及各 APK 构建；优化 Preview 主线包通过两组 API 37 实机设置回归 | 原配置、既有测试包、无障碍与 ADB 映射恢复核对；保留 main Phone Use 优化。见 [本轮记录](validation/settings-copy-main-2026-10-29.md) |
 | `v1.0.1-preview` 发布基线 | 345 项 JVM／Robolectric 测试，Debug／Release Lint 与发布相关构建；Xiaomi API 37／小爱 8.3.30 的权限、chooser、动态页面、后台输入隔离确定性验收 | 审计回复为 fixture；不是最新日志功能的发布证据。见 [发布基线记录](validation/preview-1.0.1.md) 与 [发布说明](releases/v1.0.1-preview.md) |
