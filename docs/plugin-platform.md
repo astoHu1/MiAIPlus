@@ -45,11 +45,11 @@ flowchart TD
 
 ### 主线与独立测试包
 
-主线保持安装包名 `io.github.miaiplus` 和桌面名称「MiAIPlus」，沿用原配置。`Pluginify` 分支保留独立测试包，其安装包名为 `io.github.miaiplus.pluginify`，桌面名称为「MiAIPlus Pluginify」，可与主线 `io.github.miaiplus` 并装。源码 namespace 与组件类名仍为 `io.github.miaiplus`；例如 ADB 启动设置页应使用 `io.github.miaiplus.pluginify/io.github.miaiplus.MainActivity`。
+主线保持安装包名 `io.github.miaiplus` 和桌面名称「MiAIPlus」，沿用原配置。`Pluginify` 已于 2026-10-29 完成主线整合并删除本地与远端分支，后续开发使用 `main`，见 [主线收尾核对](validation/pluginify-main-cleanup-2026-10-29.md)。历史独立测试包的安装包名为 `io.github.miaiplus.pluginify`，桌面名称为「MiAIPlus Pluginify」，可与主线并装。源码 namespace 与组件类名仍为 `io.github.miaiplus`；历史独立包的设置页组件为 `io.github.miaiplus.pluginify/io.github.miaiplus.MainActivity`。
 
 两个 Provider authority、无障碍任务前检查、返回对话标记、宿主侧话题偏好、广播与通知标识按安装包身份隔离。独立包不会迁移主线配置，也不会清理主线旧 root guard。新增包需单独配置无障碍及 LSPosed 作用域；后台能力仍需该包自身的 root 授权。
 
-并装不等于可以同时向小爱注入两套模块。测试或切换时应只启用其中一个模块的小爱作用域，再重启小爱，避免共同 Hook 原生流程及重复工具名。旧 `scripts/device_test.py` 等设备脚本仍包含主线包名，不能原样用于独立包；本分支的插件实机检查使用独立 runner。
+并装不等于可以同时向小爱注入两套模块。测试或切换时应只启用其中一个模块的小爱作用域，再重启小爱，避免共同 Hook 原生流程及重复工具名。旧 `scripts/device_test.py` 等设备脚本仍包含主线包名，不能原样用于独立包；独立包阶段的插件实机检查使用独立 runner。
 
 ### 内置 Phone Use
 

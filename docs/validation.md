@@ -4,6 +4,8 @@
 
 ## 当前源码与发布基线
 
+2026-10-29 已核对 Pluginify 全部提交均包含于 main，并删除本地与远端 Pluginify 分支；本轮只进行 Git、文档和 CI 触发配置检查，未重跑构建或设备测试，见 [分支收尾记录](validation/pluginify-main-cleanup-2026-10-29.md)。
+
 | 范围 | 已有证据 | 边界与详细记录 |
 | --- | --- | --- |
 | MCP 添加按钮与 1.0.2-preview 发布检查 | 525 项 JVM／Robolectric、7 项 guard、双变体完整 Lint 与各构建；320 dp 窄屏对齐回归及 API 37 优化 Preview 插件实机通过 | 标题／按钮几何、编辑与导航检查，原配置及测试包已恢复；签名发布产物单独核验。见 [按钮与发布记录](validation/plugin-add-release-2026-10-29.md) |

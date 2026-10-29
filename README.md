@@ -54,7 +54,7 @@
 
 日常试用使用优化的 Preview APK：`app/build/outputs/apk/preview/app-preview.apk`。Debug 用于调试。正式发布包使用发布签名，Preview 使用开发签名，二者不能直接覆盖升级。
 
-GitHub Actions 会在 main／Pluginify 推送和 PR 时运行测试、Lint 与构建，产物在对应运行的 Artifacts。发布流程见 [发布说明](docs/releasing.md)。
+GitHub Actions 会在 main 推送和 PR 时运行测试、Lint 与构建，产物在对应运行的 Artifacts。发布流程见 [发布说明](docs/releasing.md)。
 
 ## 更多说明
 
