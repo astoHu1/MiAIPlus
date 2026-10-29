@@ -18,6 +18,7 @@
 - [设置页性能与复现方法](settings-performance.md)
 - [后端性能静态审计与 Agent 交接（2026-10-19）](audits/backend-performance-2026-10-19/README.md)
 - [Phone Use 性能专项、关键路径与验证计划（2026-10-19）](audits/phone-use-performance-2026-10-19/README.md)
+- [Phone Use 弱长上下文模型适配、开源对照与后续方案（2026-10-28）](audits/phone-use-context-2026-10-28/README.md)
 - [动态页面控屏实测](phone-use-dynamic-pages.md)
 - [模块图标资源与预览](module-icon.md)
 - [发布流程与分发边界](releasing.md)
