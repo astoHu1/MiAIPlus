@@ -588,7 +588,7 @@ public final class ScreenService extends AccessibilityService {
                     long identity = android.os.Binder.clearCallingIdentity();
                     try { startActivity(intent); }
                     catch (SecurityException denied) {
-                        throw new IllegalStateException("PAUSE：系统拒绝打开应用，请检查设备的后台启动限制后重新发起任务。");
+                        throw new IllegalStateException("PAUSE：系统拒绝打开应用，请手动处理系统授权，或检查 MiAIPlus 的后台弹出界面权限后重新发起任务。");
                     } catch (android.content.ActivityNotFoundException missing) {
                         throw new IllegalStateException("应用启动入口已失效，请检查应用是否仍安装并启用");
                     } finally { android.os.Binder.restoreCallingIdentity(identity); }
