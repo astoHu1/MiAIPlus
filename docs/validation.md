@@ -9,6 +9,7 @@
 | 范围 | 已有证据 | 边界与详细记录 |
 | --- | --- | --- |
 | 内置 Termux 并行调用与失败恢复 | 538 项 JVM／Robolectric、双变体完整 Lint 零错误及各 APK 构建通过；API 37 优化 Preview 中小爱真实模型一批完成 6 条命令，实测峰值 4 条并发；退出码 7 后同轮执行了后备命令 | 本轮实机使用已运行的 Termux 服务；未验证并行冷启动或小米官方模型。见 [并行与恢复记录](validation/termux-parallel-2026-11-06.md) |
+| 设置 UI 重写与截图更新 | 540 项 JVM／Robolectric、Debug 完整 Lint、Debug／优化 Preview／Preview AndroidTest 构建通过；API 37 覆盖安装，插件导航专项通过 | 全部主图更新为当前源码合成截图；完整设备表单 Runner 未正常结束，不计通过，原业务配置与无障碍列表已核对恢复。见 [本轮记录](validation/settings-ui-rewrite-2026-11-06.md) |
 | Termux 配置二级页 | 535 项 JVM／Robolectric、Debug／Release Lint 零错误、Debug／Release／Preview／Debug AndroidTest 构建通过；API 37 优化 Preview 实机核对入口、选中态和返回 | 检查深浅色、320 dp 和 1.5 倍字号；仅验证本轮设置界面，真实模型及冷启动沿用下方各自的历史证据。见 [二级页验证](validation/termux-settings-ui-2026-11-06.md) |
 | 内置 Termux MCP 一键配置和按需启动 | 533 项 JVM／Robolectric 通过，Debug／Release 完整 Lint 与构建通过；实机一键配置，关闭时冷态拒绝，开启后由小爱拉起后台并回读随机值 | HyperOS 的自启动设置在启动后恢复；使用已有 Termux Python，未测空白 Termux 的初始化／装 Python，见 [内置工具验证](validation/termux-managed-2026-11-06.md) |
 | 小爱真实模型会话调用 Termux MCP | 在已安装主线 Preview 上用当前配置的模型完成身份核验、按文件指令生成并校验报表，以及大输出引用接力 | 上游 `isError=true` 时实测该轮停止；把预期退出码作为普通结果时可以继续。未测小米官方模型、root shell 或持久终端，见 [实机记录](validation/termux-harness-2026-11-06.md) |
