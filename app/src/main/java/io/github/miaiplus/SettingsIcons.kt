@@ -56,6 +56,19 @@ internal object SettingsIcons {
         quadTo(6f, 14f, 6f, 12f); quadTo(6f, 10f, 4f, 10f)
         lineTo(3f, 10f); lineTo(3f, 6f); quadTo(3f, 5f, 4f, 5f); close()
     }
+    val Eye = outline("Eye") {
+        moveTo(2f, 12f); quadTo(7f, 5f, 12f, 5f); quadTo(17f, 5f, 22f, 12f)
+        quadTo(17f, 19f, 12f, 19f); quadTo(7f, 19f, 2f, 12f); close()
+        moveTo(15f, 12f); arcTo(3f, 3f, 0f, true, true, 9f, 12f)
+        arcTo(3f, 3f, 0f, true, true, 15f, 12f)
+    }
+    val EyeOff = outline("EyeOff") {
+        moveTo(2f, 12f); quadTo(7f, 5f, 12f, 5f); quadTo(17f, 5f, 22f, 12f)
+        quadTo(17f, 19f, 12f, 19f); quadTo(7f, 19f, 2f, 12f); close()
+        moveTo(15f, 12f); arcTo(3f, 3f, 0f, true, true, 9f, 12f)
+        arcTo(3f, 3f, 0f, true, true, 15f, 12f)
+        moveTo(4f, 4f); lineTo(20f, 20f)
+    }
     val Module = outline("Module") {
         moveTo(12f, 2f); lineTo(21f, 6f); lineTo(21f, 12f)
         quadTo(21f, 18f, 12f, 22f); quadTo(3f, 18f, 3f, 12f)

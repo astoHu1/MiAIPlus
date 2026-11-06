@@ -291,22 +291,26 @@ class PluginSettingsUiTest {
             assertTrue(state.plugins.save())
         }
         compose.onNodeWithTag("tab-Plugins").performClick()
-        compose.onNodeWithText("编辑", substring = false).performScrollTo().performClick()
+        compose.onNodeWithText("Fixture MCP", substring = false).performScrollTo().performClick()
+        compose.onNodeWithTag("mcp-plugin-page").assertExists()
+        compose.onNodeWithText("编辑连接", substring = false).performScrollTo().performClick()
         val token = compose.onNodeWithTag("plugin-token").performScrollTo()
         token.performTextInput("-123")
         token.performTextInputSelection(androidx.compose.ui.text.TextRange(8, 13))
-        compose.onNodeWithText("显示 Token").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("显示 Token").performClick()
+        compose.onNodeWithContentDescription("隐藏 Token").assertExists()
         token.assert(SemanticsMatcher.expectValue(SemanticsProperties.TextSelectionRange,
             androidx.compose.ui.text.TextRange(8, 13)))
         token.performTextInput("changed")
         token.assert(SemanticsMatcher.expectValue(SemanticsProperties.InputText,
             androidx.compose.ui.text.AnnotatedString("fixture-changed-123")))
         compose.onNodeWithText("取消", substring = false).performScrollTo().performClick()
-        compose.onNodeWithText("编辑", substring = false).performScrollTo().performClick()
+        compose.onNodeWithText("编辑连接", substring = false).performScrollTo().performClick()
         compose.onNodeWithTag("plugin-token").assert(SemanticsMatcher.expectValue(SemanticsProperties.InputText,
             androidx.compose.ui.text.AnnotatedString("fixture-token")))
         compose.onNodeWithTag("plugin-token").assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.Password))
         compose.onNodeWithText("取消", substring = false).performScrollTo().performClick()
+        compose.onNodeWithContentDescription("返回").performClick()
         compose.onNodeWithTag("add-mcp-plugin").performClick()
         for (tag in listOf("plugin-label", "plugin-endpoint", "plugin-token")) {
             compose.onNodeWithTag(tag).assert(SemanticsMatcher.expectValue(SemanticsProperties.InputText,
@@ -363,7 +367,9 @@ class PluginSettingsUiTest {
         compose.onNodeWithText("保存", substring = false).performScrollTo().performClick()
         val remote = state.plugins.entries.first { it.kind() == "mcp" }
         assertFalse(remote.enabled())
-        compose.onNodeWithText("Fixture MCP", substring = false).performScrollTo().performClick()
+        compose.onNodeWithTag("page-Mcp").assertExists()
+        compose.onNodeWithTag("tab-Plugins").assertIsSelected()
+        compose.onNodeWithTag("mcp-enabled").performScrollTo().performClick()
         compose.onNodeWithText("启用 MCP 插件？").assertExists()
         compose.onNodeWithText("取消", substring = false).performClick()
         assertFalse(state.plugins.entries.first { it.id() == remote.id() }.enabled())
@@ -386,7 +392,10 @@ class PluginSettingsUiTest {
             assertTrue(state.plugins.reload())
         }
         compose.onNodeWithTag("tab-Plugins").performClick()
-        compose.onNodeWithText("工具列表", substring = false).performScrollTo().performClick()
+        compose.onNodeWithText("1 个工具", substring = true).assertExists()
+        compose.onNodeWithText("Fixture MCP", substring = false).performScrollTo().performClick()
+        compose.onNodeWithText("Read synthetic data").assertExists()
+        compose.onNodeWithText(tool.displayName(), substring = false).performScrollTo().performClick()
         compose.onNodeWithText("来源：read_fixture").assertDoesNotExist()
         compose.onNodeWithText("工具名：${tool.name()}").assertDoesNotExist()
         compose.onNodeWithTag("plugin-schema-${tool.name()}").assertDoesNotExist()
@@ -411,7 +420,8 @@ class PluginSettingsUiTest {
         val remote = state.plugins.entries.first { it.kind() == "mcp" }
         assertEquals("2025-06-18", remote.protocolVersion())
 
-        compose.onNodeWithText("编辑", substring = false).performScrollTo().performClick()
+        compose.onNodeWithTag("page-Mcp").assertExists()
+        compose.onNodeWithText("编辑连接", substring = false).performScrollTo().performClick()
         compose.onNodeWithText("2025-06-18（兼容）", substring = false).assertExists()
         compose.activityRule.scenario.recreate()
         assertEquals("2025-06-18", state.plugins.draft?.protocolVersion)

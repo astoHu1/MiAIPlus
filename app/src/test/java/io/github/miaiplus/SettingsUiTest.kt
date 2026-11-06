@@ -273,6 +273,56 @@ class SettingsUiTest {
         compose.onNodeWithContentDescription("返回").assertDoesNotExist()
     }
 
+    @Test fun crossLinkedPagesReturnToWhereTheyWereOpened() {
+        compose.onNode(hasText("控屏") and hasAnyAncestor(hasTestTag("page-Home"))).performScrollTo().performClick()
+        compose.onNodeWithTag("page-Control").assertExists()
+        compose.onNodeWithTag("tab-Home").assertIsSelected()
+        compose.onNodeWithText("启用控屏工具").assertExists()
+        compose.onNodeWithContentDescription("返回").performClick()
+        compose.onNodeWithTag("page-Home").assertExists()
+        compose.onNodeWithContentDescription("返回").assertDoesNotExist()
+
+        compose.onNodeWithText("运行状态").performScrollTo().performClick()
+        compose.onNodeWithText("虚拟屏").performScrollTo().performClick()
+        compose.onNodeWithTag("page-Virtual").assertExists()
+        compose.onNodeWithTag("tab-Home").assertIsSelected()
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithTag("page-Virtual").assertExists()
+        compose.runOnIdle { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.onNodeWithTag("page-Status").assertExists()
+        compose.onNodeWithTag("tab-Home").performTouchInput { click() }
+        compose.onNodeWithTag("page-Home").assertExists()
+
+        compose.onNodeWithTag("tab-Model").performClick()
+        compose.runOnIdle { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.onNodeWithTag("page-Home").assertExists()
+        compose.onNodeWithTag("tab-Home").assertIsSelected()
+    }
+
+    @Test fun deletingAnMcpPluginFromItsPageReturnsToThePluginList() {
+        val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
+        compose.runOnIdle {
+            state.plugins.create()
+            state.plugins.updateDraft(label = "Fixture MCP", endpoint = "https://example.test/mcp")
+            check(state.plugins.save())
+        }
+        compose.onNodeWithTag("tab-Plugins").performClick()
+        compose.onNodeWithText("未启用 · 待获取工具").assertExists()
+        compose.onNodeWithText("Fixture MCP", substring = false).performClick()
+        compose.onNodeWithTag("page-Mcp").assertExists()
+        compose.onNodeWithText("https://example.test/mcp").assertExists()
+        compose.onNodeWithText("获取工具").assertExists()
+        capture("plugin-mcp-page")
+        compose.onNodeWithText("删除插件").performScrollTo().performClick()
+        compose.onNodeWithText("取消", substring = false).performClick()
+        compose.onNodeWithTag("page-Mcp").assertExists()
+        compose.onNodeWithText("删除插件").performScrollTo().performClick()
+        compose.onNodeWithText("删除", substring = false).performClick()
+        compose.onNodeWithTag("page-Plugins").assertExists()
+        compose.onNodeWithText("还没有 MCP 插件").assertExists()
+        compose.runOnIdle { assertEquals(0, state.plugins.entries.count { it.kind() == "mcp" }) }
+    }
+
     @Test fun conversationTimeoutSavesMinutesRejectsInvalidValuesAndCanBeDisabled() {
         val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
         compose.onNodeWithText("闲置 15 分钟后").assertExists()

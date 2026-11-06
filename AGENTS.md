@@ -13,7 +13,7 @@ Java/Kotlin root: `app/src/main/java/io/github/miaiplus/`. Settings use Kotlin, 
 
 | Area | Entry points |
 | --- | --- |
-| Settings / UI state | `MainActivity.kt`, `SettingsState.kt`, `VirtualScreenState.kt`, `SettingsIcons.kt` |
+| Settings / UI state | `SettingsApp.kt` (navigation shell), `SettingsComponents.kt`, `*Page(s).kt`, `SettingsState.kt`, `PluginState.kt`, `VirtualScreenState.kt` |
 | Hooks / reload | `XiaoAiHook`, `Native*Hook`, `hook/`, `HotReload` |
 | Protocols / configuration | `ModelClient`, `ModelProtocol`, `ResponsesStream`, `ReasoningPolicy`, `EndpointProfiles` |
 | Phone use / lifecycle | `NativePhoneUseTool`, `NativeSession`, `AgentEngine`, `ScreenService`, `InteractionUi` |
