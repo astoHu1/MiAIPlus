@@ -265,6 +265,37 @@ public class NativePluginToolsTest {
         assertFalse(provider.lastRequest.containsKey("sourceName"));
     }
 
+    @Test public void termuxDiagnosticsAndAdmissionFeedbackCanReachTheModelInTheSameTurn() throws Exception {
+        String id = PluginSettings.TERMUX_ID;
+        PluginToolSpec shell = new PluginToolSpec(id, "mcp", PluginToolSpec.mcpName(id, "run_digest"), "run_digest",
+            "Shell", "Previously saved description", "{\"type\":\"object\"}", 60000);
+        setCatalog(List.of(shell));
+        assertTrue(NativePluginTools.refresh(context));
+        NativePluginTools.synchronizeRegistry(registry);
+        Tool tool = registry.get(shell.name());
+        assertTrue(tool.getDescription().contains("Independent commands can run in parallel"));
+        provider.result = "Termux 工具报告失败。\n{\"ok\":false,\"exit\":7}";
+        ToolResult.Success failedCommand = (ToolResult.Success)execute(tool);
+        assertTrue(failedCommand.getResult().contains("\"exit\":7"));
+        assertFalse(failedCommand.directAnswer);
+        assertEquals(1, provider.starts);
+
+        provider.admission = new Bundle();
+        provider.admission.putBoolean("termuxNotRun", true);
+        provider.admission.putString("error", "队列已满；本次命令未执行");
+        ToolResult.Success queueFull = (ToolResult.Success)execute(tool);
+        assertTrue(queueFull.getResult().contains("本次命令未执行"));
+        assertFalse(queueFull.directAnswer);
+
+        // Transport or cancellation errors still stop without authorizing a replay.
+        provider.admission = null;
+        provider.pollError = true;
+        ToolResult.Failure unknown = (ToolResult.Failure)execute(tool);
+        assertFalse(unknown.retryable);
+        assertEquals(3, provider.starts);
+        assertEquals(0, provider.cancels);
+    }
+
     @Test public void staleProxyIsRejectedBeforeStartingAnyRemoteRequest() throws Exception {
         PluginToolSpec remote = remoteSpec();
         setCatalog(List.of(remote));
@@ -356,8 +387,9 @@ public class NativePluginToolsTest {
     }
 
     public static final class CatalogProvider extends ContentProvider {
-        Bundle response, lastRequest;
+        Bundle response, lastRequest, admission;
         volatile boolean unavailable, running, busy;
+        boolean pollError;
         String result = "remote result";
         int catalogReads, starts, cancels;
         final CountDownLatch polled = new CountDownLatch(1);
@@ -367,8 +399,13 @@ public class NativePluginToolsTest {
             Bundle reply = new Bundle();
             switch (method) {
                 case "plugin_catalog" -> { catalogReads++; return new Bundle(response); }
-                case "plugin_start" -> { starts++; lastRequest = new Bundle(extras); reply.putString("id", "run"); }
+                case "plugin_start" -> {
+                    starts++; lastRequest = new Bundle(extras);
+                    if (admission != null) return new Bundle(admission);
+                    reply.putString("id", "run");
+                }
                 case "plugin_poll" -> {
+                    if (pollError) { reply.putString("status", "error"); return reply; }
                     polled.countDown(); reply.putString("status", running ? "running" : "done");
                     reply.putString("result", result);
                 }

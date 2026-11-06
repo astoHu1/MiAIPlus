@@ -9,8 +9,10 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -22,13 +24,17 @@ public final class PluginRuntime {
     static final int MAX_CATALOG_CHARS = 96 * 1024;
     static final int MAX_ARGUMENT_CHARS = 32 * 1024;
     static final int MAX_RESULT_CHARS = 64 * 1024;
-    private static final int MAX_RUNNING = 2;
-    private static final int MAX_JOBS = 16;
+    private static final int MCP_RUNNING = 2;
+    private static final int TERMUX_RUNNING = 4;
+    private static final int TERMUX_IN_FLIGHT = 12; // Running plus queued.
+    private static final int MAX_JOBS = 32; // Includes results the host has yet to collect.
     private static final long CALL_BUDGET_MS = 62_000;
     private static final long RETAIN_MS = 120_000;
     private static final Object LOCK = new Object();
     private static final Map<String, Job> JOBS = new LinkedHashMap<>();
-    private static final ExecutorService WORKER = Executors.newFixedThreadPool(MAX_RUNNING);
+    private static final ExecutorService MCP_WORKER = Executors.newFixedThreadPool(MCP_RUNNING);
+    private static final ThreadPoolExecutor TERMUX_WORKER = new ThreadPoolExecutor(TERMUX_RUNNING, TERMUX_RUNNING,
+        0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(TERMUX_IN_FLIGHT));
     private static final ScheduledExecutorService WATCHDOG = Executors.newSingleThreadScheduledExecutor();
 
     /** A backend owns its transport; neither host reflection nor screen privileges enter this contract. */
@@ -130,24 +136,29 @@ public final class PluginRuntime {
             if (!catalog.revision().equals(buildCatalog(settings, new Config(context)).revision()))
                 return error("插件配置已更改；本次未执行");
             PluginSettings.Entry entry = settings.find(pluginId);
-            if (PluginSettings.TERMUX_KIND.equals(entry.kind()) && !TermuxMcp.acceptsArguments(selected, arguments))
-                return error("内置 Termux 工具含不支持的参数；本次未执行");
-            Job job = new Job(owner, catalog.revision(), entry, selected, arguments);
+            Job job = new Job(owner, entry, selected, arguments);
+            if (job.termux && !TermuxMcp.acceptsArguments(selected, arguments))
+                return termuxNotRun("内置 Termux 工具含不支持的参数；本次命令未执行。请按工具参数说明调整，不要尝试绕过确认。");
             synchronized (LOCK) {
                 long now = now();
                 JOBS.values().removeIf(old -> old.finished && now - old.finishedAt > RETAIN_MS);
-                if (JOBS.values().stream().filter(old -> !old.finished).count() >= MAX_RUNNING)
-                    return error("已有插件工具执行中，请等待完成");
+                long inFlight = JOBS.values().stream().filter(old -> old.termux == job.termux && !old.finished).count();
+                if (inFlight >= (job.termux ? TERMUX_IN_FLIGHT : MCP_RUNNING))
+                    return job.termux ? termuxNotRun("Termux MCP 队列已满；本次命令未执行。请减少同批调用数量，先处理已返回的结果。")
+                        : error("已有插件工具执行中，请等待完成");
                 while (JOBS.size() >= MAX_JOBS) {
-                    String oldest = JOBS.entrySet().stream().filter(item -> item.getValue().finished)
+                    String oldest = JOBS.entrySet().stream().filter(item -> item.getValue().finished && item.getValue().observed)
                         .map(Map.Entry::getKey).findFirst().orElse(null);
-                    if (oldest == null) return error("插件任务队列已满");
+                    if (oldest == null) return job.termux ? termuxNotRun("插件结果暂未收齐；本次命令未执行。请先处理已返回的结果。")
+                        : error("插件任务队列已满");
                     JOBS.remove(oldest);
                 }
+                Context application = context.getApplicationContext();
+                Runnable work = () -> execute(application, job);
+                if (job.termux) job.queuedTask = work;
                 JOBS.put(job.id, job);
-                job.watchdog = WATCHDOG.schedule(() -> job.cancel("插件工具调用超时，已请求取消；远端可能已执行，请勿自动重试"),
-                    CALL_BUDGET_MS, TimeUnit.MILLISECONDS);
-                try { WORKER.execute(() -> execute(context.getApplicationContext(), job)); }
+                job.watchdog = WATCHDOG.schedule(job::timeout, CALL_BUDGET_MS, TimeUnit.MILLISECONDS);
+                try { (job.termux ? TERMUX_WORKER : MCP_WORKER).execute(work); }
                 catch (RuntimeException rejected) {
                     job.cancel("插件执行器不可用；本次未执行");
                     job.watchdog.cancel(false);
@@ -163,7 +174,7 @@ public final class PluginRuntime {
         Client client = null;
         try {
             ensureCurrent(context, job);
-            if (PluginSettings.TERMUX_KIND.equals(job.entry.kind()))
+            if (job.termux)
                 TermuxMcp.ensureReady(context, job.entry, false, () -> ensureCurrent(context, job));
             ensureCurrent(context, job);
             client = clients.open(job.entry);
@@ -172,7 +183,7 @@ public final class PluginRuntime {
                 job.client = client;
             }
             ensureCurrent(context, job);
-            if (PluginSettings.TERMUX_KIND.equals(job.entry.kind())) TermuxMcp.requireUnlocked(context);
+            if (job.termux) TermuxMcp.requireUnlocked(context);
             String text = client.callTool(job.spec.sourceName(), job.arguments);
             ensureCurrent(context, job);
             if (text == null || text.length() > MAX_RESULT_CHARS)
@@ -203,10 +214,7 @@ public final class PluginRuntime {
                         job.error = "插件执行器已异常退出；远端可能已执行，请勿自动重试";
                         job.result = "";
                     }
-                    job.client = null;
-                    if (job.watchdog != null) job.watchdog.cancel(false);
-                    job.finishedAt = now();
-                    job.finished = true;
+                    job.finish();
                 }
             }
         }
@@ -236,13 +244,15 @@ public final class PluginRuntime {
         try {
             if (!currentExecution(context, job)) {
                 job.cancel("插件配置已更改，已请求取消；远端可能已执行，请勿自动重试");
+                job.observed = true;
                 return error("插件配置已更改，结果不再有效；远端可能已执行，请勿自动重试");
             }
         } catch (RuntimeException unreadable) {
             job.cancel("插件配置不可用，已请求取消；请勿自动重试");
+            job.observed = true;
             return error("插件配置不可用，结果不再有效；请勿自动重试");
         }
-        if (now() >= job.deadline && !job.finished) job.cancel("插件工具调用超时，已请求取消；请勿自动重试");
+        if (now() >= job.deadline && !job.finished) job.timeout();
         synchronized (job) {
             Bundle result = new Bundle();
             result.putString("status", job.status);
@@ -251,7 +261,9 @@ public final class PluginRuntime {
                 result.putString("error", job.error);
                 result.putString("result", job.error);
                 result.putBoolean("termuxStartupFailure", job.termuxStartupFailure);
+                result.putBoolean("termuxNotRun", job.termuxNotRun);
             }
+            if (!"running".equals(job.status)) job.observed = true;
             return result;
         }
     }
@@ -304,34 +316,67 @@ public final class PluginRuntime {
         result.putString("status", "error"); result.putString("error", message);
         return result;
     }
+
+    private static Bundle termuxNotRun(String message) {
+        Bundle result = error(message);
+        result.putBoolean("termuxNotRun", true);
+        return result;
+    }
+
     private static long now() { return System.nanoTime() / 1_000_000L; }
 
     private static final class Job {
         final String id = UUID.randomUUID().toString();
         final int owner;
-        final String revision;
         final PluginSettings.Entry entry;
         final PluginToolSpec spec;
         final JSONObject arguments;
+        final boolean termux;
         final long deadline = now() + CALL_BUDGET_MS;
-        volatile boolean finished;
+        volatile boolean finished, observed;
         long finishedAt;
-        boolean cancelled, termuxStartupFailure;
+        boolean cancelled, termuxStartupFailure, termuxNotRun;
         String status = "running", result = "", error = "";
         Client client;
+        Runnable queuedTask;
         ScheduledFuture<?> watchdog;
 
-        Job(int owner, String revision, PluginSettings.Entry entry, PluginToolSpec spec, JSONObject arguments) {
-            this.owner = owner; this.revision = revision; this.entry = entry; this.spec = spec; this.arguments = arguments;
+        Job(int owner, PluginSettings.Entry entry, PluginToolSpec spec, JSONObject arguments) {
+            this.owner = owner; this.entry = entry; this.spec = spec; this.arguments = arguments;
+            this.termux = PluginSettings.TERMUX_KIND.equals(entry.kind());
+        }
+
+        void timeout() {
+            cancel("插件工具调用超时，已请求取消；远端可能已执行，请勿自动重试", true);
         }
 
         void cancel(String reason) {
+            cancel(reason, false);
+        }
+
+        private void cancel(String reason, boolean timedOut) {
             Client current;
             synchronized (this) {
                 if (finished || cancelled) return;
                 cancelled = true; status = "error"; error = reason; result = ""; current = client;
+                if (queuedTask != null && TERMUX_WORKER.remove(queuedTask)) {
+                    if (timedOut) {
+                        termuxNotRun = true;
+                        error = "Termux MCP 排队超时；本次命令未执行。请减少同批调用数量。";
+                    }
+                    finish();
+                }
             }
             if (current != null) try { current.cancel(); } catch (RuntimeException ignored) { }
+        }
+
+        // Caller holds the job monitor. Only finish after removal from the queue or worker cleanup.
+        void finish() {
+            client = null;
+            queuedTask = null;
+            if (watchdog != null) watchdog.cancel(false);
+            finishedAt = now();
+            finished = true;
         }
     }
 }

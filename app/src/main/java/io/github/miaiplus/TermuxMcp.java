@@ -43,6 +43,7 @@ final class TermuxMcp {
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final ReentrantLock STARTUP = new ReentrantLock();
     private static final int START_WAIT_MS = 9_000;
+    private static final int START_COMMAND_MS = 12_000;
     private static final int SETUP_WAIT_MS = 180_000;
 
     private TermuxMcp() { }
@@ -99,7 +100,7 @@ final class TermuxMcp {
                         transfer.url(), connection.bearerToken(), base64(launcher), archiveHash);
                     requireUnlocked(context);
                     boolean stopped = packageStopped(context);
-                    root(stopped ? openTermuxCommand() : command, 12_000);
+                    root(stopped ? openTermuxCommand() : command, START_COMMAND_MS);
                     waitSetup(context, connection, uid, transfer, command, stopped);
                 }
             }
@@ -126,7 +127,8 @@ final class TermuxMcp {
             throw new Unavailable("Termux MCP 未运行，请在「插件 → Termux 配置」启动服务，或开启「按需启动 Termux」");
         if (packageStopped(context))
             throw new Unavailable("Termux 已被系统标为强行停止，请在「插件 → Termux 配置」重新配置以恢复");
-        long lockDeadline = SystemClock.elapsedRealtime() + START_WAIT_MS;
+        // A concurrent caller must allow the leader's launch command and readiness wait to finish.
+        long lockDeadline = SystemClock.elapsedRealtime() + START_COMMAND_MS + START_WAIT_MS + 1_000;
         while (!STARTUP.tryLock(200, TimeUnit.MILLISECONDS)) {
             check.run();
             if (SystemClock.elapsedRealtime() >= lockDeadline)
@@ -142,7 +144,7 @@ final class TermuxMcp {
             if (!manual && !PluginSettings.termuxAutoStart(context))
                 throw new Unavailable("Termux MCP 的按需启动已关闭，本次未执行");
             requireUnlocked(context);
-            root(rootCommand(manager, uid, port(entry), version), 12_000);
+            root(rootCommand(manager, uid, port(entry), version), START_COMMAND_MS);
             waitReady(entry, uid, START_WAIT_MS, check);
         } finally { STARTUP.unlock(); }
     }
@@ -183,18 +185,26 @@ final class TermuxMcp {
             JSONObject schema = new JSONObject(tool.inputSchema());
             schema.getJSONObject("properties").remove("confirmed");
             schema.put("additionalProperties", false);
-            String description = tool.description();
-            if (!"out_read".equals(tool.sourceName())) {
-                description = "Run a non-interactive shell command as the Termux app. "
-                    + "Each call starts with the managed HOME. Pass paths directly, e.g. cat \"$HOME/file\"; "
-                    + "avoid a leading cd with a quoted or variable path. "
-                    + ("run_digest".equals(tool.sourceName()) ? "Returns an exit summary and out_ref for large output. " : "")
-                    + "If the tool requires confirmation, stop and tell the user.";
-            }
             result.add(new PluginToolSpec(tool.pluginId(), tool.kind(), tool.name(), tool.sourceName(),
-                tool.displayName(), description, schema.toString(), tool.timeoutMs()));
+                tool.displayName(), toolDescription(tool), schema.toString(), tool.timeoutMs()));
         }
         return List.copyOf(result);
+    }
+
+    static String toolDescription(PluginToolSpec tool) {
+        return switch (tool.sourceName()) {
+            case "run", "run_digest" -> "Run a non-interactive shell command as the Termux app. "
+                + "Each call starts in the managed HOME. Pass paths directly, e.g. cat \"$HOME/file\"; "
+                + "avoid a leading cd with a quoted or variable path. Independent commands can run in parallel; "
+                + "wait for results before issuing dependent commands or modifying the same file. "
+                + ("run_digest".equals(tool.sourceName())
+                    ? "Prefer this tool for exit status, diagnostics and out_ref for large output. " : "")
+                + "Inspect failures and adjust the plan; do not repeat a command with possible side effects. "
+                + "If confirmation is required or policy blocks the command, stop and tell the user.";
+            case "out_read" -> "Read more of a previous run_digest result by out_ref: grep, head, tail, "
+                + "or lines 'a-b'. Wait for the producing command's result before using this tool.";
+            default -> tool.description();
+        };
     }
 
     static boolean acceptsArguments(PluginToolSpec tool, JSONObject arguments) throws JSONException {

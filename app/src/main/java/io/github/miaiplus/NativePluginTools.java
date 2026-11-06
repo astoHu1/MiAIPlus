@@ -123,8 +123,9 @@ final class NativePluginTools {
         String pluginLabel) {
         Object schema = json(loader, spec.inputSchema());
         boolean remote = "mcp".equals(spec.kind());
+        boolean termux = PluginSettings.TERMUX_ID.equals(spec.pluginId());
         String description = remote ? "MCP 插件「" + pluginLabel + "」/ 来源工具 " + spec.sourceName()
-            + "：" + spec.description() : spec.description();
+            + "：" + (termux ? TermuxMcp.toolDescription(spec) : spec.description()) : spec.description();
         String displayName = remote ? pluginLabel + " · " + spec.displayName() : spec.displayName();
         Object definition = Reflector.newInstance(Reflector.findClass("com.aios.osbot.llm.model.ToolDefinition", loader),
             spec.name(), description, schema);
@@ -180,6 +181,7 @@ final class NativePluginTools {
         String arguments) {
         String id = null;
         boolean finished = false;
+        boolean termux = PluginSettings.TERMUX_ID.equals(spec.pluginId());
         try {
             new JSONObject(arguments);
             Bundle request = new Bundle();
@@ -188,6 +190,8 @@ final class NativePluginTools {
             request.putString("toolName", spec.name());
             request.putString("arguments", arguments);
             Bundle started = context.getContentResolver().call(BridgeProvider.URI, "plugin_start", null, request);
+            if (termux && started != null && started.getBoolean("termuxNotRun"))
+                return termuxNotRun(loader, started);
             if (started == null || started.containsKey("error"))
                 return failure(loader, "插件工具启动失败，配置可能已更改；不要自动重试", false);
             id = started.getString("id");
@@ -204,7 +208,8 @@ final class NativePluginTools {
                 }
                 if ("error".equals(status) || state.containsKey("error")) {
                     finished = true;
-                    if (PluginSettings.TERMUX_ID.equals(spec.pluginId()) && state.getBoolean("termuxStartupFailure"))
+                    if (termux && state.getBoolean("termuxNotRun")) return termuxNotRun(loader, state);
+                    if (termux && state.getBoolean("termuxStartupFailure"))
                         return failure(loader, state.getString("error", "Termux MCP 未启动；本次命令未执行"), false);
                     return failure(loader, "插件工具执行失败或已停止，本次调用未重试", false);
                 }
@@ -221,6 +226,11 @@ final class NativePluginTools {
                 catch (Exception ignored) { /* Module-side timeout remains authoritative. */ }
             }
         }
+    }
+
+    private static Object termuxNotRun(ClassLoader loader, Bundle state) {
+        // Report known non-execution as an observation so the model can handle its other results.
+        return success(loader, remoteText(state.getString("error", "Termux MCP 本次命令未执行")), Map.of(), false);
     }
 
     /** Remote content must never consume the privileged one-time Phone Use image channel. */

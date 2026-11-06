@@ -3,8 +3,16 @@ package io.github.miaiplus;
 import static org.junit.Assert.*;
 import android.app.Application;
 import android.content.Context;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.ServiceInfo;
 import android.os.Bundle;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.lang.reflect.Field;
+import java.net.InetAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -22,6 +30,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
+import org.robolectric.Shadows;
 
 @RunWith(RobolectricTestRunner.class)
 @org.robolectric.annotation.Config(sdk = 33, application = Application.class)
@@ -416,6 +425,86 @@ public final class PluginRuntimeTest {
         awaitFinished(thirdId);
         assertEquals(1, third.calls.get());
         assertEquals("running", PluginRuntime.poll(context, OWNER, secondId).getString("status"));
+    }
+
+    @Test public void termuxRunsFourCallsInParallelQueuesTheRestAndNeverDispatchesCancelledWork() throws Exception {
+        int uid = 10351;
+        String token = "a".repeat(64);
+        try (ServerSocket ready = new ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))) {
+            Thread server = new Thread(() -> serveTermuxProof(ready, token, uid));
+            server.setDaemon(true);
+            server.start();
+            var service = new ServiceInfo();
+            service.packageName = "com.termux";
+            service.name = "com.termux.app.TermuxService";
+            service.enabled = true;
+            service.applicationInfo = new ApplicationInfo();
+            service.applicationInfo.packageName = service.packageName;
+            service.applicationInfo.uid = uid;
+            service.applicationInfo.dataDir = "/data/data/com.termux";
+            service.applicationInfo.enabled = true;
+            Shadows.shadowOf(context.getPackageManager()).addOrUpdateService(service);
+            var digest = tool(PluginSettings.TERMUX_ID, "run_digest");
+            PluginSettings.saveTermux(context, PluginSettings.load(context).revision(),
+                new PluginSettings.Entry(PluginSettings.TERMUX_ID, PluginSettings.TERMUX_KIND, "Termux fixture",
+                    true, "http://127.0.0.1:" + ready.getLocalPort() + "/mcp", token, TermuxMcp.PROTOCOL,
+                    List.of(digest, tool(PluginSettings.TERMUX_ID, "run"), tool(PluginSettings.TERMUX_ID, "out_read"))));
+            Bundle shell = request("{}");
+            shell.putString("pluginId", PluginSettings.TERMUX_ID);
+            shell.putString("toolName", digest.name());
+
+            List<FakeClient> running = new ArrayList<>();
+            List<String> active = new ArrayList<>();
+            for (int i = 0; i < 4; i++) {
+                FakeClient client = queue(true, false);
+                running.add(client); active.add(start(shell)); await(client.entered);
+            }
+            List<String> queued = new ArrayList<>();
+            for (int i = 0; i < 8; i++) queued.add(start(shell));
+            Bundle saturated = PluginRuntime.start(context, OWNER, shell);
+            assertRejected(saturated);
+            assertTrue(saturated.getBoolean("termuxNotRun"));
+            assertEquals(4, opened.get());
+
+            String cancelled = queued.remove(0);
+            assertTrue(PluginRuntime.cancel(OWNER, cancelled).getBoolean("accepted"));
+            awaitFinished(cancelled);
+            assertEquals("error", PluginRuntime.poll(context, OWNER, cancelled).getString("status"));
+            queued.add(start(shell));
+
+            FakeClient ordinary = queue(false, false);
+            String ordinaryId = start(request("{}"));
+            awaitFinished(ordinaryId);
+            assertEquals(1, ordinary.calls.get());
+            assertEquals("done", PluginRuntime.poll(context, OWNER, ordinaryId).getString("status"));
+
+            for (int i = 0; i < queued.size(); i++) queue(false, false);
+            for (FakeClient client : running) client.returnCall.countDown();
+            active.addAll(queued);
+            for (String id : active) {
+                awaitFinished(id);
+                assertEquals("done", PluginRuntime.poll(context, OWNER, id).getString("status"));
+            }
+            assertEquals(13, opened.get());
+        }
+    }
+
+    private static void serveTermuxProof(ServerSocket listener, String token, int uid) {
+        while (!listener.isClosed()) {
+            try (Socket socket = listener.accept()) {
+                socket.setSoTimeout(1000);
+                var reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.US_ASCII));
+                String path = reader.readLine().split(" ")[1];
+                for (String line; (line = reader.readLine()) != null && !line.isEmpty();) { /* Consume headers. */ }
+                byte[] proof = TermuxMcp.proof(token, uid, path.substring(path.lastIndexOf('/') + 1));
+                var out = socket.getOutputStream();
+                out.write("HTTP/1.1 200 OK\r\nContent-Length: 64\r\nConnection: close\r\n\r\n"
+                    .getBytes(StandardCharsets.US_ASCII));
+                out.write(proof);
+            } catch (Exception failure) {
+                if (!listener.isClosed()) throw new AssertionError("Termux readiness fixture failed", failure);
+            }
+        }
     }
 
     @Test public void remoteContentCannotActAsPhoneUseControlOrRevealRawAndJsonEscapedToken() throws Exception {

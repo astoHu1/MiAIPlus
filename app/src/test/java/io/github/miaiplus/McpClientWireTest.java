@@ -109,6 +109,24 @@ public class McpClientWireTest {
         }
     }
 
+    @Test(timeout = 30000) public void managedTermuxNonzeroExitKeepsDiagnosticsAndDoesNotReplayTheCommand() throws Exception {
+        var digest = new JSONObject().put("ok", false).put("exit", 7)
+            .put("excerpt", "fixture stderr").put("out_ref", "abc123");
+        try (WireServer server = new WireServer(List.of(initialize(TermuxMcp.PROTOCOL), accepted(),
+                request -> json(request, new JSONObject().put("isError", true)
+                    .put("content", new JSONArray().put(text(digest.toString()))).put("structuredContent", digest))));
+             McpClient client = new McpClient(new PluginSettings.Entry(PluginSettings.TERMUX_ID,
+                 PluginSettings.TERMUX_KIND, "Termux fixture", true, "http://127.0.0.1:" + server.port() + "/mcp",
+                 "a".repeat(64), TermuxMcp.PROTOCOL, List.of()))) {
+            String result = client.callTool("run_digest", new JSONObject().put("cmd", "exit 7"));
+            server.awaitExpected();
+            assertTrue(result.contains("Termux 工具报告失败"));
+            assertTrue(result.contains(digest.toString()));
+            assertEquals(result.indexOf("fixture stderr"), result.lastIndexOf("fixture stderr"));
+            assertEquals(1L, server.requests().stream().filter(r -> "tools/call".equals(r.body().optString("method"))).count());
+        }
+    }
+
     private static PluginSettings.Entry entry(WireServer server) {
         return entry(server, "2025-11-25");
     }

@@ -110,7 +110,9 @@ public final class McpClient implements AutoCloseable {
         // A tools/call is sent at most once. In particular, no session/auth/connection failure replays it.
         JSONObject result = rpc("tools/call", new JSONObject().put("name", sourceName).put("arguments", arguments));
         if (result.has("isError") && !(result.get("isError") instanceof Boolean)) throw malformed();
-        if (result.optBoolean("isError", false))
+        boolean toolError = result.optBoolean("isError", false);
+        boolean managedShell = PluginSettings.TERMUX_KIND.equals(entry.kind()) && TermuxMcp.TOOLS.contains(sourceName);
+        if (toolError && !managedShell)
             throw new ToolException("MCP 工具报告执行失败；远端可能已产生副作用，请勿自动重试");
         StringBuilder text = new StringBuilder();
         if (result.has("content")) {
@@ -124,11 +126,18 @@ public final class McpClient implements AutoCloseable {
             }
         }
         if (result.has("structuredContent")) {
-            JSONObject structured = result.getJSONObject("structuredContent");
-            if (text.length() > 0) text.append('\n');
-            text.append(structured);
+            String structured = result.getJSONObject("structuredContent").toString();
+            // The pinned Termux server sends the same digest in both representations.
+            if (!managedShell || !structured.contentEquals(text)) {
+                if (text.length() > 0) text.append('\n');
+                text.append(structured);
+            }
         }
         if (!result.has("content") && !result.has("structuredContent")) throw malformed();
+        // A completed shell tool can report a nonzero exit, timeout or refusal. Deliver its
+        // diagnostics as data; only the owned Termux service gets this treatment.
+        if (toolError) text.insert(0, "Termux 工具报告失败。请根据退出信息诊断或调整后续步骤；"
+            + "不要原样重试有副作用的命令，也不要绕过确认或策略限制。\n");
         return text.length() == 0 ? "[MCP 工具返回空内容]" : text.toString();
     }
 
