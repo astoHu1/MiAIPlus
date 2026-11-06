@@ -21,6 +21,12 @@ Java/Kotlin root: `app/src/main/java/io/github/miaiplus/`. Settings use Kotlin, 
 
 Module metadata: `app/src/main/resources/META-INF/xposed/`; never restore legacy `assets/xposed_init`. Debug fixtures: `app/src/debug/`; JUnit: `app/src/test/`; device runners: `app/src/androidTest/`; settings instrumentation: `app/src/uiTest/`. UI guidance and evidence: `docs/settings-ui.md` and `docs/settings-performance.md`. Utilities live in `scripts/`, licenses in `third_party/`. Keep `work/`, `recon/`, and `.tools/` out of distributions; release artifacts belong in `dist/`.
 
+## UI Design and Review
+
+- Use the best existing Miuix screens as the design reference. Reuse their components and layout patterns so new screens feel native to the app. Avoid generic AI-style layouts, decorative badges, redundant cards, and flourishes that do not help users act.
+- Make the next action obvious. Use short, specific labels and familiar controls. Add helper text only when it explains a choice, consequence, or constraint that users cannot infer; avoid paragraphs that restate what a control does.
+- Visually compare every UI change with adjacent screens before calling it done. Check control heights, touch targets, text sizes and weights, spacing, and alignment against the existing Miuix patterns. Check for clipping or awkward wrapping with longer labels and larger system text.
+
 ## Build and Validation
 
 Use JDK 17+, SDK platform 37 / build-tools 37.0.0, Gradle wrapper 9.6.0, AGP 9.4.1, and Kotlin/Compose plugin 2.4.20; targetSdk remains 35. Set local `JAVA_HOME` / `ANDROID_HOME`; never commit machine-specific paths.
