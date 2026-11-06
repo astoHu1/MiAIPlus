@@ -26,6 +26,8 @@
 
 ## 添加 MCP 插件
 
+已安装 Termux 的设备可以在「插件 → 内置工具 → Termux MCP」一键配置，无需手填地址或 Token。此功能需要给 MiAIPlus 授予 root；shell 仍由 Termux 以普通应用身份执行。「按需启动 Termux」默认关闭，可手动启动服务；开启后，小爱调用工具时可在后台启动 Termux。
+
 1. 打开「插件」，点击「MCP 插件」右侧的「添加」。
 2. 填写插件名称、完整服务地址和可选 Token，例如 https://example.com/mcp。
 3. 保存后点击「获取工具」，在「工具列表」查看结果，再开启插件。

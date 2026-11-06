@@ -31,12 +31,19 @@ class PluginState(private val application: Application, private val scope: Corou
     var notice by mutableStateOf<String?>(null)
     var refreshingId by mutableStateOf<String?>(null)
         private set
+    var termuxAction by mutableStateOf<String?>(null)
+        private set
+    var termuxAutoStart by mutableStateOf(false)
+        private set
+    var termuxInstalled by mutableStateOf(false)
+        private set
 
     val entries: List<PluginSettings.Entry> get() = snapshot?.entries() ?: emptyList()
-    val busy: Boolean get() = refreshingId != null
+    val termuxEntry: PluginSettings.Entry? get() = TermuxMcp.find(snapshot)
+    val busy: Boolean get() = refreshingId != null || termuxAction != null
     val summary: String get() {
         val current = snapshot ?: return "插件配置不可读"
-        val builtins = current.entries().count { it.kind() == "builtin" }
+        val builtins = current.entries().count { it.kind() == "builtin" } + if (termuxEntry != null) 1 else 0
         val remoteTools = current.entries().filter { it.kind() == "mcp" }.sumOf { it.tools().size }
         return "$builtins 个内置工具 · $remoteTools 个 MCP 工具"
     }
@@ -44,7 +51,11 @@ class PluginState(private val application: Application, private val scope: Corou
     init { reload() }
 
     fun reload(): Boolean {
-        val loaded = attempt { snapshot = PluginSettings.load(application) }
+        val loaded = attempt {
+            snapshot = PluginSettings.load(application)
+            termuxAutoStart = PluginSettings.termuxAutoStart(application)
+            termuxInstalled = TermuxMcp.installed(application)
+        }
         if (!loaded) snapshot = null
         return loaded
     }
@@ -87,6 +98,39 @@ class PluginState(private val application: Application, private val scope: Corou
         check(!busy) { "请先等待工具刷新结束" }
         snapshot = PluginSettings.setEnabled(application, id, enabled)
         notice = if (enabled) "已启用插件" else "已停用插件"
+    }
+
+    fun setTermuxAutoStart(enabled: Boolean): Boolean = attempt {
+        check(!busy) { "请先等待当前配置操作结束" }
+        PluginSettings.setTermuxAutoStart(application, enabled)
+        termuxAutoStart = enabled
+    }
+
+    fun configureTermux() = runTermuxAction("配置中…", "Termux MCP 已配置") {
+        TermuxMcp.configure(application)
+    }
+
+    fun startTermux() = runTermuxAction("启动中…", "Termux MCP 已启动") {
+        TermuxMcp.startManually(application)
+        PluginSettings.load(application)
+    }
+
+    private fun runTermuxAction(action: String, success: String, operation: () -> PluginSettings.Snapshot) {
+        if (busy) return
+        termuxAction = action; error = null
+        scope.launch {
+            try {
+                snapshot = withContext(Dispatchers.IO) { operation() }
+                notice = success
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (unavailable: TermuxMcp.Unavailable) { error = unavailable.message }
+            catch (failure: Exception) {
+                android.util.Log.w("MiAIPlusTermux", "Operation failed: " +
+                    failure.javaClass.simpleName + " at " + failure.stackTrace.firstOrNull())
+                error = "Termux MCP 配置或连接失败，请检查 Termux 和 root 授权"
+            }
+            finally { termuxAction = null }
+        }
     }
 
     fun delete(id: String): Boolean = attempt {

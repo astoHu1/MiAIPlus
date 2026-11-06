@@ -191,4 +191,6 @@ Phone Use 继续沿用原 `controlApp`、会话来源、确认、PageGuard、截
 
 首轮远程适配为 MCP `2025-11-25` 的 tools-only Streamable HTTP 子集；后续增加 `2025-06-18` 显式兼容选项，默认保持前者。初始化响应必须严格匹配插件所选版本，不自动降级；改变协议身份会清除该插件旧目录。两版均只支持已实现的初始化、分页工具发现、JSON／SSE 和文本／结构化结果，不包含 stdio、OAuth、新协议形态或任意代码加载。
 
+内置 Termux MCP 复用 MCP 执行队列、UID 校验、取消和结果边界。它有固定工具名及私有回环配置，不可编辑为远程端点。设置页显式安装 APK 内的上游 Python 程序，由 Termux 在自身目录中解包；模块进程只通过 root 调用固定 Android 服务启动命令，不把模型参数交给 root，不打开 Termux 的外部命令权限。按需启动默认关闭，开启后只在工具调用前检查服务、必要时后台拉起；服务须通过基于安装密钥的就绪验证，执行前重验配置和锁屏状态。
+
 2026-10-28 独立包在小爱 8.3.30.4420 实测通过统一工具注册、受控合成 MCP 服务调用，以及前台／空后台屏的截图、同会话续调与结束，详见 [独立包实机验证](validation/plugin-platform-device-2026-10-28.md)。随后固定上游 `termuxgpt/termux-mcp` 服务由真实 Termux UID 运行，模块 Provider 完成 shell 环境、中文文件管道及失败语义验证；小爱当前模块工具代理另行执行固定身份命令，详见 [Termux 实机验证](validation/termux-mcp-2026-10-28.md)。服务代码不打包进模块，测试独立 HOME 仅隔离状态，不限制 Termux UID 的 shell 能力；模块对 MCP `isError` 返回脱敏失败，不透传错误正文。这些结果不代表任意生产 MCP、真实模型自主选择、复杂应用任务或其他小爱版本已经验收。架构、操作步骤、能力限制与后续适配原则见 [Plugin 平台](plugin-platform.md) 和 [MCP 调研](plugin-platform-mcp-research.md)。

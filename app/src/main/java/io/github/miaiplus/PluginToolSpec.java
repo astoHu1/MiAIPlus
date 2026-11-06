@@ -61,6 +61,8 @@ public record PluginToolSpec(String pluginId, String kind, String name, String s
         if (pluginId == null || !pluginId.matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"))
             throw new IllegalArgumentException("MCP 插件身份无效");
         requireText(sourceName, 128, "来源工具名称无效");
+        if (PluginSettings.TERMUX_ID.equals(pluginId) && TermuxMcp.TOOLS.contains(sourceName))
+            return "miaiplus_termux_" + sourceName;
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(sourceName.getBytes(StandardCharsets.UTF_8));
             StringBuilder suffix = new StringBuilder(16);

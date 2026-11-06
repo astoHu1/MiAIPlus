@@ -58,6 +58,8 @@ fun PluginPage(state: PluginState, phoneUseEnabled: Boolean, nativePlanner: Bool
                 else -> null
             }, onClick = openPhoneUse)
         }
+        Spacer(Modifier.height(8.dp))
+        TermuxMcpCard(state)
         Spacer(Modifier.height(16.dp))
         Row(Modifier.fillMaxWidth().padding(start = 28.dp, end = 16.dp),
             verticalAlignment = Alignment.CenterVertically) {
@@ -94,7 +96,7 @@ fun PluginPage(state: PluginState, phoneUseEnabled: Boolean, nativePlanner: Bool
             }
             Spacer(Modifier.height(12.dp))
         }
-        if (remotes.isNotEmpty()) TextButton("停止调用", { state.stopRemoteCalls() },
+        if (remotes.isNotEmpty() || state.termuxEntry != null) TextButton("停止调用", { state.stopRemoteCalls() },
             Modifier.padding(horizontal = 12.dp).fillMaxWidth())
     }
     McpPluginEditor(state)
@@ -145,6 +147,36 @@ fun PluginPage(state: PluginState, phoneUseEnabled: Boolean, nativePlanner: Bool
                 }
             }
             item { TextButton("关闭", { inspectTools = null }, Modifier.fillMaxWidth()) }
+        }
+    }
+}
+
+@Composable
+private fun TermuxMcpCard(state: PluginState) {
+    val entry = state.termuxEntry
+    PluginCard {
+        if (entry == null) {
+            ArrowPreference(title = "Termux MCP", summary = if (state.termuxInstalled)
+                state.termuxAction ?: "一键配置并启用 shell · 需要 root 授权，缺少 Python 时自动安装"
+            else "请先安装 Termux",
+                enabled = state.termuxInstalled && !state.busy, onClick = { state.configureTermux() },
+                modifier = Modifier.testTag("termux-setup"))
+        } else {
+            SwitchPreference(title = "Termux MCP", summary = "允许小爱以 Termux 的应用权限运行 shell",
+                checked = entry.enabled(), enabled = !state.busy,
+                onCheckedChange = { state.setEnabled(entry.id(), it) },
+                modifier = Modifier.testTag("termux-enabled"))
+            SwitchPreference(title = "按需启动 Termux", summary = "工具调用时在后台启动，不打开终端界面",
+                checked = state.termuxAutoStart, enabled = entry.enabled() && !state.busy,
+                onCheckedChange = { state.setTermuxAutoStart(it) },
+                modifier = Modifier.testTag("termux-autostart"))
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(state.termuxAction ?: "启动服务", { state.startTermux() },
+                    Modifier.weight(1f).testTag("termux-start"), enabled = !state.busy)
+                TextButton("重新配置", { state.configureTermux() },
+                    Modifier.weight(1f).testTag("termux-repair"), enabled = !state.busy)
+            }
         }
     }
 }

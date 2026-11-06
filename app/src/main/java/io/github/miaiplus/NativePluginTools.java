@@ -204,6 +204,8 @@ final class NativePluginTools {
                 }
                 if ("error".equals(status) || state.containsKey("error")) {
                     finished = true;
+                    if (PluginSettings.TERMUX_ID.equals(spec.pluginId()) && state.getBoolean("termuxStartupFailure"))
+                        return failure(loader, state.getString("error", "Termux MCP 未启动；本次命令未执行"), false);
                     return failure(loader, "插件工具执行失败或已停止，本次调用未重试", false);
                 }
                 if (!"running".equals(status)) throw new IllegalStateException("Invalid plugin state");

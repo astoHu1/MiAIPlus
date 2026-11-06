@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.CookieHandler;
+import java.net.Proxy;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -46,11 +47,13 @@ public final class McpClient implements AutoCloseable {
     }
 
     public McpClient(PluginSettings.Entry entry) {
-        this(entry, url -> (HttpURLConnection) url.openConnection(), () -> System.nanoTime() / 1_000_000L);
+        this(entry, url -> (HttpURLConnection) (PluginSettings.TERMUX_KIND.equals(entry.kind())
+            ? url.openConnection(Proxy.NO_PROXY) : url.openConnection()), () -> System.nanoTime() / 1_000_000L);
     }
 
     McpClient(PluginSettings.Entry entry, ConnectionFactory connections, LongSupplier clock) {
-        if (!"mcp".equals(entry.kind()) || !PluginSettings.supportsMcpProtocol(entry.protocolVersion()))
+        if ((!"mcp".equals(entry.kind()) && !PluginSettings.TERMUX_KIND.equals(entry.kind()))
+            || !PluginSettings.supportsMcpProtocol(entry.protocolVersion()))
             throw new IllegalArgumentException("不支持的 MCP 插件配置");
         this.entry = entry;
         this.connections = connections;

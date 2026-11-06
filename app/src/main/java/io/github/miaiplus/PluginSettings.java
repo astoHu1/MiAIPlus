@@ -20,6 +20,9 @@ public final class PluginSettings {
     public static final List<String> MCP_PROTOCOL_VERSIONS = List.of(MCP_PROTOCOL_VERSION, "2025-06-18");
     public static final String FOREGROUND_ID = "phone_foreground";
     public static final String BACKGROUND_ID = "phone_background";
+    public static final String TERMUX_ID = "b849e95b-7c5d-428f-ab49-2f2f9788ee22";
+    static final String TERMUX_KIND = "termux";
+    private static final String TERMUX_AUTO_START = "termuxMcpAutoStart";
     public static final int MAX_MCP_PLUGINS = 32;
     private static final int MAX_STORAGE_CHARS = 1048576;
     private static final String DEFAULT_REVISION = "00000000-0000-0000-0000-000000000001";
@@ -42,12 +45,21 @@ public final class PluginSettings {
                 if ((!FOREGROUND_ID.equals(id) && !BACKGROUND_ID.equals(id)) || !endpoint.isEmpty()
                     || !bearerToken.isEmpty() || !protocolVersion.isEmpty() || !tools.isEmpty())
                     throw new IllegalArgumentException("内置插件配置无效");
-            } else if ("mcp".equals(kind)) {
+            } else if ("mcp".equals(kind) || TERMUX_KIND.equals(kind)) {
                 PluginToolSpec.mcpName(id, "identity_check");
                 endpoint = validateEndpoint(endpoint);
                 validateToken(bearerToken);
                 if (!supportsMcpProtocol(protocolVersion)) throw new IllegalArgumentException("不支持的 MCP 协议版本");
                 validateTools(id, tools);
+                if (TERMUX_KIND.equals(kind)) {
+                    if (!TERMUX_ID.equals(id) || !TermuxMcp.PROTOCOL.equals(protocolVersion)
+                        || !endpoint.matches("http://127\\.0\\.0\\.1:[1-9][0-9]{0,4}/mcp")
+                        || !bearerToken.matches("[0-9a-f]{64}")
+                        || (!tools.isEmpty() && !TermuxMcp.hasExpectedTools(tools)))
+                        throw new IllegalArgumentException("内置 Termux MCP 配置无效");
+                } else if (TERMUX_ID.equals(id)) {
+                    throw new IllegalArgumentException("内置 Termux MCP 不能作为远程插件编辑");
+                }
             } else throw new IllegalArgumentException("不支持的插件类型");
         }
 
@@ -62,10 +74,13 @@ public final class PluginSettings {
             if (revision == null || !revision.matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"))
                 throw new IllegalArgumentException("插件配置版本无效");
             entries = List.copyOf(entries);
-            if (entries.size() > MAX_MCP_PLUGINS + 2) throw new IllegalArgumentException("插件数量超过限制");
+            if (entries.stream().filter(entry -> "mcp".equals(entry.kind())).count() > MAX_MCP_PLUGINS
+                || entries.size() > MAX_MCP_PLUGINS + 3) throw new IllegalArgumentException("插件数量超过限制");
             HashSet<String> ids = new HashSet<>(), names = new HashSet<>();
             for (Entry entry : entries) {
                 if (!ids.add(entry.id())) throw new IllegalArgumentException("插件身份重复");
+                if (TERMUX_KIND.equals(entry.kind()) && !TermuxMcp.hasExpectedTools(entry.tools()))
+                    throw new IllegalArgumentException("内置 Termux MCP 未完成配置");
                 for (PluginToolSpec tool : entry.tools()) {
                     if (!names.add(tool.name())) throw new IllegalArgumentException("工具名称重复");
                 }
@@ -95,7 +110,7 @@ public final class PluginSettings {
                 if (!(root.get("version") instanceof Number version) || version.doubleValue() != 1)
                     throw new IllegalArgumentException("不支持的插件配置版本");
                 JSONArray plugins = root.getJSONArray("plugins");
-                if (plugins.length() > MAX_MCP_PLUGINS + 2) throw new IllegalArgumentException("插件数量超过限制");
+                if (plugins.length() > MAX_MCP_PLUGINS + 3) throw new IllegalArgumentException("插件数量超过限制");
                 ArrayList<Entry> entries = new ArrayList<>();
                 for (int i = 0; i < plugins.length(); i++) {
                     JSONObject plugin = plugins.getJSONObject(i);
@@ -130,6 +145,31 @@ public final class PluginSettings {
     public static Snapshot saveMcp(Context context, String idOrEmpty, String label, String endpoint,
         String bearerToken, String protocolVersion) {
         return saveMcp(Config.prefs(context), idOrEmpty, label, endpoint, bearerToken, protocolVersion);
+    }
+
+    static Snapshot saveTermux(Context context, String revision, Entry configured) {
+        SharedPreferences prefs = Config.prefs(context);
+        synchronized (LOCK) {
+            Snapshot current = load(prefs);
+            if (!current.revision().equals(revision))
+                throw new IllegalStateException("插件配置已更改，请重新配置 Termux MCP");
+            if (!TERMUX_KIND.equals(configured.kind()) || !TermuxMcp.hasExpectedTools(configured.tools()))
+                throw new IllegalArgumentException("Termux MCP 工具目录无效");
+            return replace(prefs, current, configured);
+        }
+    }
+
+    public static boolean termuxAutoStart(Context context) {
+        return Config.prefs(context).getBoolean(TERMUX_AUTO_START, false);
+    }
+
+    public static void setTermuxAutoStart(Context context, boolean enabled) {
+        SharedPreferences prefs = Config.prefs(context);
+        synchronized (LOCK) {
+            if (enabled) load(prefs).find(TERMUX_ID);
+            if (!prefs.edit().putBoolean(TERMUX_AUTO_START, enabled).commit())
+                throw new IllegalStateException("按需启动设置保存失败");
+        }
     }
 
     public static Snapshot saveMcp(SharedPreferences prefs, String idOrEmpty, String label, String endpoint,
@@ -238,7 +278,7 @@ public final class PluginSettings {
         // Reserve both first-party definitions even if legacy Phone Use is currently off.
         ArrayList<PluginToolSpec> activeTools = new ArrayList<>(PhoneUsePlugin.specs());
         for (Entry entry : snapshot.entries()) {
-            if (entry.enabled() && "mcp".equals(entry.kind())) activeTools.addAll(entry.tools());
+            if (entry.enabled() && !"builtin".equals(entry.kind())) activeTools.addAll(entry.tools());
         }
         PluginRuntime.validateCatalogSize(activeTools);
         try {

@@ -1,6 +1,6 @@
 # 实现与验证状态
 
-更新日期：2026-10-29。这里汇总当前源码的验证依据与限制；具体操作、失败尝试和恢复情况保留在分阶段记录中。源码、正式发布包和本地测试安装包应分别判断，不能因版本名相同而视为同一构建。
+更新日期：2026-11-06。这里汇总当前源码的验证依据与限制；具体操作、失败尝试和恢复情况保留在分阶段记录中。源码、正式发布包和本地测试安装包应分别判断，不能因版本名相同而视为同一构建。
 
 ## 当前源码与发布基线
 
@@ -8,6 +8,8 @@
 
 | 范围 | 已有证据 | 边界与详细记录 |
 | --- | --- | --- |
+| 内置 Termux MCP 一键配置和按需启动 | 533 项 JVM／Robolectric 通过，Debug／Release 完整 Lint 与构建通过；实机一键配置，关闭时冷态拒绝，开启后由小爱拉起后台并回读随机值 | HyperOS 的自启动设置在启动后恢复；使用已有 Termux Python，未测空白 Termux 的初始化／装 Python，见 [内置工具验证](validation/termux-managed-2026-11-06.md) |
+| 小爱真实模型会话调用 Termux MCP | 在已安装主线 Preview 上用当前配置的模型完成身份核验、按文件指令生成并校验报表，以及大输出引用接力 | 上游 `isError=true` 时实测该轮停止；把预期退出码作为普通结果时可以继续。未测小米官方模型、root shell 或持久终端，见 [实机记录](validation/termux-harness-2026-11-06.md) |
 | MCP 添加／编辑输入顺序 | 2 项输入回归及全部 6 项插件 UI 测试通过；Debug／Release 完整 Lint 零错误，Debug／Release／Debug AndroidTest 构建通过 | 完整 JVM／Robolectric 共 528 项，527 通过；工作区原有的首页无障碍恢复用例因找不到「自动拉起无障碍」控件失败。本轮未做设备输入法验证，见 [插件编辑行为](settings-ui.md#插件页) |
 | MCP 添加按钮与 1.0.2-preview 发布检查 | 525 项 JVM／Robolectric、7 项 guard、双变体完整 Lint 与各构建；320 dp 窄屏对齐回归及 API 37 优化 Preview 插件实机通过 | 标题／按钮几何、编辑与导航检查，原配置及测试包已恢复；签名发布产物单独核验。见 [按钮与发布记录](validation/plugin-add-release-2026-10-29.md) |
 | 设置文案精简与 Pluginify 主线整合 | 合并 main `8e9ff66` 与 Pluginify `4293f3e`；524 项 JVM／Robolectric 与 7 项 guard 测试、双变体完整 Lint 及各 APK 构建；优化 Preview 主线包通过两组 API 37 实机设置回归 | 原配置、既有测试包、无障碍与 ADB 映射恢复核对；保留 main Phone Use 优化。见 [本轮记录](validation/settings-copy-main-2026-10-29.md) |

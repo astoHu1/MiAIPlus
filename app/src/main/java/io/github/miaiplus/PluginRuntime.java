@@ -130,6 +130,8 @@ public final class PluginRuntime {
             if (!catalog.revision().equals(buildCatalog(settings, new Config(context)).revision()))
                 return error("插件配置已更改；本次未执行");
             PluginSettings.Entry entry = settings.find(pluginId);
+            if (PluginSettings.TERMUX_KIND.equals(entry.kind()) && !TermuxMcp.acceptsArguments(selected, arguments))
+                return error("内置 Termux 工具含不支持的参数；本次未执行");
             Job job = new Job(owner, catalog.revision(), entry, selected, arguments);
             synchronized (LOCK) {
                 long now = now();
@@ -161,12 +163,16 @@ public final class PluginRuntime {
         Client client = null;
         try {
             ensureCurrent(context, job);
+            if (PluginSettings.TERMUX_KIND.equals(job.entry.kind()))
+                TermuxMcp.ensureReady(context, job.entry, false, () -> ensureCurrent(context, job));
+            ensureCurrent(context, job);
             client = clients.open(job.entry);
             synchronized (job) {
                 if (job.cancelled) return;
                 job.client = client;
             }
             ensureCurrent(context, job);
+            if (PluginSettings.TERMUX_KIND.equals(job.entry.kind())) TermuxMcp.requireUnlocked(context);
             String text = client.callTool(job.spec.sourceName(), job.arguments);
             ensureCurrent(context, job);
             if (text == null || text.length() > MAX_RESULT_CHARS)
@@ -174,6 +180,13 @@ public final class PluginRuntime {
             text = remoteText(text, job.entry.bearerToken());
             synchronized (job) {
                 if (!job.cancelled) { job.result = text; job.status = "done"; }
+            }
+        } catch (TermuxMcp.Unavailable unavailable) {
+            synchronized (job) {
+                if (!job.cancelled) {
+                    job.termuxStartupFailure = true;
+                    job.cancel(unavailable.getMessage() + "；本次命令未执行");
+                }
             }
         } catch (Exception | LinkageError failure) {
             job.cancel("插件工具失败、已停用或配置已更改；远端可能已执行，请勿自动重试");
@@ -234,7 +247,11 @@ public final class PluginRuntime {
             Bundle result = new Bundle();
             result.putString("status", job.status);
             if ("done".equals(job.status)) result.putString("result", job.result);
-            if ("error".equals(job.status)) { result.putString("error", job.error); result.putString("result", job.error); }
+            if ("error".equals(job.status)) {
+                result.putString("error", job.error);
+                result.putString("result", job.error);
+                result.putBoolean("termuxStartupFailure", job.termuxStartupFailure);
+            }
             return result;
         }
     }
@@ -299,7 +316,7 @@ public final class PluginRuntime {
         final long deadline = now() + CALL_BUDGET_MS;
         volatile boolean finished;
         long finishedAt;
-        boolean cancelled;
+        boolean cancelled, termuxStartupFailure;
         String status = "running", result = "", error = "";
         Client client;
         ScheduledFuture<?> watchdog;

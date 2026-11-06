@@ -12,3 +12,7 @@ Upstream references and the license are in third_party/libxposed/.
 MiAIPlus bundles Miuix UI and preference components 0.9.4
 (compose-miuix-ui contributors), Apache License 2.0, and their Compose dependencies.
 Upstream references and the license are in third_party/miuix/.
+
+MiAIPlus distributes the standalone Termux MCP 0.15.0 Python server
+(termuxgpt/termux-mcp), AGPL-3.0. The source revision, license and reproduction
+instructions are in third_party/termux-mcp/.
