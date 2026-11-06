@@ -1,19 +1,7 @@
-# MiAIPlus product site
+# MiAIPlus website
 
 Static GitHub Pages site: https://astohu1.github.io/MiAIPlus/
 
-This branch contains only the public website. Android application source and its CI remain on `main`.
+This branch holds only the website: `index.html`, `style.css`, `site.js` and `img/`. No build step, CDN, remote fonts or tracking. Preview locally with `python3 -m http.server 8080`.
 
-## Editing
-
-Edit `index.html`, `style.css`, and `site.js` on `gh-pages`, then push that branch. GitHub Pages publishes the repository root. No build tooling, CDN, tracking, remote fonts, or API keys are required. Run `python3 -m http.server 8080` for a local preview.
-
-## Content basis
-
-Reviewed against main commit `a31ecdc` on 2026-10-18: README, architecture, dated validation, host compatibility, conversation limits, virtual screen settings. The site describes current source capabilities and directs readers to Release notes for the actual distributed package. Custom virtual canvas has local validation only; fixed-canvas background, IME isolation, conversation continuity, menus, mock protocol verification and deterministic device actions have different evidence scopes. No claim of universal compatibility or autonomous task success rate is made.
-
-All screen visuals are code-drawn conceptual diagrams, explicitly labeled rather than presented as device screenshots. No third-party image or font files are bundled. The model selector is a visual explainer, not a live module connection.
-
-## Checks
-
-Check desktop and narrow mobile layouts, all three model explanation buttons, FAQ expansion, local resource loads, fragment anchors, reduced motion and horizontal overflow before publishing. Maintain exact host versions and background root/ROM requirements when updating copy.
+Copy follows `main` README and docs as of commit `8fe28e2` (2026-11-06). Screenshots in `img/` are WebP copies of `docs/images/settings-*.png` on `main` (`cwebp -q 82 -resize 720 0`). The two-screen figure is a labeled diagram, not a screenshot. Keep host versions, root requirements and the no-fallback background rule in sync with `main` when updating.
