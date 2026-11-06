@@ -59,7 +59,7 @@ final class LaunchVerifier {
                 if (now - focusedSince >= STABLE_MS) return true;
             } else focusedSince = -1;
             if (now >= deadline)
-                throw new IllegalStateException("PAUSE：打开应用后未确认目标进入前台，已暂停。请检查系统的后台启动限制或目标应用是否启动失败，然后重新发起任务；不要重复启动或报告已打开。");
+                throw new IllegalStateException("PAUSE：打开应用后未确认目标进入前台，已暂停。可能被系统限制、启动失败或跳到了其他应用，请手动打开目标应用后重新发起任务；不要重复启动或报告已打开。");
             driver.pause(250);
         }
     }
