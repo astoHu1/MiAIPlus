@@ -79,10 +79,10 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class SettingsPage(val title: String, val depth: Int = 0) {
-    Home("MiAIPlus"), Model("模型 API"), Plugins("插件"), Control("控屏", 1), Virtual("虚拟屏", 2), Status("运行状态", 1), Test("直接测试", 2), Logs("日志", 1);
+    Home("MiAIPlus"), Model("模型 API"), Plugins("插件"), Control("控屏", 1), Termux("Termux 配置", 1), Virtual("虚拟屏", 2), Status("运行状态", 1), Test("直接测试", 2), Logs("日志", 1);
 
-    val tab: SettingsPage get() = when (this) { Control, Virtual -> Plugins; Status, Test, Logs -> Home; else -> this }
-    val parent: SettingsPage get() = when (this) { Test -> Status; Virtual -> Control; Control -> Plugins; else -> Home }
+    val tab: SettingsPage get() = when (this) { Control, Virtual, Termux -> Plugins; Status, Test, Logs -> Home; else -> this }
+    val parent: SettingsPage get() = when (this) { Test -> Status; Virtual -> Control; Control, Termux -> Plugins; else -> Home }
 }
 
 @Composable
@@ -106,6 +106,9 @@ private fun SettingsApp(state: SettingsState, openSettings: (Boolean) -> Unit, o
     }
     LaunchedEffect(state.notice) {
         state.notice?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show(); state.notice = null }
+    }
+    LaunchedEffect(state.plugins.notice) {
+        state.plugins.notice?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show(); state.plugins.notice = null }
     }
     fun navigate(target: SettingsPage) {
         if (target == page) return
@@ -178,9 +181,9 @@ private fun SettingsApp(state: SettingsState, openSettings: (Boolean) -> Unit, o
                             SettingsPage.Status -> StatusPage(state, openSettings, { navigate(SettingsPage.Virtual) }) { navigate(SettingsPage.Test) }
                             SettingsPage.Test -> TestPage(state, onScreenTask)
                             SettingsPage.Logs -> DiagnosticLogPage(state, followLogs)
-                            SettingsPage.Plugins -> PluginPage(state.plugins, state.config.enabled, state.config.planner == "native") {
-                                navigate(SettingsPage.Control)
-                            }
+                            SettingsPage.Plugins -> PluginPage(state.plugins, state.config.enabled, state.config.planner == "native",
+                                { navigate(SettingsPage.Control) }, { navigate(SettingsPage.Termux) })
+                            SettingsPage.Termux -> TermuxSettingsPage(state.plugins)
                         }
                     }
                 }
@@ -423,6 +426,41 @@ private fun ModelPage(state: SettingsState) {
             }
         }
         TextButton("取消", { state.modelList = null }, Modifier.fillMaxWidth().padding(top = 12.dp))
+    }
+}
+
+@Composable
+private fun TermuxSettingsPage(state: PluginState) {
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) { state.reload() }
+    }
+    val entry = state.termuxEntry
+    Column(Modifier.testTag("termux-settings-page")) {
+        (state.termuxError ?: state.error?.takeIf { state.snapshot == null })?.let {
+            Group { BasicComponent(title = "未能完成", summary = it) }
+            Spacer(Modifier.height(12.dp))
+        }
+        Group {
+            SwitchPreference(title = "按需启动 Termux", summary = "调用时后台启动",
+                checked = state.termuxAutoStart, enabled = entry?.enabled() == true && !state.busy,
+                onCheckedChange = { state.setTermuxAutoStart(it) },
+                modifier = Modifier.testTag("termux-autostart"))
+        }
+        Section("服务") {
+            ArrowPreference(title = if (state.termuxAction == TermuxAction.Start) "启动中…" else "启动服务",
+                enabled = entry != null && state.termuxInstalled && !state.busy,
+                onClick = { state.startTermux() }, modifier = Modifier.testTag("termux-start"))
+            ArrowPreference(title = if (state.termuxAction == TermuxAction.Configure) "配置中…"
+                else if (entry == null) "自动配置" else "重新配置",
+                summary = when {
+                    !state.termuxInstalled -> "请先安装 Termux"
+                    entry == null -> "需 root 授权，自动补装 Python"
+                    else -> "需要 root 授权"
+                },
+                enabled = state.termuxInstalled && !state.busy,
+                onClick = { state.configureTermux() }, modifier = Modifier.testTag("termux-setup"))
+        }
     }
 }
 

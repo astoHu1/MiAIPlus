@@ -123,9 +123,9 @@ final class TermuxMcp {
         check.run();
         if (ready(entry, uid)) return;
         if (!manual && !PluginSettings.termuxAutoStart(context))
-            throw new Unavailable("Termux MCP 未运行，请在插件页启动服务，或启用按需启动");
+            throw new Unavailable("Termux MCP 未运行，请在「插件 → Termux 配置」启动服务，或开启「按需启动 Termux」");
         if (packageStopped(context))
-            throw new Unavailable("Termux 已被系统标为强行停止，请在插件页重新配置以恢复");
+            throw new Unavailable("Termux 已被系统标为强行停止，请在「插件 → Termux 配置」重新配置以恢复");
         long lockDeadline = SystemClock.elapsedRealtime() + START_WAIT_MS;
         while (!STARTUP.tryLock(200, TimeUnit.MILLISECONDS)) {
             check.run();
@@ -241,7 +241,7 @@ final class TermuxMcp {
             if (ready(entry, uid)) return;
             Thread.sleep(240);
         }
-        throw new Unavailable("Termux MCP 启动未就绪，请在插件页重新配置或手动启动");
+        throw new Unavailable("Termux MCP 启动未就绪，请在「插件 → Termux 配置」重新配置或启动服务");
     }
 
     private static boolean ready(PluginSettings.Entry entry, int uid) {

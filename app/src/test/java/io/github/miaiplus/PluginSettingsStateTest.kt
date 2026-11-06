@@ -1,11 +1,13 @@
 package io.github.miaiplus
 
 import android.app.Application
+import android.content.pm.PackageInfo
 import android.graphics.Bitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -21,6 +23,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config as RobolectricConfig
 import org.robolectric.annotation.GraphicsMode
+import org.robolectric.Shadows.shadowOf
 import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
@@ -162,6 +165,91 @@ class PluginSettingsStateTest {
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class PluginSettingsUiTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+
+    @Test fun unconfiguredTermuxKeepsSetupInItsOwnPage() {
+        val app = RuntimeEnvironment.getApplication()
+        compose.onNodeWithTag("tab-Plugins").performClick()
+        termuxSwitch("termux-enabled").assertIsOff().assertIsNotEnabled()
+        compose.onNodeWithTag("termux-setup").assertDoesNotExist()
+        compose.onNodeWithTag("termux-settings").performScrollTo().performClick()
+        compose.onNodeWithTag("termux-setup").assertHasNoClickAction()
+        compose.onNodeWithText("请先安装 Termux").assertIsDisplayed()
+        compose.onNodeWithTag("termux-start").assertHasNoClickAction()
+        termuxSwitch("termux-autostart").assertIsNotEnabled()
+
+        compose.activityRule.scenario.moveToState(Lifecycle.State.STARTED)
+        installTermuxFixture(app)
+        compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+        compose.onNodeWithText("自动配置").assertIsDisplayed()
+        compose.onNodeWithTag("termux-setup").assertHasClickAction()
+        compose.onNodeWithTag("termux-start").assertHasNoClickAction()
+    }
+
+    @Test
+    @RobolectricConfig(qualifiers = "zh-rCN-w320dp-h873dp-xxhdpi")
+    fun configuredTermuxOptionsStayInSubpageAndPersistAcrossRecreation() {
+        val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
+        val app = state.getApplication<Application>()
+        compose.runOnIdle {
+            installTermuxFixture(app)
+            val id = PluginSettings.TERMUX_ID
+            val tools = listOf("run", "run_digest", "out_read").map { name ->
+                PluginToolSpec(id, "mcp", PluginToolSpec.mcpName(id, name), name, name, "Fixture",
+                    """{"type":"object"}""", 60_000)
+            }
+            PluginSettings.saveTermux(app, PluginSettings.load(app).revision(),
+                PluginSettings.Entry(id, PluginSettings.TERMUX_KIND, "Termux MCP", true,
+                    "http://127.0.0.1:18872/mcp", "d".repeat(64), TermuxMcp.PROTOCOL, tools))
+            assertTrue(state.plugins.reload())
+        }
+        compose.onNodeWithTag("tab-Plugins").performClick()
+        termuxSwitch("termux-enabled").assertIsOn()
+        for (tag in listOf("termux-autostart", "termux-start", "termux-setup")) {
+            compose.onNodeWithTag(tag).assertDoesNotExist()
+        }
+        compose.onNodeWithText("停止调用").assertDoesNotExist()
+        capture("settings-plugins-termux")
+        compose.onNodeWithTag("termux-settings").performScrollTo().performClick()
+        compose.onNodeWithTag("tab-Plugins").assertIsSelected()
+        compose.onNodeWithTag("termux-enabled").assertDoesNotExist()
+        compose.onNodeWithTag("termux-start").assertHasClickAction()
+        compose.onNodeWithText("重新配置").assertIsDisplayed()
+        termuxSwitch("termux-autostart").assertIsOff()
+        capture("settings-termux")
+        compose.onNodeWithTag("termux-autostart").performClick()
+        termuxSwitch("termux-autostart").assertIsOn()
+        assertTrue(PluginSettings.termuxAutoStart(app))
+
+        RuntimeEnvironment.setQualifiers("+night")
+        RuntimeEnvironment.setFontScale(1.5f)
+        try {
+            compose.activityRule.scenario.recreate()
+            compose.runOnIdle { assertEquals(1.5f, compose.activity.resources.configuration.fontScale, 0.01f) }
+            compose.onNodeWithTag("termux-settings-page").assertExists()
+            termuxSwitch("termux-autostart").assertIsDisplayed().assertIsOn()
+            compose.onNodeWithTag("termux-start").assertIsDisplayed()
+            compose.onNodeWithTag("termux-setup").assertIsDisplayed()
+            capture("settings-termux-dark-large-text")
+            compose.onNodeWithContentDescription("返回").performClick()
+            compose.onNodeWithTag("plugin-settings").assertExists()
+            compose.onNodeWithTag("termux-enabled").performScrollTo().performClick()
+            termuxSwitch("termux-enabled").assertIsOff()
+            compose.onNodeWithTag("termux-settings").performScrollTo().performClick()
+            termuxSwitch("termux-autostart").assertIsOn().assertIsNotEnabled()
+        } finally {
+            RuntimeEnvironment.setFontScale(1f)
+            RuntimeEnvironment.setQualifiers("+notnight")
+        }
+    }
+
+    private fun termuxSwitch(tag: String) = compose.onNode(
+        hasAnyAncestor(hasTestTag(tag)) and SemanticsMatcher.keyIsDefined(SemanticsProperties.ToggleableState),
+        useUnmergedTree = true,
+    )
+
+    private fun installTermuxFixture(app: Application) {
+        shadowOf(app.packageManager).installPackage(PackageInfo().apply { packageName = "com.termux" })
+    }
 
     @Test fun mcpEditorPreservesCursorAcrossIncrementalInputAndSelectionChanges() {
         val state = ViewModelProvider(compose.activity)[SettingsState::class.java]

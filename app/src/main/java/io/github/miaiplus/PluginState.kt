@@ -20,6 +20,8 @@ data class McpPluginDraft(val id: String = "", val label: String = "", val endpo
         "bearerToken=[redacted], protocolVersion=$protocolVersion)"
 }
 
+enum class TermuxAction { Configure, Start }
+
 /** The settings process manages private configuration; discovery is always an explicit user action. */
 class PluginState(private val application: Application, private val scope: CoroutineScope) {
     var snapshot by mutableStateOf<PluginSettings.Snapshot?>(null)
@@ -31,7 +33,9 @@ class PluginState(private val application: Application, private val scope: Corou
     var notice by mutableStateOf<String?>(null)
     var refreshingId by mutableStateOf<String?>(null)
         private set
-    var termuxAction by mutableStateOf<String?>(null)
+    var termuxError by mutableStateOf<String?>(null)
+        private set
+    var termuxAction by mutableStateOf<TermuxAction?>(null)
         private set
     var termuxAutoStart by mutableStateOf(false)
         private set
@@ -100,34 +104,36 @@ class PluginState(private val application: Application, private val scope: Corou
         notice = if (enabled) "已启用插件" else "已停用插件"
     }
 
-    fun setTermuxAutoStart(enabled: Boolean): Boolean = attempt {
+    fun setTermuxAutoStart(enabled: Boolean): Boolean = attempt(showError = { termuxError = it }) {
         check(!busy) { "请先等待当前配置操作结束" }
         PluginSettings.setTermuxAutoStart(application, enabled)
         termuxAutoStart = enabled
     }
 
-    fun configureTermux() = runTermuxAction("配置中…", "Termux MCP 已配置") {
+    fun configureTermux() = runTermuxAction(TermuxAction.Configure, "Termux MCP 已配置") {
         TermuxMcp.configure(application)
     }
 
-    fun startTermux() = runTermuxAction("启动中…", "Termux MCP 已启动") {
+    fun startTermux() = runTermuxAction(TermuxAction.Start, "Termux MCP 已启动") {
         TermuxMcp.startManually(application)
         PluginSettings.load(application)
     }
 
-    private fun runTermuxAction(action: String, success: String, operation: () -> PluginSettings.Snapshot) {
+    private fun runTermuxAction(action: TermuxAction, success: String, operation: () -> PluginSettings.Snapshot) {
         if (busy) return
-        termuxAction = action; error = null
+        termuxAction = action
+        termuxError = null
+        error = null
         scope.launch {
             try {
                 snapshot = withContext(Dispatchers.IO) { operation() }
                 notice = success
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (unavailable: TermuxMcp.Unavailable) { error = unavailable.message }
+            catch (unavailable: TermuxMcp.Unavailable) { termuxError = unavailable.message }
             catch (failure: Exception) {
                 android.util.Log.w("MiAIPlusTermux", "Operation failed: " +
                     failure.javaClass.simpleName + " at " + failure.stackTrace.firstOrNull())
-                error = "Termux MCP 配置或连接失败，请检查 Termux 和 root 授权"
+                termuxError = "Termux MCP 配置或连接失败，请检查 Termux 和 root 授权"
             }
             finally { termuxAction = null }
         }
@@ -138,11 +144,6 @@ class PluginState(private val application: Application, private val scope: Corou
         snapshot = PluginSettings.deleteMcp(application, id)
         if (draft?.id == id) draft = null
         notice = "已删除插件"
-    }
-
-    fun stopRemoteCalls(): Boolean = attempt {
-        val count = PluginRuntime.stopRemoteCalls()
-        notice = if (count > 0) "已请求停止 $count 个 MCP 调用" else "没有正在执行的 MCP 调用"
     }
 
     fun refreshTools(id: String) {
@@ -171,13 +172,13 @@ class PluginState(private val application: Application, private val scope: Corou
         try { snapshot = PluginSettings.load(application) } catch (_: Exception) { snapshot = null }
     }
 
-    private fun attempt(block: () -> Unit): Boolean = try {
-        block(); error = null; true
+    private fun attempt(showError: (String?) -> Unit = { error = it }, block: () -> Unit): Boolean = try {
+        block(); showError(null); true
     } catch (failure: IllegalArgumentException) {
-        error = failure.message ?: "插件配置无效，请检查后重试"; false
+        showError(failure.message ?: "插件配置无效，请检查后重试"); false
     } catch (failure: IllegalStateException) {
-        error = failure.message ?: "无法读取插件配置"; false
+        showError(failure.message ?: "无法读取插件配置"); false
     } catch (_: Exception) {
-        error = "无法保存插件配置"; false
+        showError("无法保存插件配置"); false
     }
 }

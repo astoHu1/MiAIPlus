@@ -22,11 +22,11 @@
 
 「插件」页可以分别开关前台和后台控屏。想让任务在虚拟屏执行，告诉小爱「在后台操作」。操作中可展开通知岛停止，结束后点击完成通知返回原对话。
 
-<img src="docs/images/settings-plugins.png" width="320" alt="插件页：内置工具、控屏配置与 MCP 添加入口">
+<img src="docs/images/settings-plugins.png" width="320" alt="插件页：内置工具、控屏配置、Termux 配置与 MCP 添加入口">
 
 ## 添加 MCP 插件
 
-已安装 Termux 的设备可以在「插件 → 内置工具 → Termux MCP」一键配置，无需手填地址或 Token。此功能需要给 MiAIPlus 授予 root；shell 仍由 Termux 以普通应用身份执行。「按需启动 Termux」默认关闭，可手动启动服务；开启后，小爱调用工具时可在后台启动 Termux。
+已安装 Termux 的设备可以在「插件 → Termux 配置 → 自动配置」一键配置，无需手填地址或 Token。此功能需要给 MiAIPlus 授予 root；shell 仍由 Termux 以普通应用身份执行。插件页的「Termux MCP」开关控制工具是否启用。「Termux 配置」页可手动启动服务；「按需启动 Termux」默认关闭，开启后小爱调用工具时可在后台启动 Termux。
 
 1. 打开「插件」，点击「MCP 插件」右侧的「添加」。
 2. 填写插件名称、完整服务地址和可选 Token，例如 https://example.com/mcp。

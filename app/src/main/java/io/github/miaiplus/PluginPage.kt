@@ -1,6 +1,5 @@
 package io.github.miaiplus
 
-import android.widget.Toast
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -12,7 +11,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
@@ -29,14 +27,10 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 @Composable
 fun PluginPage(state: PluginState, phoneUseEnabled: Boolean, nativePlanner: Boolean,
-               openPhoneUse: () -> Unit) {
+               openPhoneUse: () -> Unit, openTermux: () -> Unit) {
     var confirmEnable by remember { mutableStateOf<String?>(null) }
     var confirmDelete by remember { mutableStateOf<String?>(null) }
     var inspectTools by remember { mutableStateOf<String?>(null) }
-    val context = LocalContext.current
-    LaunchedEffect(state.notice) {
-        state.notice?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show(); state.notice = null }
-    }
     LaunchedEffect(Unit) { state.reload() }
     Column(Modifier.testTag("plugin-settings")) {
         state.error?.let {
@@ -59,7 +53,7 @@ fun PluginPage(state: PluginState, phoneUseEnabled: Boolean, nativePlanner: Bool
             }, onClick = openPhoneUse)
         }
         Spacer(Modifier.height(8.dp))
-        TermuxMcpCard(state)
+        TermuxMcpCard(state, openTermux)
         Spacer(Modifier.height(16.dp))
         Row(Modifier.fillMaxWidth().padding(start = 28.dp, end = 16.dp),
             verticalAlignment = Alignment.CenterVertically) {
@@ -96,8 +90,6 @@ fun PluginPage(state: PluginState, phoneUseEnabled: Boolean, nativePlanner: Bool
             }
             Spacer(Modifier.height(12.dp))
         }
-        if (remotes.isNotEmpty() || state.termuxEntry != null) TextButton("停止调用", { state.stopRemoteCalls() },
-            Modifier.padding(horizontal = 12.dp).fillMaxWidth())
     }
     McpPluginEditor(state)
     val enableEntry = state.entries.firstOrNull { it.id() == confirmEnable }
@@ -152,32 +144,16 @@ fun PluginPage(state: PluginState, phoneUseEnabled: Boolean, nativePlanner: Bool
 }
 
 @Composable
-private fun TermuxMcpCard(state: PluginState) {
+private fun TermuxMcpCard(state: PluginState, openSettings: () -> Unit) {
     val entry = state.termuxEntry
     PluginCard {
-        if (entry == null) {
-            ArrowPreference(title = "Termux MCP", summary = if (state.termuxInstalled)
-                state.termuxAction ?: "一键配置并启用 shell · 需要 root 授权，缺少 Python 时自动安装"
-            else "请先安装 Termux",
-                enabled = state.termuxInstalled && !state.busy, onClick = { state.configureTermux() },
-                modifier = Modifier.testTag("termux-setup"))
-        } else {
-            SwitchPreference(title = "Termux MCP", summary = "允许小爱以 Termux 的应用权限运行 shell",
-                checked = entry.enabled(), enabled = !state.busy,
-                onCheckedChange = { state.setEnabled(entry.id(), it) },
-                modifier = Modifier.testTag("termux-enabled"))
-            SwitchPreference(title = "按需启动 Termux", summary = "工具调用时在后台启动，不打开终端界面",
-                checked = state.termuxAutoStart, enabled = entry.enabled() && !state.busy,
-                onCheckedChange = { state.setTermuxAutoStart(it) },
-                modifier = Modifier.testTag("termux-autostart"))
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(state.termuxAction ?: "启动服务", { state.startTermux() },
-                    Modifier.weight(1f).testTag("termux-start"), enabled = !state.busy)
-                TextButton("重新配置", { state.configureTermux() },
-                    Modifier.weight(1f).testTag("termux-repair"), enabled = !state.busy)
-            }
-        }
+        SwitchPreference(title = "Termux MCP",
+            summary = if (entry == null) "请先配置" else "以 Termux 权限运行 shell",
+            checked = entry?.enabled() == true, enabled = entry != null && !state.busy,
+            onCheckedChange = { entry?.let { configured -> state.setEnabled(configured.id(), it) } },
+            modifier = Modifier.testTag("termux-enabled"))
+        ArrowPreference(title = "Termux 配置", onClick = openSettings,
+            modifier = Modifier.testTag("termux-settings"))
     }
 }
 
