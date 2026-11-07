@@ -92,6 +92,8 @@ public final class DeviceTestRunner extends HookProbeRunner {
         } catch (java.io.FileNotFoundException expected) { }
     }
     @Override public void onStart() {
+        if ("true".equals(arguments.getString("native_background_voice"))) { NativeBackgroundModelRunner.run(this, true); return; }
+        if ("true".equals(arguments.getString("native_background_model"))) { NativeBackgroundModelRunner.run(this); return; }
         if ("true".equals(arguments.getString("termux_mcp"))) { TermuxMcpRunner.run(this, arguments); return; }
         if ("true".equals(arguments.getString("plugin_platform"))) { PluginPlatformRunner.run(this, arguments); return; }
         if ("true".equals(arguments.getString("logs"))) { EndpointProfilesRunner.runLogs(this); return; }

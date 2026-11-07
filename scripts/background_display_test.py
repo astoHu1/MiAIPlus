@@ -74,6 +74,10 @@ def measure_phase():
             adb("shell", "settings", "put", "secure", "enabled_accessibility_services", ":".join(services))
             services.append("io.github.miaiplus/.ScreenService")
             adb("shell", "settings", "put", "secure", "enabled_accessibility_services", ":".join(services))
+        if line.strip() == "MIAIPLUS_LAUNCH_FIXTURE":
+            # BackgroundRunner requests this only during setup, before it waits for focus and records the
+            # isolation baseline. Launch the exact owned fixture; never infer a component from runner output.
+            adb("shell", "am", "start", "-W", "-n", "io.github.miaiplus/.FixtureActivity")
         if "PASS:" in line:
             passed = True
         if "FAIL:" in line or "INSTRUMENTATION_FAILED" in line:

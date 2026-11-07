@@ -44,7 +44,7 @@ Phone Use 的 `maxSteps` 可设置范围为 1–200，默认 30。对话空闲�
 
 ## 默认官方模型控屏
 
-`NativeSession` 在模块 UID 维护会话、最近观察、最大步数和停止状态；四分钟预算按单步进展续期，不限制持续推进任务的总时长。首次请求返回 `CONTINUE`、会话号和观察；模型可调用注册到原生 ToolRegistry 的两个函数：`miaiplus_phone_use` 前台控屏、`miaiplus_background_phone_use` 虚拟屏控屏。首次通过所选工具提交 `goal`，后续沿用同一工具提交 `session` 和 `action`；两者不受兼容入口默认屏幕开关影响；兼容入口接收 `MIAIPLUS:{session,action}`。结构化函数默认按实际 JPEG 像素接收坐标，也支持显式物理屏幕像素与0..1000；统一换算后再交给执行器。旧入口默认归一化坐标。结构化函数只在启用本机原生规划时加入模型工具列表，执行时再次校验配置。每步只执行一个数据动作，之后重新观察。对包含模块 CONTINUE 和截图 token 的 ToolResult.Success，清除直接答案标记与内部 CLI 直接答案 metadata，确保原 Agent 把中间观察回送模型；其他工具结果保持原行为。结束/接管显式关闭会话。
+`NativeSession` 在模块 UID 维护会话、最近观察、最大步数和停止状态；四分钟预算按单步进展续期，不限制持续推进任务的总时长。首次请求返回 `CONTINUE`、会话号和观察；模型可调用注册到原生 ToolRegistry 的两个函数：`miaiplus_phone_use` 前台控屏、`miaiplus_background_phone_use` 虚拟屏控屏。首次通过所选工具提交 `goal`，后续沿用同一工具提交 `session` 和 `action`；两者不受兼容入口默认屏幕开关影响。仅能使用 CLI 时，`voiceassist__controlApp` 的首次 query 使用 `MIAIPLUS_START:{"goal":"完整任务","origin_tool":"miaiplus_background_phone_use"}` 显式选后台，前台则使用 `miaiplus_phone_use`；后续 query 使用 `MIAIPLUS:{"session":"返回会话号","origin_tool":"首次工具名","coordinate_space":"image_pixels","action":{"action":"wait"}}`，按观察替换动作。提示与每次观察都说明该转接协议，不能在续调中省略或改换来源；普通自然语言兼容请求仍使用默认屏幕，未标来源的旧会话仍用 `MIAIPLUS:{session,action}`。结构化函数默认按实际 JPEG 像素接收坐标，也支持显式物理屏幕像素与0..1000；统一换算后再交给执行器。旧入口未指定坐标空间时默认归一化坐标。结构化函数只在启用本机原生规划时加入模型工具列表，执行时再次校验配置。每步只执行一个数据动作，之后重新观察。对包含模块 CONTINUE 和截图 token 的 ToolResult.Success，清除直接答案标记与内部 CLI 直接答案 metadata，确保原 Agent 把中间观察回送模型；其他工具结果保持原行为。结束/接管显式关闭会话。
 
 无外部端点配置也可工作，`AgentEngine` 在该模式下不调用 `ModelClient`。截图由 `FrameStore` 存入短期内存，以随机、一次性、调用 UID 绑定的 token 经 Provider 管道读取。`NativeModelHook` 优先在 ToolResult.Success 中附加 `ImageContent`，使原生 CLI 与消息历史复制保留图片；TOOL Message 构造 Hook 提供兼容读取。图片元数据采用实际 JPEG 尺寸，执行坐标仍以原屏归一化。截图不以 Base64 进入工具返回字符串或 Binder Bundle。
 
@@ -76,9 +76,13 @@ Provider 在创建任务或收起界面前校验续调的会话、UID、期限�
 
 `ReasoningPolicy` 为已确认模型提供不同档位，未知名称只允许默认，不推测任意网关能力。独立 `ModelClient` 与原生隔离客户端均在最终线上请求阶段注入参数；Responses 用 `reasoning.effort`，Chat 使用已确认的标准或服务扩展字段。隔离客户端按协议及档位缓存，每次新建请求按当时选择取得客户端，不在协程异步发送期间读取共享线程局部状态。清除原生 enableThinking 布尔值的影响；模型默认不继承小爱原模式所产生的关闭思考参数。原 Responses 适配器同时承担 Chat 请求的思考参数注入；Chat 响应保持原样解析。
 
-## 聊天页普通文字发送路由
+## 聊天页文字与最终语音识别路由
 
-实机确认 AUTO/QUICK 下的普通文字聊天会走 AIVS `Nlp.Request`，不经过 OSBot 客户端；仅替换推理档位菜单不能替换这条链路。`NativeChatRoutingHook` 在精确版本的 `ll1.f0.C()` 入口，仅在全局外部模型开启时选择原生 MiClaw 分支。原发送函数继续完成设备支持、附件、停止旧会话和卡片/历史处理，然后进入已适配的 OSBot 模型客户端。默认模式执行原判断，不改原枚举或持久化。配置读取失败在文字提交入口提示并停止，防止 Hook 异常被框架忽略后发送到旧后端。该修复覆盖聊天页文字发送，不能外推到所有语音、图片和独立 SDK 入口。
+实机确认 AUTO/QUICK 下的普通文字聊天会走 AIVS `Nlp.Request`，不经过 OSBot 客户端；仅替换推理档位菜单或修好后台显示后端，不能使这条请求获得模块工具。全局外部模型开启时，`NativeChatRoutingHook` 继续选择原生 MiClaw 分支。官方模型模式下，只有本次提交符合 `NativeChatRouting` 的显式后台操作请求规则、且后台插件在当前原生规划目录中可用时，才为该次提交选择 MiClaw。规则识别后台／虚拟屏与操作词或直接工具名，排除开头的说明／能力问题和否定请求；普通聊天沿用原路由。该判断只选择能调用工具的模型入口，不创建虚拟屏、不注入动作，也不按文字直接选择执行屏幕；实际屏幕仍由工具协议决定。
+
+文字提交的路由标记按当前发送回调和同步调用作用域保存，提交结束即恢复，不能影响随后无关请求；官方模式枚举与持久化不变。原发送函数继续完成设备支持、附件、停止旧会话和卡片／历史处理，然后进入已适配的 OSBot 模型客户端。读取模型配置或后台插件目录失败时显式停止本次提交并提示，避免 Hook 异常后退回旧后端；插件已停用与目录不可用分别处理，不使用缓存目录放行。
+
+最终 ASR 有独立的 `NativeVoiceRoutingHook`，不能由文字发送 Hook 的覆盖范围推定。它仅移交符合后台请求规则、有非空 requestId、且仍属于当前 `main` 任务的 `VOICE` 请求：识别事件 ID 必须精确匹配，实际 SpeechEngine 必须同时 `isMainEngine` 和 `isRequesting`；最终识别停止录音不等于请求结束。旧 requestInfo map 在真实 ASR 时可为空，不以缺少记录拒绝；已有 `FINISH` 记录仍拒绝。主线程执行前重新核对归属与配置，再调用当前原生浮窗输入回调的 `sendToMiClaw`，沿用宿主支持检查、停止旧引擎、历史与界面处理。无 requestId 的 MiClaw 自身 Final 不再提交；同一管理器的重复 Final 不重复取消或启动，已取消／结束／被新录音替换的请求不能重启工具。移交失败只停止仍归属本次 ID 的主任务，不取消后续录音。2026-11-08 官方 `mimo-omni` 的真实文字提交、合成最终 ASR 结果提交及 API 102 热重载后不重启宿主的 ASR 复验均完成后台计算器任务，详见 [验收记录](validation/native-background-routing-2026-11-08.md)；未验证声学识别／唤醒词及最终自然语言回复正文。
 
 ## 可选全局主模型替换
 

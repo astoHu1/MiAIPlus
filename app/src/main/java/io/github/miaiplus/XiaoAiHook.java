@@ -46,6 +46,7 @@ public final class XiaoAiHook extends XposedModule {
             try { Class.forName("io.github.miaiplus.PluginPlatformProbe").getMethod("dispose", Context.class).invoke(null, context); }
             catch (Throwable ignored) { }
             try { NativePluginTools.dispose(); } catch (Exception ignored) { }
+            try { NativeModelHook.dispose(); } catch (Exception ignored) { }
             Hooks.unhookAll(); installed.clear();
             try { NativeConversationHook.dispose(); } catch (Exception ignored) { }
             if (interaction != null && !interaction.isRunning()) try { interaction.dispose(); } catch (Exception ignored) { }

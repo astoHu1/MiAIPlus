@@ -262,9 +262,7 @@ public final class NativeSession {
                 + (s.background
                     ? "本任务在独立的手机后台屏幕上执行，截图与树都只来自该后台屏；用户在其他屏幕上的操作与你无关，不要尝试操作主屏，也不要因为看不到主屏内容而改用主屏。\n"
                     : "")
-                + (s.sourceTool.isEmpty()
-                    ? "继续调用 voiceassist__controlApp，query 为 MIAIPLUS:{\"session\":\"" + s.id + "\",\"action\":{\"action\":\"tap\",\"element\":[500,500]}}。"
-                    : "继续调用 " + s.sourceTool + "，参数为session与action对象；整个会话不得改用另一个控屏工具。")
+                + PhoneUsePlugin.continuationHint(s.id, s.sourceTool)
                 + "每次仅一个动作；结构化控屏工具默认按附图真实JPEG像素输入element/start/end，coordinate_space=image_pixels；也可选screen_pixels对应树的实际屏幕像素，或normalized对应0..1000。旧controlApp默认归一化0..1000。输入先点击聚焦，type替换内容。"
                 + "控屏会话内打开应用统一使用action=launch及app包名，不要另调app start、打开应用工具或自行拼接Intent；只有新观察确认目标前台才算已打开。可读取系统弹窗，按用户目标自主选择打开哪个应用；尚待选择时继续同一会话，不要误报启动成功。"
                 + availableApps + "\n"

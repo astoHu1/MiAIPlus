@@ -185,6 +185,15 @@ public class NativePluginToolsTest {
         assertEquals(0, registry.size());
     }
 
+    @Test public void routingDistinguishesDisabledToolFromUnavailableCatalog() throws Exception {
+        assertTrue(NativePluginTools.availableForRouting(context, PhoneUseRouting.BACKGROUND_TOOL));
+        setCatalog(List.of());
+        assertFalse(NativePluginTools.availableForRouting(context, PhoneUseRouting.BACKGROUND_TOOL));
+        provider.unavailable = true;
+        assertThrows(IllegalStateException.class,
+            () -> NativePluginTools.availableForRouting(context, PhoneUseRouting.BACKGROUND_TOOL));
+    }
+
     @Test public void unprovenDefinitionCopiesArePreservedButDisabledProxyCannotExecute() throws Exception {
         PluginToolSpec remote = remoteSpec();
         setCatalog(List.of(remote));
@@ -338,10 +347,21 @@ public class NativePluginToolsTest {
 
     @Test public void builtinPromptOnlyAdvertisesEnabledFunctions() {
         assertEquals("", PhoneUsePlugin.promptPolicy(Set.of()));
-        assertTrue(PhoneUsePlugin.promptPolicy(Set.of(PhoneUseRouting.FOREGROUND_TOOL)).contains("后台控屏未启用"));
-        assertTrue(PhoneUsePlugin.promptPolicy(Set.of(PhoneUseRouting.BACKGROUND_TOOL)).contains("前台控屏未启用"));
-        assertTrue(PhoneUsePlugin.promptPolicy(Set.of(PhoneUseRouting.FOREGROUND_TOOL,
-            PhoneUseRouting.BACKGROUND_TOOL)).contains("两个独立函数"));
+        String foreground = PhoneUsePlugin.promptPolicy(Set.of(PhoneUseRouting.FOREGROUND_TOOL));
+        String background = PhoneUsePlugin.promptPolicy(Set.of(PhoneUseRouting.BACKGROUND_TOOL));
+        String both = PhoneUsePlugin.promptPolicy(Set.of(PhoneUseRouting.FOREGROUND_TOOL,
+            PhoneUseRouting.BACKGROUND_TOOL));
+        assertTrue(foreground.contains("后台控屏未启用"));
+        assertTrue(background.contains("前台控屏未启用"));
+        assertTrue(both.contains("两个独立函数"));
+        for (String tool : new String[]{PhoneUseRouting.FOREGROUND_TOOL, PhoneUseRouting.BACKGROUND_TOOL}) {
+            String example = PhoneUsePlugin.cliStartExample(tool);
+            assertTrue(both.contains(example));
+            assertEquals(tool.equals(PhoneUseRouting.FOREGROUND_TOOL), foreground.contains(example));
+            assertEquals(tool.equals(PhoneUseRouting.BACKGROUND_TOOL), background.contains(example));
+        }
+        assertTrue(both.contains("保留origin_tool"));
+        assertFalse(both.contains("原样传递完整任务"));
     }
 
     private static Tool foreign(String name) {

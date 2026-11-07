@@ -44,6 +44,7 @@ public final class NativeModelHook {
         NativeIntentHook.install(context, loader, hooks);
         NativeReasoningHook.install(context, loader, hooks);
         NativeChatRoutingHook.install(context, loader, hooks);
+        NativeVoiceRoutingHook.install(context, loader, hooks);
         Class<?> message = Reflector.findClass("com.aios.osbot.agent.model.Message", loader);
         Class<?> image = Reflector.findClass("com.aios.osbot.agent.model.ImageContent", loader);
         var imageConstructor = image.getConstructor(String.class, String.class, String.class, int.class, int.class, Long.class);
@@ -294,6 +295,8 @@ public final class NativeModelHook {
         return memoryTransport.get() && setting != null ? setting.getString(ModelHeaders.SESSION) : null;
     }
     static synchronized void dispose() {
+        NativeVoiceRoutingHook.dispose();
+        NativeChatRoutingHook.dispose();
         PhoneUseLog.disposeRemote();
         for (Object http : externalHttp.values()) Reflector.callMethod(http, "close");
         externalHttp.clear(); modelConfig = null; fetchedAt = 0;

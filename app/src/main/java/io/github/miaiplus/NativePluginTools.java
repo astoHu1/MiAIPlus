@@ -107,6 +107,14 @@ final class NativePluginTools {
         return refresh(context) && catalog.tools().containsKey(name);
     }
 
+    /** Routing must distinguish a disabled tool from an unavailable authoritative catalog. */
+    static boolean availableForRouting(Context context, String name) {
+        synchronized (LOCK) {
+            if (!refresh(context)) throw new IllegalStateException("Plugin catalog unavailable");
+            return catalog.tools().containsKey(name);
+        }
+    }
+
     static String promptPolicy(Context context) {
         refresh(context);
         return PhoneUsePlugin.promptPolicy(catalog.tools().keySet());

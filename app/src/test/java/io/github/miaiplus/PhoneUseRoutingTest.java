@@ -42,6 +42,46 @@ public class PhoneUseRoutingTest {
         assertEquals("image_pixels", new JSONObject(route.query().substring(9)).getString("coordinate_space"));
     }
 
+    @Test public void cliExamplesKeepExplicitScreenAndOwnershipAcrossPreferenceChanges() throws Exception {
+        Class<?> stateType = Class.forName(NativeSession.class.getName() + "$State");
+        Constructor<?> constructor = stateType.getDeclaredConstructor(String.class, int.class, int.class,
+            ScreenService.class, boolean.class, String.class);
+        constructor.setAccessible(true);
+        Field runField = stateType.getDeclaredField("run"); runField.setAccessible(true);
+        for (String tool : new String[]{PhoneUseRouting.FOREGROUND_TOOL, PhoneUseRouting.BACKGROUND_TOOL}) {
+            boolean background = tool.equals(PhoneUseRouting.BACKGROUND_TOOL);
+            String start = PhoneUsePlugin.cliStartExample(tool);
+            assertTrue(PhoneUsePlugin.legacyDescription().contains(start));
+            Object state = constructor.newInstance("完整任务", 1000, 10, null, background, tool);
+            activeField().set(null, state);
+            RunState sessionRun = (RunState) runField.get(state);
+            String step = PhoneUsePlugin.cliContinuationExample(sessionRun.id, tool);
+            assertTrue(PhoneUsePlugin.continuationHint(sessionRun.id, tool).contains(step));
+            for (boolean defaultBackground : new boolean[]{false, true}) {
+                PhoneUseRouting.Request initial = PhoneUseRouting.decode(start, defaultBackground);
+                assertEquals(background, initial.background());
+                assertEquals(tool, initial.sourceTool());
+                assertEquals("完整任务", initial.query());
+                PhoneUseRouting.Request continuation = PhoneUseRouting.decode(step, defaultBackground);
+                assertEquals(tool, continuation.sourceTool());
+                assertEquals(background, NativeSession.continuationBackground(continuation.query(), 1000,
+                    continuation.sourceTool()));
+                assertEquals("image_pixels", new JSONObject(continuation.query().substring(9))
+                    .getString("coordinate_space"));
+            }
+            for (String other : new String[]{"", background ? PhoneUseRouting.FOREGROUND_TOOL : PhoneUseRouting.BACKGROUND_TOOL}) {
+                try {
+                    NativeSession.verifyContinuation(step, 1000, other);
+                    fail("CLI continuation lost its source ownership");
+                } catch (IllegalStateException expected) {
+                    assertTrue(expected.getMessage().contains("请继续使用启动此会话的工具 " + tool));
+                }
+            }
+            assertFalse(sessionRun.cancelled.get());
+            assertSame(state, activeField().get(null));
+        }
+    }
+
     @Test public void malformedOrUnknownStartIsRejectedBeforeExecution() throws Exception {
         for (String encoded : new String[]{"MIAIPLUS_START:{", "MIAIPLUS_START:{}",
             "MIAIPLUS_START:{\"goal\":\"test\",\"origin_tool\":\"other\"}"}) {

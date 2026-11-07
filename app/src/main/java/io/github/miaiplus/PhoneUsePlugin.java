@@ -35,25 +35,54 @@ final class PhoneUsePlugin {
             + "根据用户要求选择此工具；未指定后台时使用前台工具。整个会话继续使用同一个工具，包括后台经用户同意切换前台以后。" + DESCRIPTION;
     }
 
-    private static final String LEGACY_DESCRIPTION = "本机全应用识屏控屏工具；默认由小爱当前模型逐步规划，无需另配API。用户要求在手机已安装应用中执行 UI 操作（包括微信）时，首次原样传入完整请求；CONTINUE表示尚未完成，按返回协议继续调用同一工具，每次只执行一个动作；"
+    private static final String LEGACY_DESCRIPTION = "本机全应用识屏控屏工具；默认由小爱当前模型逐步规划，无需另配API。用户要求在手机已安装应用中执行 UI 操作（包括微信）时，用MIAIPLUS_START显式选择已启用的前台或后台来源工具，不要只传自然语言任务；CONTINUE表示尚未完成，按返回协议继续，每次只执行一个动作；"
         + "系统设置、搜索及已有专用工具优先走原功能。用户明确指定第三方模型对话时，query 使用前缀『模型对话：』加用户问题；此模式不读取屏幕。"
         + "控屏由 MiAIPlus 在本机执行；默认由你逐步规划，只有用户选择独立外部模式才另调其配置端点。返回 PAUSE 时提示用户接管，不要自行重试。";
     private static final String LEGACY_POLICY = "\n\n[MiAIPlus 扩展能力，覆盖上文同一工具的旧范围说明]\n"
         + "逐步控屏提供两个独立函数：miaiplus_phone_use 操作当前主屏，miaiplus_background_phone_use 操作独立虚拟屏。根据用户要求选择；未指定后台时用前台工具，不受全局旧版执行屏幕设置影响。选定后整个会话必须使用同一个函数，包括后台任务经授权切到前台以后。两个函数都是首次{goal:完整任务}，之后{session:返回会话号,coordinate_space:screen_pixels,action:{action:tap,element:[树中目标中心x,树中目标中心y]}}，直至finish。不要把自然语言动作再次当成首次任务。voiceassist__controlApp 已由本机 MiAIPlus 接管，不再受原云端的应用白名单或微信不支持限制。"
-        + "对于用户明确要求的应用内 UI 操作，已有专用能力优先；无专用能力时可用 cli 调用 voiceassist__controlApp，原样传递完整任务。"
+        + "对于用户明确要求的应用内 UI 操作，已有专用能力优先；未提供上述独立函数、只能使用cli时，用voiceassist__controlApp转接同一控屏协议；不需要额外API或其他模型。"
         + "包括微信等应用的页面操作、消息等，仅在用户明确要求时执行。"
         + "需要后续识屏、点击或输入的任务先开始所选前台或后台控屏会话，再用launch打开目标，不要先用app start打开应用；仅打开应用的普通请求仍保留原功能。"
         + "控屏会话内打开应用使用同一个控屏工具的launch动作，app从首次观察的应用列表选择包名，不要另调app start或原生打开应用工具；只有观察到目标前台才报告打开。当前launch对应的小米启动确认由执行器自动允许本次；其他系统权限应接管。"
         + "每个控屏action附intent简短中文说明当前意图供灵动岛显示；不含隐私、坐标或推理过程，普通意图不要放入触发确认的message。"
         + "用户说『用第三方模型回答/对话』时调用 cli: voiceassist__controlApp \"模型对话：用户问题\"，原样返回结果。"
         + "普通对话、联网搜索、系统设置、智能家居仍使用现有主模型、路由和工具（主模型可由用户全局替换）。不要把这些任务改派到控屏。"
-        + "工具返回CONTINUE时必须按返回的session继续调用启动会话的同一个控屏工具；只有旧版voiceassist__controlApp会话继续使用MIAIPLUS:动作JSON，依据最新图片或无障碍树规划；此模式无需额外视觉模型。不要只复述观察后结束。剩余动作预算为0时只能根据最后观察finish或take_over/ask_user，不能执行更多操作。STOP、PAUSE或工具报错表示本轮结束，不要重试、重新提交goal或改用其他工具重开同一任务；向用户说明未完成及原因，不要伪称完成。\n";
+        + "工具返回CONTINUE时必须按返回的session继续同一来源工具；通过cli转接时使用MIAIPLUS:动作JSON并保留origin_tool，不能省略或改成另一工具。依据最新图片或无障碍树规划；此模式无需额外视觉模型。不要只复述观察后结束。剩余动作预算为0时只能根据最后观察finish或take_over/ask_user，不能执行更多操作。STOP、PAUSE或工具报错表示本轮结束，不要重试、重新提交goal或改用其他工具重开同一任务；向用户说明未完成及原因，不要伪称完成。\n";
 
     private static final List<PluginToolSpec> SPECS = List.of(
         spec("phone_foreground", PhoneUseRouting.FOREGROUND_TOOL, "前台控屏"),
         spec("phone_background", PhoneUseRouting.BACKGROUND_TOOL, "后台控屏"));
 
-    static String legacyDescription() { return LEGACY_DESCRIPTION; }
+    static String legacyDescription() {
+        return LEGACY_DESCRIPTION + cliPolicy(java.util.Set.of(PhoneUseRouting.FOREGROUND_TOOL,
+            PhoneUseRouting.BACKGROUND_TOOL));
+    }
+
+    static String cliStartExample(String tool) {
+        return "MIAIPLUS_START:{\"goal\":\"完整任务\",\"origin_tool\":\"" + tool + "\"}";
+    }
+
+    static String cliContinuationExample(String session, String tool) {
+        return "MIAIPLUS:{\"session\":\"" + session + "\",\"origin_tool\":\"" + tool
+            + "\",\"coordinate_space\":\"image_pixels\",\"action\":{\"action\":\"wait\",\"duration_ms\":1000}}";
+    }
+
+    private static String cliPolicy(java.util.Set<String> names) {
+        StringBuilder text = new StringBuilder("CLI转接：调用voiceassist__controlApp，将下列字符串作为query（不是函数名）；仅选择已启用的工具。首次把goal替换为用户完整任务：");
+        if (names.contains(PhoneUseRouting.FOREGROUND_TOOL))
+            text.append("前台（未指定后台时）=").append(cliStartExample(PhoneUseRouting.FOREGROUND_TOOL)).append("；");
+        if (names.contains(PhoneUseRouting.BACKGROUND_TOOL))
+            text.append("用户要求后台=").append(cliStartExample(PhoneUseRouting.BACKGROUND_TOOL)).append("；");
+        return text + "后续query为MIAIPLUS:{\"session\":\"返回会话号\",\"origin_tool\":\"首次选定的工具名\",\"coordinate_space\":\"image_pixels\",\"action\":{\"action\":\"wait\",\"duration_ms\":1000}}，把action替换为本步动作，直至finish。不要重新传goal；即使后台经授权切到前台，origin_tool也保持不变。";
+    }
+
+    static String continuationHint(String session, String sourceTool) {
+        if (sourceTool.isEmpty())
+            return "继续调用voiceassist__controlApp，query为MIAIPLUS:{\"session\":\"" + session
+                + "\",\"action\":{\"action\":\"wait\",\"duration_ms\":1000}}，替换为本步动作。";
+        return "继续调用" + sourceTool + "，参数为session与action对象；若只能使用cli，则调用voiceassist__controlApp，query为"
+            + cliContinuationExample(session, sourceTool) + "，替换为本步动作；整个会话保持同一origin_tool。";
+    }
 
     static String promptPolicy(java.util.Set<String> names) {
         boolean foreground = names.contains(PhoneUseRouting.FOREGROUND_TOOL);
@@ -65,7 +94,7 @@ final class PhoneUsePlugin {
                 ? "当前仅启用 miaiplus_phone_use 前台控屏函数；后台控屏未启用，不要调用后台函数。不受全局旧版执行屏幕设置影响。"
                 : "当前仅启用 miaiplus_background_phone_use 后台控屏函数；前台控屏未启用，不要调用前台函数。仅在用户要求后台执行时调用；未指定后台时说明前台插件未启用。";
         return LEGACY_POLICY.replace("逐步控屏提供两个独立函数：miaiplus_phone_use 操作当前主屏，miaiplus_background_phone_use 操作独立虚拟屏。根据用户要求选择；未指定后台时用前台工具，不受全局旧版执行屏幕设置影响。", available)
-            .replace("两个函数都是", "已启用的控屏函数都是");
+            .replace("两个函数都是", "已启用的控屏函数都是") + cliPolicy(names);
     }
 
     static List<PluginToolSpec> specs() { return SPECS; }

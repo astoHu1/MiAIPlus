@@ -5,11 +5,28 @@ import sys
 import re
 import tempfile
 import time
+import os
+import shutil
 from pathlib import Path
 
 
 def adb(*args):
     return subprocess.check_output(['adb', *args], text=True).strip()
+
+
+native_background = '--native-background-model' in sys.argv or '--native-background-voice' in sys.argv
+native_verifier = None
+if native_background:
+    configured_verifier = os.environ.get('MIAIPLUS_NATIVE_SCREENSHOT_VERIFIER')
+    if configured_verifier:
+        configured_path = Path(configured_verifier).expanduser().resolve()
+        if not configured_path.is_file() or not os.access(configured_path, os.X_OK):
+            raise RuntimeError('configured owned screenshot verifier is not executable')
+        native_verifier = [str(configured_path)]
+    else:
+        if shutil.which('tesseract') is None:
+            raise RuntimeError('tesseract is required for the owned calculator verification')
+        native_verifier = [sys.executable, str(Path(__file__).with_name('verify_calculator_frame.py'))]
 
 
 process = subprocess.Popen(['adb', 'shell', 'am', 'instrument', '--user', '0', '-w', '-e', 'hook', str('--hook' in sys.argv).lower(),
@@ -29,6 +46,8 @@ process = subprocess.Popen(['adb', 'shell', 'am', 'instrument', '--user', '0', '
     '-e', 'robust_screen', str('--robust-screen' in sys.argv).lower(),
     '-e', 'real_page_guard', str('--real-page-guard' in sys.argv).lower(),
     '-e', 'phone_use_terminal', str('--phone-use-terminal' in sys.argv).lower(),
+    '-e', 'native_background_model', str('--native-background-model' in sys.argv).lower(),
+    '-e', 'native_background_voice', str('--native-background-voice' in sys.argv).lower(),
     '-e', 'action_confirmation', str('--action-confirmation' in sys.argv).lower(),
     '-e', 'conversation_return', str('--conversation-return' in sys.argv).lower(),
     '-e', 'conversation_continuity', str('--conversation-continuity' in sys.argv).lower(),
@@ -71,6 +90,39 @@ try:
             adb('shell', 'am', 'broadcast', '-a', 'io.github.miaiplus.DEBUG_PROBE', '-p', 'com.miui.voiceassist', '--es', 'frame', probe_token)
         if 'MIAIPLUS_LAUNCH_FIXTURE' in line:
             adb('shell', 'am', 'start', '-W', '-n', 'io.github.miaiplus/.FixtureActivity')
+        if ('--native-background-model' in sys.argv or '--native-background-voice' in sys.argv) and line.startswith('NATIVE_BACKGROUND_CALCULATOR_FRAME '):
+            fields = line.strip().split()
+            if (len(fields) != 3 or not re.fullmatch(r'[a-f0-9-]{36}', fields[1])
+                    or fields[2] != '/data/user/0/io.github.miaiplus/cache/native-background-probe/' + fields[1] + '.jpg'):
+                raise ValueError('invalid owned calculator frame handshake')
+            nonce, remote_path = fields[1:]
+            # This is an already captured frame from the exact owned background calculator session.
+            # Never substitute a physical-screen screenshot or capture another application's display.
+            directory = Path('work/native-background-calculator')
+            directory.mkdir(parents=True, exist_ok=True)
+            screenshot = directory / (nonce + '.jpg')
+            screenshot.write_bytes(subprocess.check_output(['adb', 'exec-out', 'su', '-c',
+                                                          'cat ' + remote_path], timeout=10))
+            proof = subprocess.run([*native_verifier, str(screenshot), '3973'], capture_output=True, timeout=15)
+            print('NATIVE_BACKGROUND_CALCULATOR_ARTIFACT ' + str(screenshot.resolve()), flush=True)
+            if proof.returncode == 0:
+                adb('shell', 'am', 'broadcast', '-a', 'io.github.miaiplus.NATIVE_BACKGROUND_PIXELS_VERIFIED',
+                    '-p', 'io.github.miaiplus', '--es', 'nonce', nonce)
+            elif proof.returncode != 1:
+                raise RuntimeError('owned calculator frame verifier unavailable')
+        if ('--native-background-model' in sys.argv or '--native-background-voice' in sys.argv) and line.startswith('NATIVE_BACKGROUND_WAIT_OWNED_SCREEN '):
+            fields = line.strip().split()
+            if len(fields) != 2 or not re.fullmatch(r'[a-f0-9-]{36}', fields[1]):
+                raise ValueError('invalid owned conversation screenshot handshake')
+            nonce = fields[1]
+            directory = Path('work/native-background-calculator')
+            directory.mkdir(parents=True, exist_ok=True)
+            screenshot = directory / ('owned-chat-' + nonce + '.png')
+            # The host has canceled this owned task and reopened/asserted its fresh topic; restoration waits for us.
+            screenshot.write_bytes(subprocess.check_output(['adb', 'exec-out', 'screencap', '-p'], timeout=10))
+            print('NATIVE_BACKGROUND_OWNED_CHAT_ARTIFACT ' + str(screenshot.resolve()), flush=True)
+            adb('shell', 'am', 'broadcast', '-a', 'io.github.miaiplus.DEBUG_PROBE', '-p', 'com.miui.voiceassist',
+                '--es', 'frame', 'MIAIPLUS_NATIVE_BACKGROUND_SCREENSHOT', '--es', 'nonce', nonce)
         if '--conversation-replies' in sys.argv and line.startswith('CONVERSATION_REPLY_SCREENSHOT '):
             fields = line.strip().split()
             if len(fields) != 3 or not re.fullmatch(r'[a-f0-9-]{36}', fields[2]):
@@ -107,6 +159,20 @@ try:
             failed = True
     process.wait()
 finally:
+    if native_background and process.poll() is None:
+        # Cancel only this explicit probe. Keep instrumentation alive long enough for its owned cleanup/settings restore.
+        try:
+            subprocess.run(['adb', 'shell', 'am', 'broadcast', '-a', 'io.github.miaiplus.DEBUG_PROBE',
+                            '-p', 'com.miui.voiceassist', '--es', 'frame', 'MIAIPLUS_NATIVE_BACKGROUND_CANCEL'],
+                           check=False, capture_output=True, timeout=10)
+        except subprocess.TimeoutExpired:
+            print('Native probe cancel broadcast timed out; waiting for owned instrumentation cleanup', flush=True)
+        cleanup_deadline = time.monotonic() + 55
+        while process.poll() is None and time.monotonic() < cleanup_deadline:
+            try:
+                process.wait(timeout=min(5, max(0.1, cleanup_deadline - time.monotonic())))
+            except subprocess.TimeoutExpired:
+                continue
     # The launch fixture may still be foreground when the compact completion island appears.
     # Close its task even on test failure so the next user task cannot reveal it.
     subprocess.run(['adb', 'shell', 'am', 'broadcast', '-a', 'io.github.miaiplus.CLOSE_LAUNCH_FIXTURE',
