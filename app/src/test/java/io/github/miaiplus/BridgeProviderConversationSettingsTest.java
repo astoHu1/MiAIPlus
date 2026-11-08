@@ -156,6 +156,34 @@ public final class BridgeProviderConversationSettingsTest {
         }
     }
 
+    @Test public void staleContinuationPreservesExpiredCauseAndCompletedTaskWithoutStartingWorker() throws Exception {
+        prefs.edit().putBoolean("enabled", true).putString("planner", "native").commit();
+        field(BridgeProvider.class, "screenTaskId").set(null, "completed-screen");
+        field(BridgeProvider.class, "screenTaskActive").setBoolean(null, false);
+        field(BridgeProvider.class, "screenResult").set(null, "PAUSE：需要用户补充任务信息");
+        Map<?, ?> jobs = (Map<?, ?>) field(BridgeProvider.class, "JOBS").get(null);
+        int initialJobs = jobs.size();
+        JSONObject action = new JSONObject().put("action", "finish")
+            .put("message", "stale completion must not start another task");
+        JSONObject request = new JSONObject().put("session", "expired-fixture-session")
+            .put("origin_tool", PhoneUseRouting.FOREGROUND_TOOL).put("action", action);
+        Bundle extras = new Bundle();
+        extras.putString("mode", "screen");
+        extras.putString("query", "MIAIPLUS:" + request);
+        Bundle rejected = provider.call("start", null, extras);
+        String error = rejected.getString("error", "");
+        assertTrue(error, error.startsWith("STOP：MiAIPlus 控屏已停止。"));
+        assertTrue(error, error.contains("控屏会话不存在或已过期"));
+        assertTrue(error, error.contains("不要重试旧动作"));
+        assertFalse(rejected.containsKey("id"));
+        assertEquals("completed-screen", field(BridgeProvider.class, "screenTaskId").get(null));
+        assertEquals("PAUSE：需要用户补充任务信息", field(BridgeProvider.class, "screenResult").get(null));
+        assertFalse(field(BridgeProvider.class, "screenTaskActive").getBoolean(null));
+        assertNull(field(BridgeProvider.class, "active").get(null));
+        assertNull(field(NativeSession.class, "active").get(null));
+        assertEquals(initialJobs, jobs.size());
+    }
+
     @Test public void unrelatedChatAndStaleCompletedScreenDoNotRemainScreenBusy() throws Exception {
         RunState chat = new RunState("ordinary-chat", android.os.Process.myUid());
         field(BridgeProvider.class, "active").set(null, chat);

@@ -14,8 +14,8 @@ public final class AgentEngine {
         普通的“选择打开哪个应用”窗口由你按用户目标自主选择。系统权限与敏感动作交由当前权限策略审计，不要仅因出现授权窗口就结束任务。
         登录、密码、验证码、CAPTCHA时使用 take_over；缺少任务必要的用户决策时 ask_user。
         支付、删除、发布或发送消息等不可逆提交前必须设置 requires_confirmation=true 并用 message 说明具体操作。
-        不要臆造成功，只有最后一张截图确认目标达成时才能 finish，并在 message 中写完成依据和未完成部分。
-        """;
+        不要臆造成功，结合系统前台身份和最新页面状态核实目标，message 写完成依据和未完成部分。
+        """ + ScreenGrounding.POLICY;
     private static final String AUTOGLM = """
         使用 Open-AutoGLM 动作格式，只输出 <answer>do(...)</answer> 或 <answer>finish(message="结果")</answer>。
         支持 do(action="Launch", app="包名"), do(action="Tap", element=[x,y]),
@@ -93,7 +93,7 @@ public final class AgentEngine {
                 // Preserve system/task and six recent observation/action/result groups.
                 while (messages.length() > 20) for (int i = 0; i < 3; i++) messages.remove(2);
                 JSONArray content = new JSONArray().put(new JSONObject().put("type", "text").put("text",
-                    "上步结果：" + outcome + "\n前台：" + frame.foreground() + "\n无障碍树（实际像素边界）：\n" + ModelObservation.externalTree(frame)))
+                    "上步结果：" + outcome + "\n" + ModelObservation.provenance(frame) + "前台：" + frame.foreground() + "\n无障碍树（实际像素边界）：\n" + ModelObservation.externalTree(frame)))
                     .put(new JSONObject().put("type", "image_url").put("image_url", new JSONObject().put("url", "data:image/jpeg;base64," + frame.image())));
                 messages.put(ModelClient.message("user", content));
                 JSONObject response = ModelClient.complete(config, messages, tools, run);
@@ -238,7 +238,7 @@ public final class AgentEngine {
             .put("element", coordinate).put("start", coordinate).put("end", coordinate)
             .put("text", new JSONObject().put("type", "string"))
             .put("intent", new JSONObject().put("type", "string").put("description", "简短中文操作意图，显示在灵动岛；不要包含隐私或推理过程"))
-            .put("app", new JSONObject().put("type", "string").put("description", "已安装应用的包名"))
+            .put("app", new JSONObject().put("type", "string").put("description", "launch使用已安装应用的包名"))
             .put("message", new JSONObject().put("type", "string"))
             .put("requires_confirmation", new JSONObject().put("type", "boolean"))
             .put("risk_level", new JSONObject().put("type", "string").put("enum", new JSONArray(new String[]{"normal", "sensitive", "critical"})))

@@ -248,6 +248,7 @@ public final class NativeSession {
             // Only the model view is compacted; execution and permission checks retain the original Frame.
             String observation = ModelObservation.nativeTree(s.frame);
             return "CONTINUE：控屏尚未完成。由你（小爱当前主模型）根据新截图/无障碍树选择下一步，不需要外部模型。\n"
+                + ModelObservation.provenance(s.frame)
                 + "上步动作=" + lastAction + "；执行状态=" + executionStatus + "\n"
                 + (executionStatus.equals("executed") ? "执行器已完成该动作；动作效果和任务是否完成仍须依据本次新观察核实。\n" : "")
                 + (skipped.isEmpty() ? "" : skipped + "\n")
@@ -267,6 +268,7 @@ public final class NativeSession {
                 + "控屏会话内打开应用统一使用action=launch及app包名，不要另调app start、打开应用工具或自行拼接Intent；只有新观察确认目标前台才算已打开。可读取系统弹窗，按用户目标自主选择打开哪个应用；尚待选择时继续同一会话，不要误报启动成功。"
                 + availableApps + "\n"
                 + "支持tap,double_tap,long_press,swipe(start/end),type(text),launch(app包名),back,home,wait,finish(message),take_over(message),ask_user(message)。"
+                + ScreenGrounding.POLICY
                 + "只有新观察确认目标完成才finish；付款、发送、删除等提交加requires_confirmation=true及message说明。"
                 + PhoneUsePermissionPolicy.prompt(s.permissionMode)
                 + "每步action.intent用简短中文写当前操作意图（如点击搜索框、查找订单），用于灵动岛显示；不含隐私、坐标或推理过程。普通意图不要写进message以免触发确认。"

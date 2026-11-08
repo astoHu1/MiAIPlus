@@ -3,5 +3,6 @@
         <activity android:name=".FixtureActivity" android:exported="true" android:excludeFromRecents="true" />
         <activity android:name=".SecureFixtureActivity" android:exported="true" android:excludeFromRecents="true" />
         <activity android:name=".RobustFixtureActivity" android:exported="true" android:excludeFromRecents="true" />
+        <activity android:name=".ScreenshotFixtureActivity" android:exported="true" android:excludeFromRecents="true" />
     </application>
 </manifest>

@@ -21,6 +21,26 @@ final class NativeChatRouting {
     private static final Pattern NEGATED = Pattern.compile(
         "^(?:请|麻烦)?(?:不要|别|禁止|不用|无需|不使用|不需要)(?:再|用|使用|在|通过|开启|启动|打开){0,3}(?:后台|虚拟屏|虚拟显示器)"
             + "|^(?:please\\s+)?(?:do\\s+not|don't|never|without)\\s+(?:use\\s+|the\\s+|a\\s+|in\\s+)*(?:background|virtual\\s+(?:screen|display))\\b");
+    private static final Pattern PHONE_CONTROL = Pattern.compile(
+        "控屏|控制(?:手机)?屏幕|操作手机|miaiplus_phone_use|\\b(?:phone\\s+use|control\\s+(?:my\\s+|the\\s+)?(?:phone|screen))\\b");
+    private static final Pattern CONTROL_QUESTION = Pattern.compile(
+        "^(?:请问)?(?:前台)?(?:控屏|手机控屏|控制屏幕|miaiplus_phone_use)(?:功能|这个功能)?"
+            + "(?:是否|能否|支持|能不能|可不可以|是什么|是什么意思|是干什么|有什么|怎么)"
+            + "|^miaiplus_phone_use\\s*(?:是什么|是什么意思)"
+            + "|^(?:请问)?(?:你|小爱)?(?:能不能|能否|是否能|可不可以|支持)(?:进行)?(?:控屏|控制屏幕|操作手机)[？?吗嘛么]?$");
+    private static final Pattern ADVICE_REQUEST = Pattern.compile(
+        "^(?:(?:请|麻烦)(?:你|帮我)?|帮我)?(?:(?:用|使用)[^，。！？；]{1,10}?)?(?:解释|说明|介绍|讲解|告诉我(?:如何|怎么|怎样))"
+            + "|^(?:(?:请|麻烦)(?:你|帮我)?|帮我)?(?:用|使用|通过)(?:这个|这种|那个|那种|上述|以下)?(?:方法|方式|技巧|公式|算法|步骤|思路)");
+    private static final Pattern NO_CONTROL = Pattern.compile(
+        "^(?:请|麻烦)?(?:你|小爱)?(?:不要|别|禁止|不用|无需|不使用|不需要)(?:再|用|使用)?(?:控屏|控制屏幕|操作手机)"
+            + "|^(?:please\\s+)?(?:do\\s+not|don't|never)\\s+(?:use\\s+)?(?:phone\\s+use|control\\s+(?:my\\s+|the\\s+)?(?:phone|screen))\\b");
+    private static final String IN_APP_ACTION = "(?:打开|点开|点击|轻点|点按|滑动|滚动|翻页|拖动|输入|填写|搜索|查找|找到|进入|选择|选中|发送|点赞|收藏|评论|关注|操作)";
+    private static final Pattern APP_OPERATION = Pattern.compile(
+        // An app-qualified operation, including a cross-app request derived from a screenshot.
+        "(?:去|到|在|用|使用|通过)[^，。！？；\\n]{1,20}?" + IN_APP_ACTION
+            + "|(?:打开|启动|进入|点开)[^，。！？；\\n]{1,20}?[，,]?" + IN_APP_ACTION
+            + "|\\b(?:open|launch)\\s+.+?\\s+(?:and|then|to)\\s+(?:search|find|tap|click|type|enter|select)\\b"
+            + "|\\b(?:search|find|tap|click|type|enter|select)\\b.+?\\b(?:in|on|using)\\s+\\S+");
 
     private NativeChatRouting() { }
 
@@ -33,6 +53,19 @@ final class NativeChatRouting {
             || NEGATED.matcher(text).find()) return false;
         if (text.contains(PhoneUseRouting.BACKGROUND_TOOL)) return true;
         return BACKGROUND.matcher(text).find() && ACTION.matcher(text).find();
+    }
+
+    /** Returns only the requested capability; plugin availability is checked at submission. */
+    static String requestedPhoneTool(String query) {
+        if (requestsBackgroundTools(query)) return PhoneUseRouting.BACKGROUND_TOOL;
+        if (query == null || query.isBlank()) return "";
+        String text = query.strip().toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");
+        if (EXPLANATION.matcher(text).find() || CAPABILITY_QUESTION.matcher(text).find()
+            || CONTROL_QUESTION.matcher(text).find() || NO_CONTROL.matcher(text).find()
+            || ADVICE_REQUEST.matcher(text).find()
+            || NEGATED.matcher(text).find() || BACKGROUND.matcher(text).find()) return "";
+        return PHONE_CONTROL.matcher(text).find() || APP_OPERATION.matcher(text).find()
+            ? PhoneUseRouting.FOREGROUND_TOOL : "";
     }
 
     static Scope begin(Object callback, boolean forceAgent) {

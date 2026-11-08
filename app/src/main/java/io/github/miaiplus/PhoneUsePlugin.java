@@ -8,7 +8,10 @@ import org.json.JSONObject;
 
 /** First-party plugin; screen execution, ownership and return navigation stay in their original paths. */
 final class PhoneUsePlugin {
-    private static final String DESCRIPTION = "本机手机控屏。start时传goal取得session和观察；然后每次传session及一个action对象，按新观察继续调用直到finish。剩余动作预算为0时只能finish/take_over/ask_user。STOP、PAUSE或错误表示本轮结束，不得重试或重新提交goal；向用户如实说明未完成和原因。无需额外API，由你逐步规划。默认使用截图JPEG像素坐标(image_pixels)，不是0..1000；也可显式选screen_pixels或normalized，必须匹配观察尺寸。不要复述CONTINUE或用自然语言替代action。系统专用工具优先。";
+    private static final String EXECUTION_POLICY = "用户明确要求在应用中完成操作或根据屏幕图片查找并打开原内容时，即使未说控屏，也应调用可用的专用工具或已启用的控屏工具执行，不能只提供手动步骤，不能因原云端应用白名单而拒绝。"
+        + "在这种明确的应用操作请求中，『这张图』『这个视频』『屏幕上的』可以指用户手机当前前台显示的内容，不要求聊天消息附带图片。首次以goal开始所选控屏会话就会返回该执行屏幕的截图和观察；应先开始并查看观察，不能仅因本轮没有图片附件而声称看不到或要求重发/上传。观察后确实没有必要线索或仍不清楚所指内容时，再用ask_user询问。"
+        + "普通识图问答或单独提到图片/视频不等于授权读取屏幕或操作应用，不因此发起控屏。已有专用能力优先，仍遵守安全限制。";
+    private static final String DESCRIPTION = "本机手机控屏。start时传goal取得session和观察；然后每次传session及一个action对象，按新观察继续调用直到finish。剩余动作预算为0时只能finish/take_over/ask_user。STOP、PAUSE或错误表示本轮结束，不得重试或重新提交goal；向用户如实说明未完成和原因。无需额外API，由你逐步规划。默认使用截图JPEG像素坐标(image_pixels)，不是0..1000；也可显式选screen_pixels或normalized，必须匹配观察尺寸。不要复述CONTINUE或用自然语言替代action。系统专用工具优先。" + EXECUTION_POLICY + ScreenGrounding.POLICY;
     private static final String SCHEMA = """
         {"type":"object","properties":{
           "goal":{"type":"string","description":"仅首次开始时填写完整任务"},
@@ -40,7 +43,7 @@ final class PhoneUsePlugin {
         + "控屏由 MiAIPlus 在本机执行；默认由你逐步规划，只有用户选择独立外部模式才另调其配置端点。返回 PAUSE 时提示用户接管，不要自行重试。";
     private static final String LEGACY_POLICY = "\n\n[MiAIPlus 扩展能力，覆盖上文同一工具的旧范围说明]\n"
         + "逐步控屏提供两个独立函数：miaiplus_phone_use 操作当前主屏，miaiplus_background_phone_use 操作独立虚拟屏。根据用户要求选择；未指定后台时用前台工具，不受全局旧版执行屏幕设置影响。选定后整个会话必须使用同一个函数，包括后台任务经授权切到前台以后。两个函数都是首次{goal:完整任务}，之后{session:返回会话号,coordinate_space:screen_pixels,action:{action:tap,element:[树中目标中心x,树中目标中心y]}}，直至finish。不要把自然语言动作再次当成首次任务。voiceassist__controlApp 已由本机 MiAIPlus 接管，不再受原云端的应用白名单或微信不支持限制。"
-        + "对于用户明确要求的应用内 UI 操作，已有专用能力优先；未提供上述独立函数、只能使用cli时，用voiceassist__controlApp转接同一控屏协议；不需要额外API或其他模型。"
+        + "对于用户明确要求的应用内 UI 操作，已有专用能力优先；" + EXECUTION_POLICY + "未提供上述独立函数、只能使用cli时，用voiceassist__controlApp转接同一控屏协议；不需要额外API或其他模型。"
         + "包括微信等应用的页面操作、消息等，仅在用户明确要求时执行。"
         + "需要后续识屏、点击或输入的任务先开始所选前台或后台控屏会话，再用launch打开目标，不要先用app start打开应用；仅打开应用的普通请求仍保留原功能。"
         + "控屏会话内打开应用使用同一个控屏工具的launch动作，app从首次观察的应用列表选择包名，不要另调app start或原生打开应用工具；只有观察到目标前台才报告打开。当前launch对应的小米启动确认由执行器自动允许本次；其他系统权限应接管。"
@@ -94,7 +97,7 @@ final class PhoneUsePlugin {
                 ? "当前仅启用 miaiplus_phone_use 前台控屏函数；后台控屏未启用，不要调用后台函数。不受全局旧版执行屏幕设置影响。"
                 : "当前仅启用 miaiplus_background_phone_use 后台控屏函数；前台控屏未启用，不要调用前台函数。仅在用户要求后台执行时调用；未指定后台时说明前台插件未启用。";
         return LEGACY_POLICY.replace("逐步控屏提供两个独立函数：miaiplus_phone_use 操作当前主屏，miaiplus_background_phone_use 操作独立虚拟屏。根据用户要求选择；未指定后台时用前台工具，不受全局旧版执行屏幕设置影响。", available)
-            .replace("两个函数都是", "已启用的控屏函数都是") + cliPolicy(names);
+            .replace("两个函数都是", "已启用的控屏函数都是") + ScreenGrounding.POLICY + cliPolicy(names);
     }
 
     static List<PluginToolSpec> specs() { return SPECS; }

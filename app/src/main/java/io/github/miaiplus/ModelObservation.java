@@ -10,6 +10,19 @@ final class ModelObservation {
 
     private ModelObservation() {}
 
+    static String foregroundPackage(ScreenService.Frame frame) {
+        String foreground = frame.foreground();
+        if (foreground == null) return "";
+        int slash = foreground.indexOf('/');
+        return slash > 0 ? foreground.substring(0, slash) : foreground;
+    }
+
+    static String provenance(ScreenService.Frame frame) {
+        return "系统观察：前台应用包名=" + foregroundPackage(frame) + "；执行屏幕="
+            + (frame.isBackground() ? "background" : "foreground") + "；displayId=" + frame.displayId() + "。\n"
+            + "包名来自系统窗口，不是图片识别；截图可能是宿主应用展示的另一应用截图。\n";
+    }
+
     static String nativeTree(ScreenService.Frame frame) {
         return tree(frame, NATIVE_TREE_CHARS);
     }

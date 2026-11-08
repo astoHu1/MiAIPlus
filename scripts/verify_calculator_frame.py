@@ -35,15 +35,17 @@ def jpeg_size(data):
     raise ValueError('missing JPEG dimensions')
 
 
-def verified(tsv, width, height):
+def verified(tsv, width, height, foreground=False):
     lines = {}
     for word in csv.DictReader(io.StringIO(tsv), delimiter='\t', quoting=csv.QUOTE_NONE):
         if word.get('level') != '5' or not word.get('text', '').strip():
             continue
         left, top, word_width, word_height = (int(word[key]) for key in ('left', 'top', 'width', 'height'))
-        # This fixture's history is above .24 and keypad below .40. Never accept their numbers.
+        # The physical scientific layout's result reaches .402; its keypad starts below .43.
+        # Keep the existing background region, and exclude history/keypad in both layouts.
+        bottom = .42 if foreground else .40
         if (left < width * .10 or left + word_width > width * .98 or top < height * .24
-                or top + word_height > height * .40):
+                or top + word_height > height * bottom):
             continue
         key = tuple(word[name] for name in ('page_num', 'block_num', 'par_num', 'line_num'))
         lines.setdefault(key, []).append((left, word['text']))
@@ -55,18 +57,22 @@ def verified(tsv, width, height):
 
 
 def main():
-    if len(sys.argv) not in (2, 3) or (len(sys.argv) == 3 and sys.argv[2] != '3973'):
+    arguments = sys.argv[1:]
+    foreground = bool(arguments and arguments[0] == '--foreground')
+    if foreground:
+        arguments = arguments[1:]
+    if len(arguments) not in (1, 2) or (len(arguments) == 2 and arguments[1] != '3973'):
         raise ValueError('invalid owned calculator verifier arguments')
     executable = shutil.which('tesseract')
     if executable is None:
         raise RuntimeError('tesseract is required for owned calculator verification')
-    data = Path(sys.argv[1]).read_bytes()
+    data = Path(arguments[0]).read_bytes()
     width, height = jpeg_size(data)
     process = subprocess.run([executable, 'stdin', 'stdout', '-l', 'eng', '--psm', '11', 'tsv'],
                              input=data, capture_output=True, timeout=10)
     if process.returncode != 0:
         raise RuntimeError('owned calculator OCR failed')
-    return 0 if verified(process.stdout.decode('utf-8'), width, height) else 1
+    return 0 if verified(process.stdout.decode('utf-8'), width, height, foreground) else 1
 
 
 if __name__ == '__main__':

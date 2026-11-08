@@ -74,6 +74,17 @@ public final class HookSmokeProbe {
                     ConversationLifecycleReplyProbe.cancel();
                     return;
                 }
+                if ("MIAIPLUS_NATIVE_FOREGROUND_CANCEL".equals(intent.getStringExtra("frame"))) {
+                    NativeForegroundModelProbe.signalCancel(); return;
+                }
+                if ("MIAIPLUS_NATIVE_FOREGROUND_PIXELS".equals(intent.getStringExtra("frame"))) {
+                    NativeForegroundModelProbe.signalPixels(intent.getStringExtra("nonce"), intent.getStringExtra("task_ref"),
+                        intent.getStringExtra("session_ref"), intent.getStringExtra("frame_ref"), intent.getIntExtra("step", -1));
+                    return;
+                }
+                if ("MIAIPLUS_NATIVE_FOREGROUND_SCREENSHOT".equals(intent.getStringExtra("frame"))) {
+                    NativeForegroundModelProbe.signalScreenshot(intent.getStringExtra("nonce")); return;
+                }
                 if ("MIAIPLUS_NATIVE_BACKGROUND_CANCEL".equals(intent.getStringExtra("frame"))) {
                     NativeBackgroundModelProbe.signalCancel();
                     return;
@@ -141,6 +152,9 @@ public final class HookSmokeProbe {
                             : "MIAIPLUS_CONVERSATION_RETURN".equals(token) ? ConversationReturnProbe.run(context, loader)
                             : "MIAIPLUS_CONVERSATION_CONTINUITY".equals(token) ? ConversationContinuityProbe.run(context, loader)
                             : "MIAIPLUS_CONVERSATION_REPLIES".equals(token) ? ConversationLifecycleReplyProbe.run(context, loader)
+                            : "MIAIPLUS_NATIVE_FOREGROUND_MODEL".equals(token) ? NativeForegroundModelProbe.run(context, loader)
+                            : "MIAIPLUS_NATIVE_FOREGROUND_VOICE".equals(token) ? NativeForegroundModelProbe.run(context, loader, true)
+                            : "MIAIPLUS_NATIVE_FOREGROUND_VIDEO".equals(token) ? NativeForegroundModelProbe.run(context, loader, true, true)
                             : "MIAIPLUS_NATIVE_BACKGROUND_MODEL".equals(token) ? NativeBackgroundModelProbe.run(context, loader)
                             : "MIAIPLUS_NATIVE_BACKGROUND_VOICE".equals(token) ? NativeBackgroundModelProbe.run(context, loader, true)
                             : "MIAIPLUS_REPLY_ACTIONS".equals(token) ? ReplyActionsProbe.run(context, loader)

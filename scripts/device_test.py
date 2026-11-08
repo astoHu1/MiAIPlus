@@ -15,8 +15,11 @@ def adb(*args):
 
 
 native_background = '--native-background-model' in sys.argv or '--native-background-voice' in sys.argv
+native_video = '--native-foreground-video' in sys.argv
+native_foreground_calculator = '--native-foreground-model' in sys.argv or '--native-foreground-voice' in sys.argv
+native_foreground = native_foreground_calculator or native_video
 native_verifier = None
-if native_background:
+if native_background or native_foreground_calculator:
     configured_verifier = os.environ.get('MIAIPLUS_NATIVE_SCREENSHOT_VERIFIER')
     if configured_verifier:
         configured_path = Path(configured_verifier).expanduser().resolve()
@@ -26,7 +29,8 @@ if native_background:
     else:
         if shutil.which('tesseract') is None:
             raise RuntimeError('tesseract is required for the owned calculator verification')
-        native_verifier = [sys.executable, str(Path(__file__).with_name('verify_calculator_frame.py'))]
+        native_verifier = [sys.executable, str(Path(__file__).with_name('verify_calculator_frame.py')),
+                           *(['--foreground'] if native_foreground_calculator else [])]
 
 
 process = subprocess.Popen(['adb', 'shell', 'am', 'instrument', '--user', '0', '-w', '-e', 'hook', str('--hook' in sys.argv).lower(),
@@ -46,6 +50,10 @@ process = subprocess.Popen(['adb', 'shell', 'am', 'instrument', '--user', '0', '
     '-e', 'robust_screen', str('--robust-screen' in sys.argv).lower(),
     '-e', 'real_page_guard', str('--real-page-guard' in sys.argv).lower(),
     '-e', 'phone_use_terminal', str('--phone-use-terminal' in sys.argv).lower(),
+    '-e', 'native_foreground_model', str('--native-foreground-model' in sys.argv).lower(),
+    '-e', 'native_foreground_voice', str('--native-foreground-voice' in sys.argv).lower(),
+    '-e', 'native_foreground_video', str(native_video).lower(),
+    '-e', 'native_foreground_official', str('--official' in sys.argv).lower(),
     '-e', 'native_background_model', str('--native-background-model' in sys.argv).lower(),
     '-e', 'native_background_voice', str('--native-background-voice' in sys.argv).lower(),
     '-e', 'action_confirmation', str('--action-confirmation' in sys.argv).lower(),
@@ -123,6 +131,54 @@ try:
             print('NATIVE_BACKGROUND_OWNED_CHAT_ARTIFACT ' + str(screenshot.resolve()), flush=True)
             adb('shell', 'am', 'broadcast', '-a', 'io.github.miaiplus.DEBUG_PROBE', '-p', 'com.miui.voiceassist',
                 '--es', 'frame', 'MIAIPLUS_NATIVE_BACKGROUND_SCREENSHOT', '--es', 'nonce', nonce)
+        if native_video and line.startswith('NATIVE_FOREGROUND_VIDEO_FRAME '):
+            fields = line.strip().split()
+            if (len(fields) != 3 or not re.fullmatch(r'[a-f0-9-]{36}', fields[1])
+                    or fields[2] != '/data/user/0/io.github.miaiplus/cache/native-foreground-probe/' + fields[1] + '.jpg'):
+                raise ValueError('invalid owned video frame handshake')
+            nonce, remote_path = fields[1:]
+            directory = Path('work/native-foreground-video')
+            directory.mkdir(parents=True, exist_ok=True)
+            screenshot = directory / (nonce + '.jpg')
+            screenshot.write_bytes(subprocess.check_output(['adb', 'exec-out', 'su', '-c',
+                                                          'cat ' + remote_path], timeout=10))
+            print('NATIVE_FOREGROUND_VIDEO_ARTIFACT ' + str(screenshot.resolve()), flush=True)
+            # This acknowledges only transport of the owned target-app frame, not original-video identity.
+            adb('shell', 'am', 'broadcast', '-a', 'io.github.miaiplus.NATIVE_FOREGROUND_PIXELS_VERIFIED',
+                '-p', 'io.github.miaiplus', '--es', 'nonce', nonce)
+        if native_foreground_calculator and line.startswith('NATIVE_FOREGROUND_CALCULATOR_FRAME '):
+            fields = line.strip().split()
+            if (len(fields) != 3 or not re.fullmatch(r'[a-f0-9-]{36}', fields[1])
+                    or fields[2] != '/data/user/0/io.github.miaiplus/cache/native-foreground-probe/' + fields[1] + '.jpg'):
+                raise ValueError('invalid owned calculator frame handshake')
+            nonce, remote_path = fields[1:]
+            # This is an already captured frame from the exact owned foreground calculator session.
+            # Never substitute a physical-screen screenshot or capture another application's display.
+            directory = Path('work/native-foreground-calculator')
+            directory.mkdir(parents=True, exist_ok=True)
+            screenshot = directory / (nonce + '.jpg')
+            screenshot.write_bytes(subprocess.check_output(['adb', 'exec-out', 'su', '-c',
+                                                          'cat ' + remote_path], timeout=10))
+            proof = subprocess.run([*native_verifier, str(screenshot), '3973'], capture_output=True, timeout=15)
+            print('NATIVE_FOREGROUND_CALCULATOR_ARTIFACT ' + str(screenshot.resolve()), flush=True)
+            if proof.returncode == 0:
+                adb('shell', 'am', 'broadcast', '-a', 'io.github.miaiplus.NATIVE_FOREGROUND_PIXELS_VERIFIED',
+                    '-p', 'io.github.miaiplus', '--es', 'nonce', nonce)
+            elif proof.returncode != 1:
+                raise RuntimeError('owned calculator frame verifier unavailable')
+        if native_foreground and line.startswith('NATIVE_FOREGROUND_WAIT_OWNED_SCREEN '):
+            fields = line.strip().split()
+            if len(fields) != 2 or not re.fullmatch(r'[a-f0-9-]{36}', fields[1]):
+                raise ValueError('invalid owned conversation screenshot handshake')
+            nonce = fields[1]
+            directory = Path('work/native-foreground-video' if native_video else 'work/native-foreground-calculator')
+            directory.mkdir(parents=True, exist_ok=True)
+            screenshot = directory / ('owned-chat-' + nonce + '.png')
+            # The host has canceled this owned task and reopened/asserted its fresh topic; restoration waits for us.
+            screenshot.write_bytes(subprocess.check_output(['adb', 'exec-out', 'screencap', '-p'], timeout=10))
+            print('NATIVE_FOREGROUND_OWNED_CHAT_ARTIFACT ' + str(screenshot.resolve()), flush=True)
+            adb('shell', 'am', 'broadcast', '-a', 'io.github.miaiplus.DEBUG_PROBE', '-p', 'com.miui.voiceassist',
+                '--es', 'frame', 'MIAIPLUS_NATIVE_FOREGROUND_SCREENSHOT', '--es', 'nonce', nonce)
         if '--conversation-replies' in sys.argv and line.startswith('CONVERSATION_REPLY_SCREENSHOT '):
             fields = line.strip().split()
             if len(fields) != 3 or not re.fullmatch(r'[a-f0-9-]{36}', fields[2]):
@@ -159,11 +215,12 @@ try:
             failed = True
     process.wait()
 finally:
-    if native_background and process.poll() is None:
+    if (native_background or native_foreground) and process.poll() is None:
         # Cancel only this explicit probe. Keep instrumentation alive long enough for its owned cleanup/settings restore.
         try:
             subprocess.run(['adb', 'shell', 'am', 'broadcast', '-a', 'io.github.miaiplus.DEBUG_PROBE',
-                            '-p', 'com.miui.voiceassist', '--es', 'frame', 'MIAIPLUS_NATIVE_BACKGROUND_CANCEL'],
+                            '-p', 'com.miui.voiceassist', '--es', 'frame',
+                            'MIAIPLUS_NATIVE_FOREGROUND_CANCEL' if native_foreground else 'MIAIPLUS_NATIVE_BACKGROUND_CANCEL'],
                            check=False, capture_output=True, timeout=10)
         except subprocess.TimeoutExpired:
             print('Native probe cancel broadcast timed out; waiting for owned instrumentation cleanup', flush=True)

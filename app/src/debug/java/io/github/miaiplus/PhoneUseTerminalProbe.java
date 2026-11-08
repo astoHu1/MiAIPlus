@@ -50,7 +50,7 @@ final class PhoneUseTerminalProbe {
                 Object stale = execute(loader, tool, waitStep(session, 110 + retry));
                 permanentFailure(loader, stale);
                 terminal(loader, stale, "expired session retry");
-                check(text(stale).contains("过期"), "stale session lost its actionable cause");
+                check(text(stale).contains("过期"), "stale session lost its actionable cause: " + text(stale));
                 unchanged(context, task, postedAt);
             }
             Object malformed = execute(loader, tool, new JSONObject());
@@ -58,6 +58,7 @@ final class PhoneUseTerminalProbe {
             terminal(loader, malformed, "malformed request");
             unchanged(context, task, postedAt);
             stage(context, "TERMINAL_RETRIES_DONE");
+            finishWithoutAppGate(context, loader, tool);
 
             for (String ending : new String[]{"take_over", "ask_user", "finish"}) {
                 Object begin = execute(loader, tool, new JSONObject().put("goal", "仅等待自有测试页面并验证" + ending + "收尾"));
@@ -101,10 +102,40 @@ final class PhoneUseTerminalProbe {
                 terminalNotification(context, "手机操作已停止");
                 stage(context, exhaustedModel ? "TERMINAL_MODEL_EXHAUSTED_DONE" : "TERMINAL_MODEL_RELEASED_DONE");
             }
-            return "PROBE PASS: real foreground tool and native stop gate; final budget observation stays nonterminal; extra action, stale retries, malformed request and manual handoffs stop the turn; stale calls preserve task identity and notification post time; finish/handoff accepted after final observation; conversation guard allows 41/61/205 iterations; actual force-cleared guard and AgentContext.release clean unfinished screen sessions; no model request";
+            return "PROBE PASS: real foreground tool and native stop gate; final budget observation stays nonterminal; extra action, stale retries, malformed request and manual handoffs stop the turn; stale calls preserve task identity and notification post time; system foreground provenance remains visible; finish without app, with an unrelated app, or without message closes the observed-only task; finish/handoff accepted after final observation; conversation guard allows 41/61/205 iterations; actual force-cleared guard and AgentContext.release clean unfinished screen sessions; no model request";
         } finally {
             ready = null;
             context.getContentResolver().call(BridgeProvider.URI, "stop_screen", null, null);
+        }
+    }
+
+    private static void finishWithoutAppGate(Context context, ClassLoader loader, Object tool) throws Exception {
+        for (int variant = 0; variant < 3; variant++) {
+            Object begin = execute(loader, tool, new JSONObject().put("goal", "仅观察自有测试页面，验证完成动作兼容性，不打开其他应用"));
+            continuing(loader, begin);
+            String observation = text(begin);
+            String ownSession = session(observation);
+            check(observation.contains("系统观察：前台应用包名=io.github.miaiplus；"),
+                "finish fixture lost system foreground provenance");
+            check(observation.contains("包名来自系统窗口，不是图片识别"),
+                "finish fixture lost screenshot provenance explanation");
+            Bundle initial = context.getContentResolver().call(BridgeProvider.URI, "screen_state", null, null);
+            check(initial != null && initial.getBoolean("active") && !initial.getBoolean("completed"),
+                "finish compatibility task did not start active");
+            String task = initial.getString("screen_task");
+            check(task != null && ownSession.equals(initial.getString("native_session")),
+                "finish compatibility task/session identity missing");
+
+            JSONObject candidate = new JSONObject().put("action", "finish");
+            if (variant != 2) candidate.put("message", "自有测试页面已观察，兼容性验证结束");
+            if (variant == 1) candidate.put("app", "com.ss.android.ugc.aweme");
+            Object finished = execute(loader, tool, step(ownSession, candidate));
+            check(text(finished).startsWith("模型报告任务完成："),
+                "finish was gated by optional app/message metadata: " + text(finished));
+            Bundle state = ended(context);
+            check(task.equals(state.getString("screen_task")) && state.getString("native_session", "").isEmpty(),
+                "finish compatibility task lost its identity or retained a native session");
+            terminalNotification(context, "手机操作已结束");
         }
     }
 

@@ -28,13 +28,14 @@ final class NativeVoiceRoutingHook {
                 String requestId = (String)Reflector.callMethod(p.args[0], "getRequestId");
                 // MiClaw's own Final callback has no request id. It already starts its
                 // agent coroutine and must never be submitted a second time here.
-                if (!NativeChatRouting.requestsBackgroundTools(query) || requestId == null || requestId.isBlank()) return;
+                String requestedTool = NativeChatRouting.requestedPhoneTool(query);
+                if (requestedTool.isEmpty() || requestId == null || requestId.isBlank()) return;
                 Object manager = Reflector.getObjectField(p.thisObject, "c");
                 if (wasClaimed(manager, requestId)) { p.setResult(null); return; }
                 if (!ownsMainVoiceRequest(manager, requestId)) return;
                 try {
                     NativeModelHook.requestConfig(context);
-                    if (!NativePluginTools.availableForRouting(context, PhoneUseRouting.BACKGROUND_TOOL)) return;
+                    if (!NativePluginTools.availableForRouting(context, requestedTool)) return;
                 } catch (Exception unavailable) {
                     stopOwnedRequest(context, manager, requestId);
                     p.setResult(null);
@@ -51,7 +52,7 @@ final class NativeVoiceRoutingHook {
                         // while this final result waited for the UI thread.
                         if (!ownsMainVoiceRequest(manager, requestId)) return;
                         NativeModelHook.requestConfig(context);
-                        if (!NativePluginTools.availableForRouting(context, PhoneUseRouting.BACKGROUND_TOOL)) {
+                        if (!NativePluginTools.availableForRouting(context, requestedTool)) {
                             stopOwnedRequest(context, manager, requestId);
                             return;
                         }
@@ -60,9 +61,9 @@ final class NativeVoiceRoutingHook {
                         // Native support gating, stopEngine, history and floating UI
                         // handling remain in Xiaomi's own submission implementation.
                         Reflector.callMethod(sender, "sendToMiClaw", query, query, null, List.of());
-                        PhoneUseLog.event("native_voice_background_handoff");
+                        PhoneUseLog.event("native_voice_phone_handoff", "tool", requestedTool);
                     } catch (Exception failure) {
-                        PhoneUseLog.failure("native_voice_background_handoff", failure);
+                        PhoneUseLog.failure("native_voice_phone_handoff", failure);
                         stopOwnedRequest(context, manager, requestId);
                     } finally { Hooks.leave(); }
                 };
@@ -138,8 +139,8 @@ final class NativeVoiceRoutingHook {
                     if (cancelOwnedTask(manager, main, requestId, HostCompatibility.choose("w", "y"),
                         HostCompatibility.choose("x", "z"), HostCompatibility.choose("W", "Y")))
                         watchdog.post(() -> Toast.makeText(context,
-                            "后台任务未启动，请检查 MiAIPlus 后重试", Toast.LENGTH_LONG).show());
-                } catch (RuntimeException failure) { PhoneUseLog.failure("native_voice_background_cancel", failure); }
+                            "控屏任务未启动，请检查 MiAIPlus 后重试", Toast.LENGTH_LONG).show());
+                } catch (RuntimeException failure) { PhoneUseLog.failure("native_voice_phone_cancel", failure); }
                 finally { watchdog.removeCallbacks(timeout[0]); pending.finish(); }
             };
             // Xiaomi clears this handler queue when a newer recording starts. A
@@ -153,7 +154,7 @@ final class NativeVoiceRoutingHook {
             } finally {
                 if (!posted) { watchdog.removeCallbacks(timeout[0]); pending.expire(); }
             }
-        } catch (RuntimeException failure) { PhoneUseLog.failure("native_voice_background_cancel", failure); }
+        } catch (RuntimeException failure) { PhoneUseLog.failure("native_voice_phone_cancel", failure); }
     }
 
     static boolean cancelOwnedTask(Object manager, Object main, String requestId,

@@ -85,6 +85,8 @@ public final class NativeSessionReplanTest {
             session = field(NativeSession.class, "active").get(null);
             sessionRun = (RunState) field(session.getClass(), "run").get(session);
             assertContinuing(result);
+            assertTrue(result, result.contains("系统观察：前台应用包名=example.app"));
+            assertTrue(result, result.indexOf("系统观察：前台应用包名=example.app") < result.indexOf("上步动作="));
             assertTrue(result, result.contains("上步动作=none；执行状态=initial\n"));
             assertFalse(result, result.contains("执行状态=executed"));
             assertEquals(0, ScreenShadow.attempts);
@@ -270,6 +272,37 @@ public final class NativeSessionReplanTest {
             step(new JSONObject().put("action", "finish").put("message", "已从最后观察确认完成")));
         assertEquals(20, field(session.getClass(), "steps").getInt(session));
         assertEquals(1, ScreenShadow.executions);
+        assertClosed();
+    }
+
+    @Test public void currentPageCanFinishWithoutAnAppFieldOrAnUnnecessaryAction() throws Exception {
+        assertEquals("模型报告任务完成：当前页面已核对", step(new JSONObject().put("action", "finish")
+            .put("message", "当前页面已核对")));
+        assertEquals(0, ScreenShadow.executions);
+        assertEquals(0, field(session.getClass(), "steps").getInt(session));
+        assertClosed();
+    }
+
+    @Test public void finishDoesNotRequireANonemptyMessage() throws Exception {
+        assertEquals("模型报告任务完成：", step(new JSONObject().put("action", "finish").put("message", "")));
+        assertEquals(0, ScreenShadow.executions);
+        assertClosed();
+    }
+
+    @Test public void optionalFinishAppIsNotComparedWithTheCurrentWindowOwner() throws Exception {
+        ScreenShadow.current = ScreenService.Frame.physical(image, ROOT + BUTTON, 1000, 1000, "chat.viewer");
+        String result = step(new JSONObject().put("action", "finish").put("app", "example.app")
+            .put("message", "已完成跨应用任务"));
+        assertEquals("模型报告任务完成：已完成跨应用任务", result);
+        assertEquals(0, ScreenShadow.executions);
+        assertClosed();
+    }
+
+    @Test public void finishWithoutAppOrMessageRemainsAllowedAtExhaustedBudget() throws Exception {
+        field(session.getClass(), "steps").setInt(session, 20);
+        assertEquals("模型报告任务完成：完成", step(new JSONObject().put("action", "finish")));
+        assertEquals(20, field(session.getClass(), "steps").getInt(session));
+        assertEquals(0, ScreenShadow.executions);
         assertClosed();
     }
 

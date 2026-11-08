@@ -47,12 +47,12 @@ final class NativeChatRoutingHook {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
                 try {
                     var settings = NativeModelHook.requestConfig(context);
-                    boolean background = !settings.getBoolean("globalModel")
-                        && NativeChatRouting.requestsBackgroundTools((String)p.args[0])
-                        && NativePluginTools.availableForRouting(context, PhoneUseRouting.BACKGROUND_TOOL);
+                    String requestedTool = NativeChatRouting.requestedPhoneTool((String)p.args[0]);
+                    boolean phoneUse = !settings.getBoolean("globalModel") && !requestedTool.isEmpty()
+                        && NativePluginTools.availableForRouting(context, requestedTool);
                     // D()/C() runs synchronously inside this submission. Do not leave a flag on
                     // the callback or the main thread for a later, unrelated chat to consume.
-                    p.setObjectExtra("backgroundChatRoute", NativeChatRouting.begin(p.thisObject, background));
+                    p.setObjectExtra("phoneChatRoute", NativeChatRouting.begin(p.thisObject, phoneUse));
                 }
                 catch (Exception unavailable) {
                     p.setResult(null);
@@ -60,7 +60,7 @@ final class NativeChatRoutingHook {
                 }
             }
             @Override protected void afterHookedMethod(MethodHookParam p) {
-                if (p.getObjectExtra("backgroundChatRoute") instanceof NativeChatRouting.Scope scope) scope.close();
+                if (p.getObjectExtra("phoneChatRoute") instanceof NativeChatRouting.Scope scope) scope.close();
             }
         }));
         var route = callback.getDeclaredMethod(HostCompatibility.choose("C", "D"));

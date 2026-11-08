@@ -8,6 +8,7 @@
 
 | 范围 | 已有证据 | 边界与详细记录 |
 | --- | --- | --- |
+| 前台语音入口与截图归属 | 修订后 571 项 JVM／Robolectric、7 项 guard、双变体完整 Lint 零错误及各 APK 构建通过；实机原生与两种独立协议无 app 的 finish、前台信息和终态清理通过；当前真实模型完成图片宿主→计算器。保留路由修复，撤回 finish 包名硬门槛 | 抖音项未找到并确认原视频，未复现微信图片查看器；本轮官方模型因积分达上限未通过，初版完成拒绝记录不代表当前行为。见 [本轮记录](validation/native-foreground-grounding-2026-11-08.md) |
 | 官方模型后台控屏入口 | 556 项 JVM／Robolectric、双变体完整 Lint 零错误及各 APK 构建；官方 `mimo-omni` 真实文字、合成最终 ASR 结果及 API 102 热重载后不重启宿主的 ASR 复验均完成后台计算器任务；逐步图片匹配、主屏隔离、清理与配置恢复通过 | 双工具和后台输入／键盘隔离另有确定性回归；已安装优化 Preview 并确认原配置、服务健康连接与设备锁屏；未验证声学识别／唤醒词、最终聊天回复正文或任意任务成功率。见 [入口修复记录](validation/native-background-routing-2026-11-08.md) |
 | 内置 Termux 并行调用与失败恢复 | 538 项 JVM／Robolectric、双变体完整 Lint 零错误及各 APK 构建通过；API 37 优化 Preview 中小爱真实模型一批完成 6 条命令，实测峰值 4 条并发；退出码 7 后同轮执行了后备命令 | 本轮实机使用已运行的 Termux 服务；未验证并行冷启动或小米官方模型。见 [并行与恢复记录](validation/termux-parallel-2026-11-06.md) |
 | 设置 UI 重写与截图更新 | 540 项 JVM／Robolectric、Debug 完整 Lint、Debug／优化 Preview／Preview AndroidTest 构建通过；API 37 覆盖安装，插件导航专项通过 | 全部主图更新为当前源码合成截图；完整设备表单 Runner 未正常结束，不计通过，原业务配置与无障碍列表已核对恢复。见 [本轮记录](validation/settings-ui-rewrite-2026-11-06.md) |

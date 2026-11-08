@@ -31,7 +31,8 @@ public final class DeviceTestRunner extends HookProbeRunner {
             for (var task : getTargetContext().getSystemService(android.app.ActivityManager.class).getAppTasks()) {
                 var base = task.getTaskInfo().baseActivity;
                 if (base != null && base.getPackageName().equals("io.github.miaiplus")
-                    && base.getClassName().equals("io.github.miaiplus.FixtureActivity")) task.finishAndRemoveTask();
+                    && (base.getClassName().equals("io.github.miaiplus.FixtureActivity")
+                        || base.getClassName().equals("io.github.miaiplus.ScreenshotFixtureActivity"))) task.finishAndRemoveTask();
             }
         });
         super.finish(resultCode, results);
@@ -92,6 +93,14 @@ public final class DeviceTestRunner extends HookProbeRunner {
         } catch (java.io.FileNotFoundException expected) { }
     }
     @Override public void onStart() {
+        if ("true".equals(arguments.getString("native_foreground_video"))) {
+            NativeForegroundModelRunner.run(this, true,
+                "true".equals(arguments.getString("native_foreground_official")), true); return;
+        }
+        if ("true".equals(arguments.getString("native_foreground_model")) || "true".equals(arguments.getString("native_foreground_voice"))) {
+            NativeForegroundModelRunner.run(this, "true".equals(arguments.getString("native_foreground_voice")),
+                "true".equals(arguments.getString("native_foreground_official"))); return;
+        }
         if ("true".equals(arguments.getString("native_background_voice"))) { NativeBackgroundModelRunner.run(this, true); return; }
         if ("true".equals(arguments.getString("native_background_model"))) { NativeBackgroundModelRunner.run(this); return; }
         if ("true".equals(arguments.getString("termux_mcp"))) { TermuxMcpRunner.run(this, arguments); return; }

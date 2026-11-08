@@ -189,17 +189,21 @@ public final class BridgeProvider extends ContentProvider {
                 : new PhoneUseRouting.Request(query, false, ""); }
             catch (Exception e) { b.putString("error", publicError(e)); return b; }
             if (mode.equals("screen")) {
+                final boolean originalBackground;
                 try {
-                    boolean originalBackground = route.sourceTool().isEmpty() ? route.background()
-                        : PhoneUseRouting.background(route.sourceTool());
-                    if (config.planner.equals("native") && query != null && query.startsWith("MIAIPLUS:"))
-                        originalBackground = NativeSession.continuationBackground(query, Binder.getCallingUid(), route.sourceTool());
+                    originalBackground = config.planner.equals("native") && query != null && query.startsWith("MIAIPLUS:")
+                        ? NativeSession.continuationBackground(query, Binder.getCallingUid(), route.sourceTool())
+                        : route.sourceTool().isEmpty() ? route.background() : PhoneUseRouting.background(route.sourceTool());
+                } catch (Exception invalid) {
+                    b.putString("error", PhoneUseResult.stopped(publicError(invalid))); return b;
+                }
+                try {
                     String pluginId = originalBackground ? PluginSettings.BACKGROUND_ID : PluginSettings.FOREGROUND_ID;
                     if (!PluginSettings.load(getContext()).find(pluginId).enabled()) {
                         b.putString("error", PhoneUseResult.stopped("对应 Phone Use 插件已停用")); return b;
                     }
-                } catch (Exception invalid) {
-                    b.putString("error", PhoneUseResult.stopped("插件配置不可用、会话已失效或工具不匹配")); return b;
+                } catch (Exception unavailable) {
+                    b.putString("error", PhoneUseResult.stopped("插件配置不可用")); return b;
                 }
             }
             query = route.query();
