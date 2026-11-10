@@ -24,6 +24,7 @@ public final class Config {
     public final boolean enabled, globalModel, backgroundDisplay, phoneUseDetailedLog;
     public final String endpoint, apiKey, model, protocol, planner, api, reasoning;
     public final String phoneUsePermissionMode;
+    public final String speechReplyPolicy;
     public final int maxSteps;
     public final int conversationTimeoutMinutes;
     public final int displayWidth, displayHeight, displayDensity;
@@ -31,6 +32,7 @@ public final class Config {
     Config(SharedPreferences prefs) { this(prefs.getAll()); }
     Config(Map<String, ?> p) {
         enabled = Boolean.TRUE.equals(p.get("enabled"));
+        speechReplyPolicy = SpeechReplyPolicy.normalize(p.get(SpeechReplyPolicy.KEY));
         phoneUseDetailedLog = Boolean.TRUE.equals(p.get(PHONE_USE_LOG_KEY));
         // Default off: an existing installation keeps sending every task to the physical screen.
         backgroundDisplay = Boolean.TRUE.equals(p.get("backgroundDisplay"));

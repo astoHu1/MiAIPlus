@@ -66,6 +66,7 @@ public final class XiaoAiHook extends XposedModule {
             try { NativeModelHook.dispose(); } catch (Exception ignored) { }
             Hooks.unhookAll(); installed.clear();
             try { NativeConversationHook.dispose(); } catch (Exception ignored) { }
+            try { NativeSpeechPolicyHook.dispose(); } catch (Exception ignored) { }
             if (interaction != null && !interaction.isRunning()) try { interaction.dispose(); } catch (Exception ignored) { }
             report("hook failed, rolled back: " + failure.getClass().getSimpleName() + " at " + stage
                 + (binding.isEmpty() ? "" : " (" + binding + ")"));
@@ -89,6 +90,7 @@ public final class XiaoAiHook extends XposedModule {
             NativePluginTools.dispose();
             NativeTurnLifecycle.dispose();
             NativeConversationHook.dispose();
+            NativeSpeechPolicyHook.dispose();
             NativeModelHook.dispose();
             try { Class.forName("io.github.miaiplus.HookSmokeProbe").getMethod("dispose", Context.class).invoke(null, context); }
             catch (ClassNotFoundException expected) { }
@@ -279,6 +281,8 @@ public final class XiaoAiHook extends XposedModule {
         NativeConversationLimitsHook.install(context, loader, installed);
         HostTrace.stage("conversation");
         NativeConversationHook.install(context, loader, installed);
+        HostTrace.stage("speech_reply_policy");
+        NativeSpeechPolicyHook.install(context, loader, installed);
         HostTrace.stage("model");
         NativeModelHook.install(context, loader, installed);
         HostTrace.stage("probes");

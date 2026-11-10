@@ -90,6 +90,8 @@ Provider 在创建任务或收起界面前校验续调的会话、UID、期限�
 
 文字提交的路由标记按当前发送回调和同步调用作用域保存，提交结束即恢复，不能影响随后无关请求；官方模式枚举与持久化不变。原发送函数继续完成设备支持、附件、停止旧会话和卡片／历史处理，然后进入已适配的 OSBot 模型客户端。读取模型配置或对应插件目录失败时显式停止本次提交并提示，避免 Hook 异常后退回旧后端；插件已停用与目录不可用分别处理，不使用缓存目录放行。
 
+系统不是 `zh-CN` 且自有前台控屏插件已启用时，`NativePhoneLanguageRouting` 额外将简体／繁体中文及英文的直接打开、点击、滑动、输入等明确操作送到同一 MiClaw 入口，避免落回原生 ActionNodes 的简体中文限制；提问、教程、否定和普通技能不因语言改变路由。该规则不修改全局 locale 或原生执行器，不能越过设备支持或模块安全限制；其他语言自由表达仍受意图匹配限制。见 [语言边界](phone-use-language.md)。
+
 最终 ASR 有独立的 `NativeVoiceRoutingHook`，不能由文字发送 Hook 的覆盖范围推定。它仅移交符合上述前台或后台操作规则、有非空 requestId、且仍属于当前 `main` 任务的 `VOICE` 请求：识别事件 ID 必须精确匹配，实际 SpeechEngine 必须同时 `isMainEngine` 和 `isRequesting`；最终识别停止录音不等于请求结束。旧 requestInfo map 在真实 ASR 时可为空，不以缺少记录拒绝；已有 `FINISH` 记录仍拒绝。主线程执行前重新核对归属与配置，再调用当前原生浮窗输入回调的 `sendToMiClaw`，沿用宿主支持检查、停止旧引擎、历史与界面处理。无 requestId 的 MiClaw 自身 Final 不再提交；同一管理器的重复 Final 不重复取消或启动，已取消／结束／被新录音替换的请求不能重启工具。移交失败只停止仍归属本次 ID 的主任务，不取消后续录音。2026-11-08 官方 `mimo-omni` 的真实文字提交、合成最终 ASR 结果提交及 API 102 热重载后不重启宿主的 ASR 复验均完成后台计算器任务，详见 [验收记录](validation/native-background-routing-2026-11-08.md)；未验证声学识别／唤醒词及最终自然语言回复正文。
 
 ## 可选全局主模型替换
@@ -206,3 +208,11 @@ Phone Use 继续沿用原 `controlApp`、会话来源、确认、PageGuard、截
 内置 Termux MCP 复用 MCP 的 UID 校验、取消和结果边界，使用独立队列，最多 4 个 worker 和 12 个在途任务（含排队）。各调用独立握手，不共享 shell 会话；排队、启动和执行共用原有时限，取消后仍等待实际清理。2026-11-11 增加独立受管适配器，保留上游策略检查，原始命令经 Bash 执行并合并 stdout/stderr；同步时限可配到 40 秒，后台任务最长 120 秒，最多四条执行、十六条记录。后台任务通过独立 job_status/job_cancel 查询或取消，旧配置需重新配置服务，详见 [执行契约](termux-tools.md)。内置 Termux 的 MCP `isError=true` 表示工具报告失败，受限的诊断作为模型观察结果交回小爱；连接、配置失效和取消仍是不可自动重试的桥接失败。它有固定工具名及私有回环配置，不可编辑为远程端点。设置页显式安装 APK 内的上游 Python 程序，由 Termux 在自身目录中解包；模块进程只通过 root 调用固定 Android 服务启动命令，不把模型参数交给 root，不打开 Termux 的外部命令权限。按需启动默认关闭，开启后只在工具调用前检查服务、必要时后台拉起；并行调用等待同一个启动过程，服务须通过基于安装密钥的就绪验证，执行前重验配置和锁屏状态。
 
 2026-10-28 独立包在小爱 8.3.30.4420 实测通过统一工具注册、受控合成 MCP 服务调用，以及前台／空后台屏的截图、同会话续调与结束，详见 [独立包实机验证](validation/plugin-platform-device-2026-10-28.md)。随后固定上游 `termuxgpt/termux-mcp` 服务由真实 Termux UID 运行，模块 Provider 完成 shell 环境、中文文件管道及失败语义验证；小爱当前模块工具代理另行执行固定身份命令，详见 [Termux 实机验证](validation/termux-mcp-2026-10-28.md)。该轮使用单独部署的服务；测试独立 HOME 仅隔离状态，不限制 Termux UID 的 shell 能力；模块对 MCP `isError` 返回脱敏失败，不透传错误正文。这些结果不代表任意生产 MCP、真实模型自主选择、复杂应用任务或其他小爱版本已经验收。架构、操作步骤、能力限制与后续适配原则见 [Plugin 平台](plugin-platform.md) 和 [MCP 调研](plugin-platform-mcp-research.md)。
+
+## 请求级语音回复策略
+
+`NativeSpeechPolicyHook` 在两版精确适配宿主的语音／文字请求入口给 `RequestInfo` 绑定输入来源；手势识屏使用实际的 `com.miui.voiceassist.query&&screen_recognition` 或 `screen_recog_nlp_with_ref` 来源，而不按长按／双击手势名称猜测。识屏页的麦克风来源 `screen_recognition_query_origin` 仍是语音输入。模块将最终 ASR 转交原生 MiClaw 时用同步作用域保留语音身份，避免 `sendToMiClaw` 内部固定写入 `QueryEditBar` 导致误判。对于 `need_nlp=false` 且 `need_tts=false` 的纯识别请求，不为了允许语音回复而开启 TTS，以保留宿主 `startAsr` 初始化分支；后续真正提交回复请求时再应用语音策略。
+
+配置的三态为 `text_only`、默认的 `follow_input`、关闭覆盖的 `host_default`。`conversation_settings` 仅追加脱敏策略字段；新请求及播放判断实时读取，不依赖控屏开关，不写宿主持久化 TTS 偏好。请求级覆盖同步到 `need_tts` 与最终 `Execution.RequestControl`：静音时合并 `TTS`、`TTS_STREAM`、`LLM_TTS_AUDIO` 三种音频限制，保留原有禁用项；允许语音时只移除这三项。保留 NLP 等其他限制、环境字段和原 context header，避免小爱待机模式或全局 TTS 模式覆盖识屏的静音要求。
+
+MiClaw 有独立流式语音判断，不能仅修改 `RequestInfo.needTts`。模块在真实 engine `startSpeech`／`startSpeechWithoutVoice` 同步初始化会话时，通过 `markMiClawResult` 记录有界的 `dialogId → 输入来源`，再覆盖 `StreamSynthesizeConfig.isEnabled(dialogId)`；不同请求和后来的文字／语音输入不会污染此前会话。未知或已清理的会话保留宿主判断。动作朗读的终端入口对已归属会话的静音策略同样生效，包括原先跳过全局 `needTts` 的 linking 分支。热重载及安装失败回滚清理请求弱引用、会话映射和同步作用域。关闭覆盖时各个入口保持原逻辑。

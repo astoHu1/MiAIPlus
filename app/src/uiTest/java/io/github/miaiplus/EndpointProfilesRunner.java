@@ -47,6 +47,117 @@ final class EndpointProfilesRunner {
 
     static void runLogs(Instrumentation test) { new EndpointProfilesRunner(test).runLogs(); }
 
+    static void runMenus(Instrumentation test) { new EndpointProfilesRunner(test).runMenus(); }
+
+    /** Synthetic UI-only menu checks: no model requests, phone-use execution or display probes. */
+    private void runMenus() {
+        var context = test.getTargetContext();
+        var prefs = Config.prefs(context);
+        Map<String, ?> original = prefs.getAll();
+        Bundle result = new Bundle();
+        int code = Activity.RESULT_CANCELED;
+        String originalNight = null;
+        boolean changed = false;
+        try {
+            Bundle screen = context.getContentResolver().call(BridgeProvider.URI, "screen_state", null, null);
+            Bundle health = context.getContentResolver().call(BridgeProvider.URI, "accessibility_health", null, null);
+            check(screen != null && !screen.getBoolean("active") && health != null
+                && !health.getBoolean("busy") && !health.getBoolean("preparing"), "Stop active work before menu tests");
+            String nightReport = shell("cmd uimode night").trim();
+            originalNight = nightReport.substring(nightReport.lastIndexOf(':') + 1).trim();
+            check(Set.of("auto", "no", "yes", "custom", "custom_schedule", "custom_bedtime").contains(originalNight),
+                "Cannot preserve original night mode: " + nightReport);
+            changed = true;
+            check(prefs.edit().clear().putBoolean("enabled", true).putString("protocol", "phone_use")
+                .putString("speechReplyPolicy", "follow_input").commit(), "Synthetic menu fixture save failed");
+            for (boolean dark : new boolean[]{false, true}) {
+                shell("cmd uimode night " + (dark ? "yes" : "no"));
+                SystemClock.sleep(500);
+                activity = (MainActivity) test.startActivitySync(new Intent(context, MainActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
+                onMain(() -> state = new ViewModelProvider(activity).get(SettingsState.class));
+                settle();
+                final boolean expectedDark = dark;
+                waitFor(() -> ((activity.getResources().getConfiguration().uiMode
+                    & android.content.res.Configuration.UI_MODE_NIGHT_MASK)
+                    == android.content.res.Configuration.UI_MODE_NIGHT_YES) == expectedDark, "Night mode did not apply");
+                click("插件");
+                click("控屏配置");
+                check(find(n -> "动作协议".equals(text(n))) != null, "Control page did not open");
+                click("动作协议");
+                checkMenuOptions("Phone Use", "AutoGLM");
+                capture("control-protocol-menu-" + (dark ? "dark" : "light") + "-device");
+                click("AutoGLM");
+                waitFor(() -> "autoglm".equals(new Config(context).protocol), "Protocol menu selection did not save");
+                test.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK); settle();
+                click("首页");
+                click("语音回复");
+                checkMenuOptions("仅文字", "跟随输入", "小爱默认");
+                capture("speech-reply-menu-" + (dark ? "dark" : "light") + "-device");
+                click("仅文字");
+                waitFor(() -> "text_only".equals(prefs.getString("speechReplyPolicy", null)), "Text-only policy did not save");
+                click("语音回复"); click("小爱默认");
+                waitFor(() -> "host_default".equals(prefs.getString("speechReplyPolicy", null)), "Host-default policy did not save");
+                click("语音回复"); click("跟随输入");
+                waitFor(() -> "follow_input".equals(prefs.getString("speechReplyPolicy", null)), "Follow-input policy did not save");
+                check(state.getJob() == null && state.getVirtualScreen().getReport() == null,
+                    "Menu checks started model work or a display probe");
+                onMain(activity::finish); test.waitForIdleSync(); activity = null;
+                prefs.edit().putString("protocol", "phone_use").commit();
+            }
+            result.putString("stream", "PASS: light/dark control protocol and three-policy speech menus, "
+                + "visible option bounds, real selection persistence, four synthetic screenshots; no model requests or display probes.\n");
+            code = Activity.RESULT_OK;
+        } catch (Throwable failure) {
+            try { if (activity != null) capture("menus-ui-failure"); } catch (Exception ignored) { }
+            result.putString("stream", "FAIL: " + android.util.Log.getStackTraceString(failure));
+        } finally {
+            if (activity != null) { onMain(activity::finish); test.waitForIdleSync(); }
+            if (changed) {
+                var editor = prefs.edit().clear();
+                for (var entry : original.entrySet()) {
+                    Object value = entry.getValue(); String key = entry.getKey();
+                    if (value instanceof String v) editor.putString(key, v);
+                    else if (value instanceof Boolean v) editor.putBoolean(key, v);
+                    else if (value instanceof Integer v) editor.putInt(key, v);
+                    else if (value instanceof Long v) editor.putLong(key, v);
+                    else if (value instanceof Float v) editor.putFloat(key, v);
+                    else if (value instanceof Set<?>) {
+                        @SuppressWarnings("unchecked") Set<String> strings = (Set<String>) value;
+                        editor.putStringSet(key, strings);
+                    }
+                }
+                if (!editor.commit() || !original.equals(prefs.getAll())) {
+                    code = Activity.RESULT_CANCELED; result.putString("stream", "FAIL: Menu settings restore failed\n");
+                }
+            }
+            if (originalNight != null) {
+                try {
+                    shell("cmd uimode night " + originalNight);
+                    check(shell("cmd uimode night").trim().endsWith(": " + originalNight), "Night mode restore did not match");
+                } catch (Throwable failure) {
+                    code = Activity.RESULT_CANCELED; result.putString("stream", "FAIL: Night mode restore: " + failure + "\n");
+                }
+            }
+            if (code == Activity.RESULT_OK) result.putString("stream", result.getString("stream") + "Original settings and night mode restored and verified.\n");
+        }
+        test.finish(code, result);
+    }
+
+    private void checkMenuOptions(String... labels) {
+        for (String label : labels) {
+            var node = find(n -> label.equals(text(n)) && n.isVisibleToUser());
+            check(node != null, "Menu option missing: " + label);
+            Rect bounds = new Rect(); node.getBoundsInScreen(bounds);
+            Bitmap screenshot = ui.takeScreenshot();
+            check(screenshot != null, "Menu screenshot unavailable");
+            try {
+                check(bounds.width() > 0 && bounds.height() > 0 && bounds.left >= 0 && bounds.top >= 0
+                    && bounds.right <= screenshot.getWidth() && bounds.bottom <= screenshot.getHeight(), "Menu option clipped: " + label);
+            } finally { screenshot.recycle(); }
+        }
+    }
+
     /** Run after authorized phone-use fixtures so the journal contains real module + host events. */
     private void runLogs() {
         var context = test.getTargetContext();

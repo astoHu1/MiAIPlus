@@ -40,6 +40,7 @@ process = subprocess.Popen(['adb', 'shell', 'am', 'instrument', '--user', '0', '
     '-e', 'profiles', str('--profiles' in sys.argv).lower(),
     '-e', 'logs', str('--logs' in sys.argv).lower(),
     '-e', 'diagnostics', str('--diagnostics' in sys.argv).lower(),
+    '-e', 'speech_policy', str('--speech-policy' in sys.argv).lower(),
     '-e', 'api', 'responses' if '--responses' in sys.argv else 'chat',
     '-e', 'reply_actions', str('--reply-actions' in sys.argv or '--reply-actions-chat' in sys.argv or '--reply-actions-current-config' in sys.argv).lower(),
     '-e', 'reply_actions_api', 'chat' if '--reply-actions-chat' in sys.argv else 'responses',

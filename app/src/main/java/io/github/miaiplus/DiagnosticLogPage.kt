@@ -33,7 +33,6 @@ import kotlinx.coroutines.delay
 import org.json.JSONObject
 import top.yukonga.miuix.kmp.basic.*
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
-import top.yukonga.miuix.kmp.overlay.OverlayListPopup
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /** Toolbar actions stay out of the log list, as in the on-device LSPosed viewer. */
@@ -59,7 +58,7 @@ internal fun DiagnosticLogActions(settings: SettingsState, follow: Boolean, onFo
         IconButton(onClick = { menu = !menu }, modifier = Modifier.size(48.dp)) {
             Icon(SettingsIcons.More, "更多", Modifier.size(24.dp))
         }
-        OverlayListPopup(show = menu, alignment = PopupPositionProvider.Align.End, enableWindowDim = false,
+        SettingsListPopup(show = menu, alignment = PopupPositionProvider.Align.End,
             onDismissRequest = { menu = false }) {
             ListPopupColumn {
                 val labels = listOf("详细日志", "自动刷新", "刷新", "清空")

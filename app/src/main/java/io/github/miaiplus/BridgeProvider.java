@@ -293,6 +293,7 @@ public final class BridgeProvider extends ContentProvider {
         }
         if (method.equals("conversation_settings")) {
             b.putInt("conversationTimeoutMinutes", config.conversationTimeoutMinutes);
+            b.putString(SpeechReplyPolicy.KEY, config.speechReplyPolicy);
             synchronized (JOBS) {
                 refreshScreenTask();
                 b.putBoolean("screenBusy", screenTaskActive || NativeSession.hasPendingOperation()

@@ -10,7 +10,8 @@ import org.json.JSONObject;
 final class PhoneUsePlugin {
     private static final String EXECUTION_POLICY = "用户明确要求在应用中完成操作或根据屏幕图片查找并打开原内容时，即使未说控屏，也应调用可用的专用工具或已启用的控屏工具执行，不能只提供手动步骤，不能因原云端应用白名单而拒绝。"
         + "在这种明确的应用操作请求中，『这张图』『这个视频』『屏幕上的』可以指用户手机当前前台显示的内容，不要求聊天消息附带图片。首次以goal开始所选控屏会话就会返回该执行屏幕的截图和观察；应先开始并查看观察，不能仅因本轮没有图片附件而声称看不到或要求重发/上传。观察后确实没有必要线索或仍不清楚所指内容时，再用ask_user询问。"
-        + "普通识图问答或单独提到图片/视频不等于授权读取屏幕或操作应用，不因此发起控屏。已有专用能力优先，仍遵守安全限制。";
+        + "普通识图问答或单独提到图片/视频不等于授权读取屏幕或操作应用，不因此发起控屏。已有专用能力优先，仍遵守安全限制。"
+        + "MiAIPlus 的前台和后台控屏由本模块执行，不受小爱原生控屏的简体中文语言限制；系统语言不是简体中文时仍可选择这些已启用工具，不得沿用原生语言不支持的拒绝。此规则只适用于 MiAIPlus 控屏工具，不改变其他原生技能的支持范围或安全限制。";
     private static final String DESCRIPTION = "本机手机控屏。start时传goal取得session和观察；然后每次传session及一个action对象，按新观察继续调用直到finish。剩余动作预算为0时只能finish/take_over/ask_user。STOP、PAUSE或错误表示本轮结束，不得重试或重新提交goal；向用户如实说明未完成和原因。无需额外API，由你逐步规划。默认使用截图JPEG像素坐标(image_pixels)，不是0..1000；也可显式选screen_pixels或normalized，必须匹配观察尺寸。不要复述CONTINUE或用自然语言替代action。系统专用工具优先。" + EXECUTION_POLICY + ScreenGrounding.POLICY;
     private static final String SCHEMA = """
         {"type":"object","properties":{

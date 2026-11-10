@@ -128,6 +128,8 @@ final class NativeVoiceSubmissionProbe {
     private static String stage(Object coordinator, String wakeup) {
         boolean mainPresent = false, wakeupOwned = false, voice = false, eventPresent = false;
         boolean requesting = false, keyPresent = false;
+        boolean duplexEventPresent = false, tts = false, nlp = false, handlerAlive = false;
+        String handlerState = "absent";
         int mapSize = -1;
         String state = "absent";
         try {
@@ -135,12 +137,21 @@ final class NativeVoiceSubmissionProbe {
             Object main = tasks instanceof Map<?, ?> map ? map.get("main") : null;
             mainPresent = main != null;
             if (main != null) {
+                Object handler = Reflector.getObjectField(main, "e");
+                if (handler instanceof android.os.Handler taskHandler) {
+                    Thread thread = taskHandler.getLooper().getThread();
+                    handlerAlive = thread.isAlive();
+                    handlerState = thread.getState().name();
+                }
                 Object request = Reflector.getObjectField(main, "g");
                 wakeupOwned = request != null && wakeup.equals(Reflector.getObjectField(request, HostCompatibility.choose("D", "F")));
                 Object event = null;
                 if (request != null) {
                     voice = "VOICE".equals(String.valueOf(Reflector.getObjectField(request, HostCompatibility.choose("W", "Y"))));
                     event = Reflector.getObjectField(request, HostCompatibility.choose("w", "y"));
+                    duplexEventPresent = Reflector.getObjectField(request, HostCompatibility.choose("x", "z")) != null;
+                    tts = Boolean.TRUE.equals(Reflector.getObjectField(request, HostCompatibility.choose("h", "j")));
+                    nlp = Boolean.TRUE.equals(Reflector.getObjectField(request, HostCompatibility.choose("i", "k")));
                 }
                 eventPresent = event != null;
                 Object engine = Reflector.callMethod(main, "getEngine");
@@ -164,7 +175,8 @@ final class NativeVoiceSubmissionProbe {
         } catch (RuntimeException unavailable) { state = "diagnostic-unavailable"; }
         return "mainPresent=" + mainPresent + ",wakeupOwned=" + wakeupOwned + ",VOICE=" + voice
             + ",eventPresent=" + eventPresent + ",requesting=" + requesting + ",mapSize=" + mapSize
-            + ",keyPresent=" + keyPresent + ",state=" + state;
+            + ",keyPresent=" + keyPresent + ",state=" + state + ",duplexEventPresent=" + duplexEventPresent
+            + ",tts=" + tts + ",nlp=" + nlp + ",handlerAlive=" + handlerAlive + ",handlerState=" + handlerState;
     }
 
     private static void check(boolean condition, String message) {

@@ -8,6 +8,7 @@
 
 | 范围 | 已有证据 | 边界与详细记录 |
 | --- | --- | --- |
+| 菜单层次、语音回复与非简中控屏 | 615 项 JVM／Robolectric、双变体完整 Lint 无错误及各 APK 构建；优化 Preview 深浅色菜单、三档语音真实请求／流式门禁、英文及繁体系统入口、英文系统真实模型计算器任务通过 | 语音 fixture 不播放音频、不测声学；旧小爱版本未降级实机复验，其他语言自由表达及任意任务质量未全面验证。见 [本轮记录](validation/menu-speech-language-2026-11-11.md) |
 | Termux Agent 可用性 | 604 项 JVM／Robolectric、12 项 Python、双变体完整 Lint 零错误及各 APK 构建；真实 Termux／模块桥接和小爱实际代理的原文、Bash、超时、后台任务、取消、大输出与策略拒绝通过 | 报告中的 P0 原始故障未在旧服务直接调用中重现；小爱原生 CLI 不在仓库内。已安装优化 Preview、保留用户配置并锁屏。见 [本轮记录](validation/termux-ux-2026-11-11.md) |
 | 通用详细日志与宿主拒绝诊断 | 602 项 JVM／Robolectric、21 项 Python、双变体完整 Lint 零错误及各 APK 构建；API 37 mock 宿主／前后台／双工具、日志开关和真实 ZIP 导出通过 | 宿主 73 个 Hook 就绪、三个可选观察器均安装；未复现 HyperOS 3 用户故障，错误码映射不证明拒绝根因。见 [本轮记录](validation/diagnostics-2026-11-10.md) |
 | 前台语音入口与截图归属 | 修订后 571 项 JVM／Robolectric、7 项 guard、双变体完整 Lint 零错误及各 APK 构建通过；实机原生与两种独立协议无 app 的 finish、前台信息和终态清理通过；当前真实模型完成图片宿主→计算器。保留路由修复，撤回 finish 包名硬门槛 | 抖音项未找到并确认原视频，未复现微信图片查看器；本轮官方模型因积分达上限未通过，初版完成拒绝记录不代表当前行为。见 [本轮记录](validation/native-foreground-grounding-2026-11-08.md) |

@@ -107,7 +107,7 @@ public final class BridgeProviderConversationSettingsTest {
         field(BridgeProvider.class, "screenTaskId").set(null, "private-task-id");
         field(BridgeProvider.class, "screenResult").set(null, "private screen contents");
         Bundle result = settings();
-        assertEquals(Set.of("conversationTimeoutMinutes", "screenBusy"), result.keySet());
+        assertEquals(Set.of("conversationTimeoutMinutes", "screenBusy", SpeechReplyPolicy.KEY), result.keySet());
         assertFalse(result.getBoolean("screenBusy"));
     }
 

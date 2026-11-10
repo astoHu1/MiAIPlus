@@ -132,6 +132,10 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
     }
 
     fun setOption(key: String, value: Any): Boolean = attempt {
+        require(key != SpeechReplyPolicy.KEY || value == SpeechReplyPolicy.TEXT_ONLY
+            || value == SpeechReplyPolicy.FOLLOW_INPUT || value == SpeechReplyPolicy.HOST_DEFAULT) {
+            "请选择有效的语音回复策略"
+        }
         require(key != Config.PHONE_USE_PERMISSION_MODE_KEY || value == Config.PHONE_USE_PERMISSION_MANUAL
             || value == Config.PHONE_USE_PERMISSION_AUTO || value == Config.PHONE_USE_PERMISSION_YOLO) {
             "请选择 Manual、Auto 或 YOLO 权限预设"

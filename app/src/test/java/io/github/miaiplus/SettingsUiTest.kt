@@ -187,6 +187,43 @@ class SettingsUiTest {
         }
     }
 
+    @Test fun controlProtocolMenuKeepsNativeSelectionAndFitsDarkNarrowLargeText() {
+        val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
+        val project = generateSequence(File(System.getProperty("user.dir"))) { it.parentFile }
+            .first { File(it, "settings.gradle").isFile }
+        val screenshots = File(project, "work/menu-ui-20261111").apply { mkdirs() }
+        fun captureMenu(name: String) {
+            compose.onNodeWithText("动作协议").performScrollTo().performClick()
+            val option = compose.onAllNodesWithText("AutoGLM").onLast()
+            option.assertIsDisplayed()
+            val menuLabel = option.getBoundsInRoot()
+            val root = compose.onRoot().getBoundsInRoot()
+            check(menuLabel.left >= root.left && menuLabel.right <= root.right)
+            compose.waitForIdle()
+            val bitmap = compose.onRoot().captureToImage().asAndroidBitmap()
+            File(screenshots, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            bitmap.recycle()
+        }
+        openControlPage()
+        captureMenu("control-protocol-light")
+        compose.onNodeWithText("AutoGLM").performClick()
+        compose.runOnIdle { assertEquals("autoglm", state.config.protocol) }
+        RuntimeEnvironment.setQualifiers("+night")
+        compose.activityRule.scenario.recreate()
+        captureMenu("control-protocol-dark")
+        compose.runOnIdle { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        RuntimeEnvironment.setQualifiers("+w320dp-notnight")
+        RuntimeEnvironment.setFontScale(1.5f)
+        try {
+            compose.activityRule.scenario.recreate()
+            captureMenu("control-protocol-narrow-large-text")
+            compose.runOnIdle { assertEquals(1.5f, compose.activity.resources.configuration.fontScale, 0.01f) }
+        } finally {
+            RuntimeEnvironment.setFontScale(1f)
+            RuntimeEnvironment.setQualifiers("+w393dp-notnight")
+        }
+    }
+
     @After fun clearFixturePreferences() {
         // AndroidViewModel's factory can retain its Application between Robolectric cases.
         // Clean the same preferences owner used by the UI, including after a failed test.

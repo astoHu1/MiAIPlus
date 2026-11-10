@@ -11,10 +11,12 @@ public final class SettingsUiRunner extends Instrumentation {
     private boolean performance;
     private boolean logs;
     private boolean plugins;
+    private boolean menus;
     @Override public void onCreate(Bundle arguments) {
         super.onCreate(arguments);
         logs = arguments != null && arguments.getString("logs", "false").equals("true");
         plugins = arguments != null && arguments.getString("plugins", "false").equals("true");
+        menus = arguments != null && arguments.getString("menus", "false").equals("true");
         virtual = arguments != null && arguments.getString("virtual", "false").equals("true");
         virtualIdle = arguments != null && arguments.getString("virtualIdle", "false").equals("true");
         direct = arguments != null && arguments.getString("direct", "false").equals("true");
@@ -22,7 +24,8 @@ public final class SettingsUiRunner extends Instrumentation {
         start();
     }
     @Override public void onStart() {
-        if (plugins) EndpointProfilesRunner.runPlugins(this);
+        if (menus) EndpointProfilesRunner.runMenus(this);
+        else if (plugins) EndpointProfilesRunner.runPlugins(this);
         else if (logs) EndpointProfilesRunner.runLogs(this);
         else if (performance) EndpointProfilesRunner.runPerformance(this);
         else if (direct) EndpointProfilesRunner.runDirect(this);

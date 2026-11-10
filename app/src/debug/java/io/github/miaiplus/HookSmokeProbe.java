@@ -143,6 +143,7 @@ public final class HookSmokeProbe {
                     try {
                         String token = intent.getStringExtra("frame");
                         report = "MIAIPLUS_LAUNCH_UI".equals(token) ? launchUi(context, loader)
+                            : "MIAIPLUS_SPEECH_POLICY".equals(token) ? SpeechPolicyProbe.run(context, loader)
                             : "MIAIPLUS_FOCUS_UI".equals(token) ? focusUi(context, loader)
                             : "MIAIPLUS_FOCUS_POPUP_UI".equals(token) ? ConversationContinuityProbe.focusPopupUi(context, loader)
                             : "MIAIPLUS_DUAL_TOOLS".equals(token) ? dualTools(context, loader)
@@ -155,6 +156,7 @@ public final class HookSmokeProbe {
                             : "MIAIPLUS_NATIVE_FOREGROUND_MODEL".equals(token) ? NativeForegroundModelProbe.run(context, loader)
                             : "MIAIPLUS_NATIVE_FOREGROUND_VOICE".equals(token) ? NativeForegroundModelProbe.run(context, loader, true)
                             : "MIAIPLUS_NATIVE_FOREGROUND_VIDEO".equals(token) ? NativeForegroundModelProbe.run(context, loader, true, true)
+                            : "MIAIPLUS_PHONE_LANGUAGE".equals(token) ? NativePhoneLanguageProbe.run(context, loader)
                             : "MIAIPLUS_NATIVE_BACKGROUND_MODEL".equals(token) ? NativeBackgroundModelProbe.run(context, loader)
                             : "MIAIPLUS_NATIVE_BACKGROUND_VOICE".equals(token) ? NativeBackgroundModelProbe.run(context, loader, true)
                             : "MIAIPLUS_REPLY_ACTIONS".equals(token) ? ReplyActionsProbe.run(context, loader)

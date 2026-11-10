@@ -12,7 +12,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import top.yukonga.miuix.kmp.basic.*
-import top.yukonga.miuix.kmp.overlay.OverlayListPopup
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /** Settings selectors retain Miuix positioning and selection without a dim layer. */
@@ -48,10 +47,9 @@ internal fun OverlayDropdownPreference(
                 fontSize = MiuixTheme.textStyles.body2.fontSize, textAlign = TextAlign.End,
                 modifier = Modifier.padding(end = 8.dp).align(Alignment.CenterVertically).weight(1f, fill = false))
             DropdownArrowEndAction(actionColor = color)
-            OverlayListPopup(
+            SettingsListPopup(
                 show = expanded && active,
                 alignment = PopupPositionProvider.Align.End,
-                enableWindowDim = false,
                 onDismissRequest = { expanded = false },
                 onDismissFinished = { held = false },
             ) {

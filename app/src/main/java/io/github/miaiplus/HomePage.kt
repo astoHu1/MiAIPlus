@@ -28,6 +28,15 @@ internal fun HomePage(state: SettingsState, nav: Navigation) {
         ArrowPreference(title = "控屏", summary = controlSummary(state), onClick = { nav.open(Route.Control) })
     }
     Section("对话") {
+        val speechPolicies = listOf(SpeechReplyPolicy.TEXT_ONLY, SpeechReplyPolicy.FOLLOW_INPUT, SpeechReplyPolicy.HOST_DEFAULT)
+        OverlayDropdownPreference(title = "语音回复", items = listOf("仅文字", "跟随输入", "小爱默认"),
+            selectedIndex = speechPolicies.indexOf(state.config.speechReplyPolicy).coerceAtLeast(0),
+            summary = when (state.config.speechReplyPolicy) {
+                SpeechReplyPolicy.TEXT_ONLY -> "所有回复均不自动朗读"
+                SpeechReplyPolicy.FOLLOW_INPUT -> "语音输入时朗读，文字与手势识屏保持静音"
+                else -> "不更改小爱的回复策略"
+            },
+            onSelectedIndexChange = { state.setOption(SpeechReplyPolicy.KEY, speechPolicies[it]) })
         ArrowPreference(title = "自动新建对话", summary = if (state.config.conversationTimeoutMinutes == 0)
             "已关闭" else "闲置 ${state.config.conversationTimeoutMinutes} 分钟后",
             onClick = {

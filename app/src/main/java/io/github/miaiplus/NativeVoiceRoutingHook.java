@@ -28,11 +28,13 @@ final class NativeVoiceRoutingHook {
                 String requestId = (String)Reflector.callMethod(p.args[0], "getRequestId");
                 // MiClaw's own Final callback has no request id. It already starts its
                 // agent coroutine and must never be submitted a second time here.
-                var decision = NativeChatRouting.decide(query);
+                var requested = NativeChatRouting.decide(query);
+                boolean languageRoute = requested.tool().isEmpty() && NativePhoneLanguageRouting.candidate(context, query);
+                var decision = languageRoute ? new NativeChatRouting.Decision("", "locale_agent") : requested;
                 String requestedTool = decision.tool();
                 // Every exit below used to be silent, so a voice request that behaved differently from the same
                 // typed request left nothing to compare. One record per final result names the exit taken.
-                if (requestedTool.isEmpty()) {
+                if (requestedTool.isEmpty() && !languageRoute) {
                     // Ordinary speech: no handoff was ever intended. Kept, because "not recognised as a control
                     // request" is itself the most common complaint.
                     route(query, decision, "stock", requestId == null || requestId.isBlank() ? "agent_final" : "rule");
@@ -46,7 +48,8 @@ final class NativeVoiceRoutingHook {
                 try {
                     NativeModelHook.requestConfig(context);
                     stage = "plugin_catalog";
-                    if (!NativePluginTools.availableForRouting(context, requestedTool)) {
+                    if (!(languageRoute ? NativePhoneLanguageRouting.available(context)
+                        : NativePluginTools.availableForRouting(context, requestedTool))) {
                         route(query, decision, "stock", "tool_unavailable");
                         return;
                     }
@@ -68,7 +71,8 @@ final class NativeVoiceRoutingHook {
                         // while this final result waited for the UI thread.
                         if (!ownsMainVoiceRequest(manager, requestId)) { route(query, decision, "dropped", "owner_changed"); return; }
                         NativeModelHook.requestConfig(context);
-                        if (!NativePluginTools.availableForRouting(context, requestedTool)) {
+                        if (!(languageRoute ? NativePhoneLanguageRouting.available(context)
+                            : NativePluginTools.availableForRouting(context, requestedTool))) {
                             route(query, decision, "stopped", "tool_unavailable_late");
                             stopOwnedRequest(context, manager, requestId);
                             return;
@@ -79,7 +83,7 @@ final class NativeVoiceRoutingHook {
                         // handling remain in Xiaomi's own submission implementation.
                         // Recorded before the call: XiaoAi's own gate and any error it raises come after it.
                         route(query, decision, "handoff", "submitted");
-                        Reflector.callMethod(sender, "sendToMiClaw", query, query, null, List.of());
+                        NativeSpeechPolicyHook.voiceHandoff(() -> Reflector.callMethod(sender, "sendToMiClaw", query, query, null, List.of()));
                         PhoneUseLog.hostEvent("native_voice_phone_handoff", "tool", requestedTool);
                     } catch (Exception failure) {
                         PhoneUseLog.hostFailure("native_voice_phone_handoff", failure);

@@ -6,4 +6,7 @@
 - Artifacts: `top.yukonga.miuix.kmp:miuix-ui:0.9.4`, `miuix-preference:0.9.4`
 - License: Apache License 2.0; included in `LICENSE`.
 
-The settings UI uses Miuix components directly. No upstream source files are modified or vendored.
+The settings UI uses Miuix components directly. `SettingsListPopup.kt` adapts the
+0.9.4 `ListPopupLayout` source to add a shadow and fine outline around the actual
+animated menu surface, while retaining upstream placement and dismissal behavior.
+The adapted file retains the upstream copyright and SPDX license notice.

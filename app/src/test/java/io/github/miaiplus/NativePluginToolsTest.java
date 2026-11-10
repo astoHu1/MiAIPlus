@@ -364,6 +364,25 @@ public class NativePluginToolsTest {
         assertFalse(both.contains("原样传递完整任务"));
     }
 
+    @Test public void directLanguageRoutingRequiresForegroundPhoneToolAndFreshCatalog() {
+        assertTrue(NativePhoneLanguageRouting.available(context));
+        setCatalog(List.of(PhoneUsePlugin.specs().get(0)));
+        assertTrue(NativePhoneLanguageRouting.available(context));
+        setCatalog(List.of(remoteSpec()));
+        assertFalse(NativePhoneLanguageRouting.available(context));
+        setCatalog(List.of(PhoneUsePlugin.specs().get(1)));
+        assertFalse(NativePhoneLanguageRouting.available(context));
+        setCatalog(PhoneUsePlugin.specs());
+        assertTrue(NativePhoneLanguageRouting.available(context));
+        provider.unavailable = true;
+        try {
+            NativePhoneLanguageRouting.available(context);
+            fail("unavailable catalog must not reuse the previously enabled phone tool");
+        } catch (IllegalStateException expected) {
+            assertEquals("Plugin catalog unavailable", expected.getMessage());
+        }
+    }
+
     private static Tool foreign(String name) {
         return (Tool)Proxy.newProxyInstance(Tool.class.getClassLoader(), new Class<?>[]{Tool.class},
             (proxy, method, args) -> switch (method.getName()) {
