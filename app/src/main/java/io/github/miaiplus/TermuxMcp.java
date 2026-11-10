@@ -34,7 +34,7 @@ import org.json.JSONObject;
 /** Managed Termux endpoint. Root only asks Android to start the fixed Termux service job. */
 final class TermuxMcp {
     static final String PROTOCOL = "2025-06-18";
-    static final Set<String> TOOLS = Set.of("run", "run_digest", "out_read");
+    static final Set<String> TOOLS = Set.of("run", "run_digest", "out_read", "job_status", "job_cancel");
     private static final String PACKAGE = "com.termux";
     private static final String PREFIX = "/data/data/com.termux/files/usr";
     private static final String SERVICE = PACKAGE + "/.app.TermuxService";
@@ -57,7 +57,7 @@ final class TermuxMcp {
         for (PluginToolSpec tool : tools) {
             if (!PluginSettings.TERMUX_ID.equals(tool.pluginId()) || !names.add(tool.sourceName())) return false;
         }
-        return names.equals(TOOLS);
+        return names.equals(TOOLS) || names.equals(Set.of("run", "run_digest", "out_read"));
     }
 
     static PluginSettings.Entry find(PluginSettings.Snapshot settings) {
@@ -85,10 +85,11 @@ final class TermuxMcp {
             PluginSettings.Snapshot snapshot = PluginSettings.load(context);
             PluginSettings.Entry previous = find(snapshot);
             PluginSettings.Entry connection = previous;
-            if (connection == null) {
+            if (connection == null || !connection.tools().stream().map(PluginToolSpec::sourceName)
+                .collect(java.util.stream.Collectors.toSet()).equals(TOOLS)) {
                 int port;
                 try (ServerSocket selection = bindLoopback()) { port = selection.getLocalPort(); }
-                connection = entry(true, "http://127.0.0.1:" + port + "/mcp", randomHex(32), List.of());
+                connection = entry(previous == null || previous.enabled(), "http://127.0.0.1:" + port + "/mcp", randomHex(32), List.of());
             }
             if (!ready(connection, uid)) {
                 byte[] payload = asset(context, "upstream.bin", 512 * 1024);
@@ -193,14 +194,16 @@ final class TermuxMcp {
 
     static String toolDescription(PluginToolSpec tool) {
         return switch (tool.sourceName()) {
-            case "run", "run_digest" -> "Run a non-interactive shell command as the Termux app. "
-                + "Each call starts in the managed HOME. Pass paths directly, e.g. cat \"$HOME/file\"; "
-                + "avoid a leading cd with a quoted or variable path. Independent commands can run in parallel; "
-                + "wait for results before issuing dependent commands or modifying the same file. "
-                + ("run_digest".equals(tool.sourceName())
-                    ? "Prefer this tool for exit status, diagnostics and out_ref for large output. " : "")
-                + "Inspect failures and adjust the plan; do not repeat a command with possible side effects. "
-                + "If confirmation is required or policy blocks the command, stop and tell the user.";
+            case "run", "run_digest" -> "Execute the exact cmd with Bash as the Termux app. "
+                + "HOME/TMPDIR/cwd are real absolute paths returned in the result; quoting, substitutions and cd use Bash semantics. "
+                + "stdout/stderr merge in process write order; redirections are respected. "
+                + "timeout_ms defaults to 10000, up to 40000 synchronously. For longer jobs set background=true "
+                + "and timeout_ms up to 120000, then use miaiplus_termux_job_status/job_cancel with job_id. "
+                + "Independent commands can run in parallel. Each call has independent cwd/environment; wait before dependent calls or writes to the same file. "
+                + "Use Termux for root, Python, git, downloads and long jobs; use the host CLI for system app operations. "
+                + "Host CLI directory search needs grep -r; find -printf can return file metadata. "
+                + "Use out_ref/out_read for full large output. Inspect failures; do not repeat side effects or bypass policy/confirmation.";
+            case "job_status", "job_cancel" -> tool.description();
             case "out_read" -> "Read more of a previous run_digest result by out_ref: grep, head, tail, "
                 + "or lines 'a-b'. Wait for the producing command's result before using this tool.";
             default -> tool.description();
@@ -258,7 +261,7 @@ final class TermuxMcp {
         HttpURLConnection connection = null;
         try {
             String challenge = randomHex(16);
-            var url = URI.create("http://127.0.0.1:" + port(entry) + "/miaiplus-ready/" + challenge).toURL();
+            var url = URI.create("http://127.0.0.1:" + port(entry) + "/miaiplus-ready-v2/" + challenge).toURL();
             connection = (HttpURLConnection) url.openConnection(Proxy.NO_PROXY);
             connection.setInstanceFollowRedirects(false);
             connection.setConnectTimeout(320);
@@ -274,7 +277,7 @@ final class TermuxMcp {
     static byte[] proof(String token, int uid, String challenge) throws Exception {
         Mac mac = Mac.getInstance("HmacSHA256");
         mac.init(new SecretKeySpec(token.getBytes(StandardCharsets.US_ASCII), "HmacSHA256"));
-        byte[] result = mac.doFinal(("MIAIPLUS_TERMUX_1:" + uid + ":" + challenge).getBytes(StandardCharsets.US_ASCII));
+        byte[] result = mac.doFinal(("MIAIPLUS_TERMUX_2:" + uid + ":" + challenge).getBytes(StandardCharsets.US_ASCII));
         return hex(result).getBytes(StandardCharsets.US_ASCII);
     }
 

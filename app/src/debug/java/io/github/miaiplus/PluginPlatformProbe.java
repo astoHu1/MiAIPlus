@@ -200,8 +200,9 @@ public final class PluginPlatformProbe {
 
     private static String termux(Context context, ClassLoader loader, String remoteName, String nonce,
         String expectedUid) throws Exception {
-        if ("io.github.miaiplus".equals(BuildConfig.APPLICATION_ID))
-            throw new AssertionError("Termux probe requires the independent package");
+        boolean managed = "miaiplus_termux_run_digest".equals(remoteName);
+        if ("io.github.miaiplus".equals(BuildConfig.APPLICATION_ID) && !managed)
+            throw new AssertionError("Mainline Termux probe requires the managed tool");
         if (!nonce.matches("[a-f0-9-]{36}") || expectedUid == null || !expectedUid.matches("[1-9][0-9]{4}"))
             throw new AssertionError("invalid Termux probe identity");
         if (remoteName == null || remoteName.isBlank()) throw new AssertionError("missing Termux MCP tool name");
@@ -245,14 +246,21 @@ public final class PluginPlatformProbe {
         // Broadcast callers supply only the run identity, never a command or a file path.
         String command = "printf 'MIAIPLUS_TERMUX_HOST_" + nonce + "\\n'; printf 'UID=%s;\\n' \"$(id -u)\"; "
             + "printf 'HOME='; printf '%s\\n' \"$HOME\"; printf 'SHELL='; command -v sh";
+        if (managed) command += "; printf 'sum=%s;sub=%s;literal=%s\\n' \"$((3+4))\" \"$(printf yes)\" '$HOME'";
         JSONObject request = new JSONObject().put(commandField, command);
         if (commandSchema.has("timeout")) request.put("timeout", 10);
         Object result = execute(loader, tool, request);
         if (isFailure(loader, result)) throw new AssertionError("Termux native MCP proxy failed");
         String text = resultText(loader, result);
         if (!text.contains("MIAIPLUS_TERMUX_HOST_" + nonce) || !text.contains("UID=" + expectedUid + ";")
-            || !text.contains("com.termux/files/home") || !text.contains("com.termux/files/usr/bin/sh"))
+            || !(text.contains("com.termux/files/home") || managed && text.contains("/var/lib/miaiplus-mcp/"))
+            || !text.contains("com.termux/files/usr/bin/sh"))
             throw new AssertionError("Termux MCP result did not match the owned app shell identity");
+        if (managed) {
+            JSONObject body = PluginToolSpec.parseObject(text.substring(text.indexOf('{')));
+            if (!command.equals(body.getString("cmd")) || !body.getString("out").contains("sum=7;sub=yes;literal=$HOME"))
+                throw new AssertionError("Native managed proxy changed command semantics or duplicated JSON");
+        }
         if (Boolean.TRUE.equals(invoke(result, "isDirectAnswer"))) throw new AssertionError("MCP tool became a direct answer");
         Object images = invoke(result, "getImages");
         if (images instanceof List<?> list && !list.isEmpty()) throw new AssertionError("Termux MCP acquired Phone Use images");

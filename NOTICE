@@ -16,3 +16,7 @@ Upstream references and the license are in third_party/miuix/.
 MiAIPlus distributes the standalone Termux MCP 0.15.0 Python server
 (termuxgpt/termux-mcp), AGPL-3.0. The source revision, license and reproduction
 instructions are in third_party/termux-mcp/.
+
+The MiAIPlus managed Termux adapter (scripts/termux_mcp_managed.py) is
+AGPL-3.0-or-later and is included as source in the separate Python server asset.
+See third_party/termux-mcp/README.md and LICENSE in that directory.

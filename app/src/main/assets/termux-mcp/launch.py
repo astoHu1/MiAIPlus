@@ -26,22 +26,27 @@ os.environ.update({
     "TERMUX_NATIVE_MCP_PORT": port,
     "TERMUX_NATIVE_MCP_PATH": "/mcp",
     "TERMUX_NATIVE_MCP_TOOLS": "run,run_digest,out_read",
+    "TMPDIR": str(base / "tmp"),
     "TERMUX_MCP_TIMEOUT": "10",
     "TERMUX_MCP_LOG_EVENTS": "0",
 })
+(base / "tmp").mkdir(exist_ok=True)
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent / "upstream"))
 
 from termux_mcp.mcp_server import MCPHTTPServer, _check_startup_guards
 from termux_mcp.mcp_transport_http import MCPRequestHandler
+from miaiplus_managed import install
+
+install()
 
 
 class Handler(MCPRequestHandler):
     def do_GET(self):
-        match = re.fullmatch(r"/miaiplus-ready/([0-9a-f]{32})", self.path)
+        match = re.fullmatch(r"/miaiplus-ready-v2/([0-9a-f]{32})", self.path)
         if not match:
             return super().do_GET()
-        message = f"MIAIPLUS_TERMUX_1:{os.getuid()}:{match[1]}".encode("ascii")
+        message = f"MIAIPLUS_TERMUX_2:{os.getuid()}:{match[1]}".encode("ascii")
         proof = hmac.digest(token.encode("ascii"), message, "sha256").hex()
         self._send_body(200, proof.encode("ascii"), "text/plain")
 

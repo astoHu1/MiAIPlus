@@ -24,6 +24,7 @@ def build(source):
             if parts[0] not in ("termux_mcp", "LICENSE", "README.md", "pyproject.toml"):
                 continue
             files["/".join(parts)] = original.extractfile(member).read()
+        files["miaiplus_managed.py"] = (ROOT / "scripts/termux_mcp_managed.py").read_bytes()
         if "LICENSE" not in files or "termux_mcp/mcp_server.py" not in files:
             raise ValueError("Missing Termux MCP source or license")
     out = io.BytesIO()

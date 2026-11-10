@@ -127,6 +127,21 @@ public class McpClientWireTest {
         }
     }
 
+    @Test(timeout = 30000) public void managedTermuxDeduplicatesEquivalentJsonDespiteEscapesAndKeyOrder() throws Exception {
+        String raw = "{\"out\":\"a\\/b\",\"facts\":{\"items\":[\"中文\",2]},\"ok\":true}";
+        JSONObject structured = new JSONObject().put("ok", true).put("facts",
+            new JSONObject().put("items", new JSONArray().put("中文").put(2))).put("out", "a/b");
+        try (WireServer server = new WireServer(List.of(initialize(TermuxMcp.PROTOCOL), accepted(),
+                request -> json(request, new JSONObject().put("content", new JSONArray().put(text(raw)))
+                    .put("structuredContent", structured))));
+             McpClient client = new McpClient(new PluginSettings.Entry(PluginSettings.TERMUX_ID,
+                 PluginSettings.TERMUX_KIND, "Termux fixture", true, "http://127.0.0.1:" + server.port() + "/mcp",
+                 "a".repeat(64), TermuxMcp.PROTOCOL, List.of()))) {
+            assertEquals(raw, client.callTool("run_digest", new JSONObject().put("cmd", "fixture")));
+            server.awaitExpected();
+        }
+    }
+
     private static PluginSettings.Entry entry(WireServer server) {
         return entry(server, "2025-11-25");
     }

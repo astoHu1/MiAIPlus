@@ -128,7 +128,7 @@ public final class McpClient implements AutoCloseable {
         if (result.has("structuredContent")) {
             String structured = result.getJSONObject("structuredContent").toString();
             // The pinned Termux server sends the same digest in both representations.
-            if (!managedShell || !structured.contentEquals(text)) {
+            if (!managedShell || !sameJsonObject(structured, text.toString())) {
                 if (text.length() > 0) text.append('\n');
                 text.append(structured);
             }
@@ -139,6 +139,28 @@ public final class McpClient implements AutoCloseable {
         if (toolError) text.insert(0, "Termux 工具报告失败。请根据退出信息诊断或调整后续步骤；"
             + "不要原样重试有副作用的命令，也不要绕过确认或策略限制。\n");
         return text.length() == 0 ? "[MCP 工具返回空内容]" : text.toString();
+    }
+
+    private static boolean sameJsonObject(String structured, String text) {
+        try { return sameJsonValue(new JSONObject(structured), PluginToolSpec.parseObject(text)); }
+        catch (Exception notJson) { return false; }
+    }
+
+    private static boolean sameJsonValue(Object left, Object right) throws JSONException {
+        if (left instanceof JSONObject a && right instanceof JSONObject b) {
+            if (a.length() != b.length()) return false;
+            for (var keys = a.keys(); keys.hasNext();) {
+                String key = keys.next();
+                if (!b.has(key) || !sameJsonValue(a.get(key), b.get(key))) return false;
+            }
+            return true;
+        }
+        if (left instanceof JSONArray a && right instanceof JSONArray b) {
+            if (a.length() != b.length()) return false;
+            for (int i = 0; i < a.length(); i++) if (!sameJsonValue(a.get(i), b.get(i))) return false;
+            return true;
+        }
+        return java.util.Objects.equals(left, right);
     }
 
     private void initialize() throws Exception {
@@ -186,7 +208,9 @@ public final class McpClient implements AutoCloseable {
             current.setAllowUserInteraction(false);
             current.setUseCaches(false);
             current.setConnectTimeout(timeout());
-            current.setReadTimeout(timeout());
+            // The managed server emits SSE keepalives every 15 seconds during quiet commands.
+            current.setReadTimeout(PluginSettings.TERMUX_KIND.equals(entry.kind())
+                ? (int) Math.max(1, Math.min(20_000, deadline - clock.getAsLong())) : timeout());
             current.setRequestMethod("POST");
             current.setDoOutput(true);
             current.setRequestProperty("Content-Type", "application/json; charset=utf-8");

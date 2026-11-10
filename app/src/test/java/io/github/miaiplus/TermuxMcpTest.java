@@ -99,6 +99,18 @@ public class TermuxMcpTest {
         assertFalse(TermuxMcp.acceptsArguments(tool, new JSONObject().put("cmd", "id -u").put("timeout", 200)));
     }
 
+    @Test public void managedCatalogAcceptsLegacySettingsAndAddsBoundedJobsWithoutConfirmation() throws Exception {
+        assertTrue(TermuxMcp.hasExpectedTools(configured().tools()));
+        var tools = new java.util.ArrayList<>(configured().tools());
+        tools.add(tool("job_status"));
+        assertFalse(TermuxMcp.hasExpectedTools(tools));
+        tools.add(tool("job_cancel"));
+        assertTrue(TermuxMcp.hasExpectedTools(tools));
+        assertEquals("miaiplus_termux_job_status", tool("job_status").name());
+        assertTrue(TermuxMcp.toolDescription(tool("run_digest")).contains("Bash"));
+        assertTrue(TermuxMcp.toolDescription(tool("run_digest")).contains("timeout_ms"));
+    }
+
     @Test public void transferRequiresOneTimePathAndClosesAfterServingTheArchive() throws Exception {
         byte[] archive = "fixture data".getBytes(StandardCharsets.US_ASCII);
         try (var transfer = new TermuxMcp.Transfer(archive)) {
