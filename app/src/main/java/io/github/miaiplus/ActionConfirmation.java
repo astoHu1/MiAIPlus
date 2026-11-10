@@ -46,20 +46,28 @@ final class ActionConfirmation {
             if (pending != null) throw new IllegalStateException("已有操作等待确认");
             pending = request;
         }
+        // A prompt that is never shown, never tapped or tapped too late all end as "stopped"; record which.
+        long started = SystemClock.elapsedRealtime();
+        String outcome = "interrupted";
+        PhoneUseLog.event("prompt_wait", "kind", "action_confirmation", "messageChars", request.message.length());
         try {
             while (request.answer() == null) {
                 run.check();
                 if (SystemClock.elapsedRealtime() >= request.expires) {
-                    run.cancel();
+                    outcome = "timeout";
+                    run.cancel("confirmation_timeout");
                     throw new CancellationException("操作确认超时，任务已停止");
                 }
                 run.pause(100);
             }
             run.check();
-            if (!request.answer()) run.cancel();
+            outcome = request.answer() ? "allowed" : "denied";
+            if (!request.answer()) run.cancel("confirmation_denied");
             return request.answer();
         } finally {
             synchronized (ActionConfirmation.class) { if (pending == request) pending = null; }
+            PhoneUseLog.event("prompt_result", "kind", "action_confirmation", "outcome", outcome,
+                "cancelSource", run.cancelSource(), "waitMs", SystemClock.elapsedRealtime() - started);
         }
     }
 

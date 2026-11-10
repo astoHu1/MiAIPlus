@@ -31,19 +31,35 @@ public final class RunState {
     public void extend() { deadline = SystemClock.elapsedRealtime() + STEP_BUDGET_MS; }
     public void check() {
         if (cancelled.get()) throw new CancellationException("任务已停止");
-        if (SystemClock.elapsedRealtime() >= deadline) { cancel(); throw new CancellationException("单步超过 4 分钟没有进展，已停止"); }
+        if (SystemClock.elapsedRealtime() >= deadline) { cancel("step_deadline"); throw new CancellationException("单步超过 4 分钟没有进展，已停止"); }
     }
-    public void cancel() {
-        cancelled.set(true);
-        screenReady.countDown();
+    private volatile String cancelSource = "";
+    /** Who stopped this run first; empty while it is running or when it ended without a recorded stop. */
+    public String cancelSource() { return cancelSource; }
+    /**
+     * Stops the run and records who asked. Every stop reaches the user as the same sentence, so the first
+     * source is the only way to tell a stop button from a watchdog, a host turn that ended or a lost service.
+     */
+    public void cancel(String source) { cancelInternal(source); }
+    public void cancel() { cancelInternal(null); }
+    private void cancelInternal(String source) {
+        boolean first;
         CancellationBinding[] bindings;
         synchronized (cancellationBindings) {
+            first = cancelled.compareAndSet(false, true);
+            if (first && source != null) cancelSource = source;
             bindings = cancellationBindings.toArray(new CancellationBinding[0]);
             cancellationBindings.clear();
         }
+        screenReady.countDown();
         for (CancellationBinding binding : bindings) binding.fire();
         HttpURLConnection c = connection;
         if (c != null) c.disconnect();
+        // Publish after stopping; a diagnostic must not delay cancellation or change its first cause.
+        if (first && source != null && PhoneUseLog.enabled())
+            PhoneUseLog.event("run_cancel", "run", PhoneUseLog.reference(id), "cancelSource", source,
+                "screen", screen, "preparing", preparingScreen,
+                "msToDeadline", deadline - SystemClock.elapsedRealtime());
     }
     /** Links only the currently executing step, including cancellation before that step could bind. */
     CancellationBinding onCancel(Runnable callback) {

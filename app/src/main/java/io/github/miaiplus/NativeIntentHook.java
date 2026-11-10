@@ -51,6 +51,7 @@ public final class NativeIntentHook {
                     Reflector.callMethod(request, "setBody", adapted);
                     p.args[1] = clean;
                 } catch (Throwable failure) {
+                    PhoneUseLog.hostFailure("native_intent_init", failure);
                     p.setThrowable(new IllegalStateException("外部路由推理初始化失败", failure));
                 }
             }
@@ -60,7 +61,10 @@ public final class NativeIntentHook {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
                 try {
                     if (NativeModelHook.config(context).getBoolean("globalModel")) p.args[0] = IntentProtocol.response((String)p.args[0]);
-                } catch (Exception invalid) { /* Native parser provides its existing null/fallback behavior. */ }
+                } catch (Exception invalid) {
+                    // Native parser provides its existing null/fallback behavior; the reply was not usable.
+                    PhoneUseLog.hostFailure("native_intent_response", invalid);
+                }
             }
         }));
     }

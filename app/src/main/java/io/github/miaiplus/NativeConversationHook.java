@@ -726,5 +726,10 @@ final class NativeConversationHook {
 
     private static void report(Throwable failure) {
         android.util.Log.w("MiAIPlus", "Conversation continuity unavailable", failure);
+        // Reflection-heavy and version-pinned: on another XiaoAi build this is where a renamed member shows.
+        String state = failure.getClass().getSimpleName();
+        StackTraceElement[] stack = failure.getStackTrace();
+        if (stack.length > 0) state += "@" + stack[0].getMethodName() + ":" + stack[0].getLineNumber();
+        if (HostTrace.changed("conversation", state, 60_000)) PhoneUseLog.hostFailure("conversation", failure);
     }
 }

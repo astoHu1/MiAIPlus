@@ -27,11 +27,15 @@ final class PhoneUseLog {
     private static volatile java.lang.ref.WeakReference<Context> remoteContext = new java.lang.ref.WeakReference<>(null);
     private static volatile boolean remoteEnabled;
     private static volatile long remoteCheckedAt = -1;
+    private static final AtomicLong sequence = new AtomicLong();
+    private static final String writer = java.util.UUID.randomUUID().toString();
     private static final AtomicLong observations = new AtomicLong();
     private static final AtomicLong requests = new AtomicLong();
     private static final ThreadLocal<Trace> current = new ThreadLocal<>();
+    private static final ThreadLocal<HostStamp> hostStamp = new ThreadLocal<>();
     private static final java.util.LinkedHashMap<String, Trace> images = new java.util.LinkedHashMap<>();
     record Trace(String session, int step, String observation) { }
+    private record HostStamp(long time, long elapsed, long generation, Trace trace) { }
 
     static void init(Context context) {
         try {
@@ -58,9 +62,13 @@ final class PhoneUseLog {
             if (context == null) return false;
             long now = SystemClock.elapsedRealtime();
             if (remoteCheckedAt < 0 || now - remoteCheckedAt >= 1000) {
-                Bundle flags = context.getContentResolver().call(BridgeProvider.URI, "phone_use_log_settings", null, null);
-                remoteEnabled = flags != null && flags.getBoolean("enabled");
+                // Stamp first: an unreachable module must not turn every later event into another blocking call.
                 remoteCheckedAt = now;
+                boolean value = false;
+                try {
+                    Bundle flags = context.getContentResolver().call(BridgeProvider.URI, "phone_use_log_settings", null, null);
+                    value = flags != null && flags.getBoolean("enabled");
+                } finally { remoteEnabled = value; }
             }
             return remoteEnabled;
         } catch (RuntimeException ignored) { return false; }
@@ -97,16 +105,67 @@ final class PhoneUseLog {
     }
     static void event(String event, Object... fields) {
         if (!enabled()) return;
+        write(event, System.currentTimeMillis(), SystemClock.elapsedRealtime(), current.get(), fields);
+    }
+    /**
+     * For host hooks that run on XiaoAi's UI thread. Asking the module whether logging is on is a blocking call,
+     * so the question and the write move to the delivery thread; the record keeps the caller's time.
+     */
+    static void hostInspect(Runnable inspect) {
+        if (preferences != null) {
+            if (enabled()) try { inspect.run(); } catch (Throwable ignored) { }
+            return;
+        }
+        if (remoteContext.get() == null) return;
+        HostStamp inherited = hostStamp.get();
+        if (inherited != null) {
+            if (inherited.generation() == remoteGeneration.get())
+                try { inspect.run(); } catch (Throwable ignored) { }
+            return;
+        }
+        long elapsed = SystemClock.elapsedRealtime();
+        HostStamp stamp = new HostStamp(System.currentTimeMillis(), elapsed, remoteGeneration.get(), current.get());
         try {
-            JSONObject record = new JSONObject().put("event", event).put("elapsedMs", SystemClock.elapsedRealtime())
-                .put("time", System.currentTimeMillis()).put("pid", android.os.Process.myPid())
-                .put("source", preferences == null ? "host" : "module");
-            Trace trace = current.get();
+            delivery.execute(() -> {
+                if (stamp.generation() != remoteGeneration.get()) return;
+                // Queued observers are discarded on reload; one already inspecting host objects must finish
+                // before its generation can be retired, just like a synchronous hook callback.
+                try { io.github.miaiplus.hook.Hooks.enter(); }
+                catch (IllegalStateException retiring) { return; }
+                try {
+                    if (!enabled()) return;
+                    hostStamp.set(stamp);
+                    try (Scope ignored = use(stamp.trace())) { inspect.run(); }
+                    catch (Throwable ignored) { /* Read-only diagnostics cannot affect the host. */ }
+                    finally { hostStamp.remove(); }
+                } finally { io.github.miaiplus.hook.Hooks.leave(); }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException full) { hostDropped.incrementAndGet(); }
+    }
+    static void hostEvent(String event, Object... fields) {
+        if (preferences != null) { event(event, fields); return; }
+        if (remoteContext.get() == null) return;
+        hostInspect(() -> {
+            HostStamp stamp = hostStamp.get();
+            if (stamp != null) write(event, stamp.time(), stamp.elapsed(), stamp.trace(), fields);
+        });
+    }
+    private static void write(String event, long time, long elapsed, Trace trace, Object[] fields) {
+        try {
+            // writer changes on classloader reload, even when pid/version stay the same; seq orders its emitted
+            // records. ver is the module code that wrote
+            // the record, so a XiaoAi process still running an older module after an update is visible.
+            JSONObject record = new JSONObject().put("event", event).put("elapsedMs", elapsed)
+                .put("time", time).put("pid", android.os.Process.myPid())
+                .put("source", preferences == null ? "host" : "module")
+                .put("seq", sequence.incrementAndGet()).put("writer", writer).put("ver", BuildConfig.VERSION_CODE);
             if (trace != null) record.put("session", trace.session()).put("step", trace.step()).put("observation", trace.observation());
             for (int i = 0; i + 1 < fields.length; i += 2) {
+                String key = String.valueOf(fields[i]);
+                if (java.util.Set.of("event", "time", "elapsedMs", "pid", "source", "seq", "writer", "ver").contains(key)) continue;
                 Object value = fields[i + 1];
                 if (value instanceof String text) value = text.replace('\n', ' ').replace('\r', ' ').substring(0, Math.min(160, text.length()));
-                record.put(String.valueOf(fields[i]), value);
+                record.put(key, value);
             }
             Log.i(TAG, record.toString());
             DiagnosticLogStore local = store;
@@ -115,17 +174,20 @@ final class PhoneUseLog {
                 long generation = remoteGeneration.get();
                 String line = record.put("hostDropped", hostDropped.get()).put("hostDeliveryErrors", hostErrors.get()).toString();
                 try {
-                    delivery.execute(() -> {
-                        Context context = remoteContext.get();
-                        if (generation != remoteGeneration.get() || context == null) return;
-                        try {
-                            Bundle data = new Bundle(); data.putString("record", line);
-                            context.getContentResolver().call(BridgeProvider.URI, "phone_use_log_append", null, data);
-                        } catch (RuntimeException | LinkageError failure) { hostErrors.incrementAndGet(); }
-                    });
+                    // Already on the delivery thread: do not requeue behind newer events or fill our own queue.
+                    if (hostStamp.get() != null) deliver(line, generation);
+                    else delivery.execute(() -> deliver(line, generation));
                 } catch (java.util.concurrent.RejectedExecutionException failure) { hostDropped.incrementAndGet(); }
             }
         } catch (Exception | LinkageError ignored) { /* Never fail an action because logging failed. */ }
+    }
+    private static void deliver(String line, long generation) {
+        Context context = remoteContext.get();
+        if (generation != remoteGeneration.get() || context == null) return;
+        try {
+            Bundle data = new Bundle(); data.putString("record", line);
+            context.getContentResolver().call(BridgeProvider.URI, "phone_use_log_append", null, data);
+        } catch (RuntimeException | LinkageError failure) { hostErrors.incrementAndGet(); }
     }
     static String reference(String value) {
         if (value == null || value.isEmpty()) return "";
@@ -163,8 +225,97 @@ final class PhoneUseLog {
                 event("action_coordinates", "point", key, "x", x, "y", y, "space", "normalized");
         }
     }
-    static void failure(String stage, Throwable failure) {
-        event("failure", "stage", stage, "exception", failure.getClass().getSimpleName());
+    static void failure(String stage, Throwable failure, Object... extra) {
+        if (!enabled()) return;
+        event("failure", concat(new Object[]{"stage", stage}, concat(describe(failure), extra)));
+    }
+    static void hostFailure(String stage, Throwable failure, Object... extra) {
+        hostInspect(() -> hostEvent("failure", concat(new Object[]{"stage", stage}, concat(describe(failure), extra))));
+    }
+    static Object[] concat(Object[] first, Object[] second) {
+        Object[] all = java.util.Arrays.copyOf(first, first.length + second.length);
+        System.arraycopy(second, 0, all, first.length, second.length);
+        return all;
+    }
+    /**
+     * What failed and where, without what it said: exception classes, the module's own code locations and host
+     * symbol names. Messages stay out because they can carry page text, typed input or a server response.
+     *
+     * <p>Class and method names are kept as written in every build. Optimized builds renumber lines, so only
+     * debug builds cite one; messageRef locates the throw site in the others.
+     */
+    static Object[] describe(Throwable failure) {
+        Throwable top = failure;
+        // A future or a reflective call wraps the real failure; the wrapper's class says nothing.
+        for (int depth = 0; depth < 8 && top.getCause() != null && top.getCause() != top
+            && (top instanceof java.util.concurrent.ExecutionException
+            || top instanceof java.util.concurrent.CompletionException
+            || top instanceof java.lang.reflect.InvocationTargetException
+            || top instanceof java.lang.reflect.UndeclaredThrowableException); depth++) top = top.getCause();
+        StringBuilder causes = new StringBuilder();
+        String binding = binding(top);
+        Throwable deepest = top;
+        int depth = 0;
+        for (Throwable cause = top.getCause(); cause != null && cause != deepest && depth < 6; cause = cause.getCause(), depth++) {
+            if (causes.length() > 0) causes.append('>');
+            causes.append(cause.getClass().getSimpleName());
+            if (binding.isEmpty()) binding = binding(cause);
+            deepest = cause;
+        }
+        java.util.List<Object> fields = new java.util.ArrayList<>(java.util.List.of(
+            "exception", top.getClass().getSimpleName(), "site", site(top, 3)));
+        String message = top.getMessage();
+        StackTraceElement[] stack = top.getStackTrace();
+        // Only for exceptions this module constructed. Their messages begin with a fixed sentence or code from
+        // the source, so a digest of that part finds the throw site in any build without storing words. What
+        // follows the first colon can name an app or an action and is left out; a platform exception's message
+        // can quote data and gets no digest at all.
+        if (message != null && !message.isEmpty() && stack.length > 0
+            && stack[0].getClassName().startsWith("io.github.miaiplus.")) {
+            String fixed = fixedPart(message);
+            fields.addAll(java.util.List.of("messageRef", reference(fixed)));
+        }
+        if (causes.length() > 0) fields.addAll(java.util.List.of("causes", causes.toString()));
+        String causeSite = deepest == top ? "" : site(deepest, 1);
+        if (!causeSite.isEmpty()) fields.addAll(java.util.List.of("causeSite", causeSite));
+        if (!binding.isEmpty()) fields.addAll(java.util.List.of("binding", binding));
+        return fields.toArray();
+    }
+    /** The part of a module-authored message before its first colon; scripts/diagnose_log.py hashes the same part. */
+    static String fixedPart(String message) {
+        int wide = message.indexOf('：'), narrow = message.indexOf(':');
+        int end = wide < 0 ? narrow : narrow < 0 ? wide : Math.min(wide, narrow);
+        return end > 0 ? message.substring(0, end) : message;
+    }
+    private static String site(Throwable failure, int frames) {
+        StringBuilder site = new StringBuilder();
+        try {
+            for (StackTraceElement frame : failure.getStackTrace()) {
+                String type = frame.getClassName();
+                if (!type.startsWith("io.github.miaiplus.")) continue;
+                if (site.length() > 0) site.append('<');
+                site.append(type.substring("io.github.miaiplus.".length())).append('.').append(frame.getMethodName());
+                if (BuildConfig.DEBUG) site.append(':').append(frame.getLineNumber());
+                if (--frames == 0) break;
+            }
+        } catch (RuntimeException unavailable) { /* A location is optional. */ }
+        return site.toString();
+    }
+    /** The host class, method or field a version-pinned lookup did not find. Identifiers only. */
+    private static String binding(Throwable failure) {
+        String message = failure.getMessage();
+        if (message == null || message.isEmpty()) return "";
+        // Reflection messages can quote arbitrary arguments too. Retain only bounded symbol signatures or
+        // the fixed lookup labels authored by Reflector; URLs, paths and free text are never bindings.
+        if (message.length() > 160) return "";
+        if ((failure instanceof ClassNotFoundException || failure instanceof NoSuchFieldException
+            || failure instanceof NoClassDefFoundError) && message.matches("[A-Za-z_$][A-Za-z0-9_.$]*"))
+            return message;
+        if (failure instanceof NoSuchMethodException
+            && message.matches("[A-Za-z_$][A-Za-z0-9_.$]*\\([A-Za-z0-9_.$, \\[\\]]*\\)")) return message;
+        if (message.matches("(Missing host (class|method|field)|Missing compatible host (method|constructor)|Ambiguous host (overload|constructor)): [A-Za-z_$][A-Za-z0-9_.$]*"))
+            return message;
+        return "";
     }
     static void window(String stage, android.view.accessibility.AccessibilityWindowInfo window,
         android.view.accessibility.AccessibilityNodeInfo root, String state) {

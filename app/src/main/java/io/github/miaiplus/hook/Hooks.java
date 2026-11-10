@@ -65,6 +65,13 @@ public final class Hooks {
         for (var handle : handles) handle.unhook();
         handles.clear();
     }
+    /** Framework name, version, version code and API level for diagnostics; empty when it does not answer. */
+    public static synchronized String[] framework() {
+        try {
+            return new String[]{api.getFrameworkName(), api.getFrameworkVersion(),
+                String.valueOf(api.getFrameworkVersionCode()), String.valueOf(api.getApiVersion())};
+        } catch (Throwable unavailable) { return new String[0]; }
+    }
     public static void log(String message) { api.log(Log.INFO, "MiAIPlus", message); }
     public static void log(Throwable failure) { api.log(Log.ERROR, "MiAIPlus", failure.getClass().getSimpleName(), failure); }
 }

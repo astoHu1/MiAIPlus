@@ -307,14 +307,27 @@ public final class NativeSession {
         return state.initialBackground;
     }
     private static void verifyContinuation(State s, JSONObject request, int owner, String sourceTool) {
-        if (s == null || s.run.cancelled.get() || android.os.SystemClock.elapsedRealtime() >= s.run.deadline
-            || s.run.owner != owner || !s.id.equals(request.optString("session")))
+        // One sentence covers five different states; the model needs none of the detail, a diagnosis needs all of it.
+        String problem = s == null ? "no_session" : s.run.cancelled.get() ? "cancelled"
+            : android.os.SystemClock.elapsedRealtime() >= s.run.deadline ? "expired"
+            : s.run.owner != owner ? "owner_mismatch"
+            : !s.id.equals(request.optString("session")) ? "session_mismatch" : null;
+        if (problem != null) {
+            PhoneUseLog.event("continuation_rejected", "reason", problem,
+                "cancelSource", s == null ? "" : s.run.cancelSource(), "stepsUsed", s == null ? -1 : s.steps,
+                "sessionGiven", !request.optString("session").isEmpty());
             throw new IllegalStateException("控屏会话不存在或已过期，本轮已结束；不要继续调用或自动重启，请向用户说明任务未确认完成");
-        PhoneUseRouting.verifyContinuation(s.sourceTool, sourceTool);
+        }
+        try { PhoneUseRouting.verifyContinuation(s.sourceTool, sourceTool); }
+        catch (RuntimeException mismatch) {
+            PhoneUseLog.event("continuation_rejected", "reason", "tool_mismatch", "stepsUsed", s.steps);
+            throw mismatch;
+        }
     }
     private static RunState.CancellationBinding bindCaller(State state, RunState caller) {
         return caller.onCancel(() -> {
-            state.run.cancel();
+            String source = caller.cancelSource();
+            state.run.cancel(source.isEmpty() ? "caller_cancelled" : source);
             cleanupAsync(state);
         });
     }
@@ -351,7 +364,7 @@ public final class NativeSession {
                 scheduleWatchdog(s, generation);
                 return;
             }
-            s.run.cancel();
+            s.run.cancel("session_watchdog");
         }
         cleanupAsync(s);
     }
@@ -381,7 +394,8 @@ public final class NativeSession {
             State s = active; active = null;
             if (s != null) {
                 PhoneUseLog.event("session_close", "sessionRef", PhoneUseLog.reference(s.id), "stepsUsed", s.steps,
-                    "cancelled", s.run.cancelled.get());
+                    "cancelled", s.run.cancelled.get(), "cancelSource", s.run.cancelSource(),
+                    "maxSteps", s.maxSteps, "background", s.background);
                 s.run.cancel();
                 synchronized (s) {
                     ++s.watchdogGeneration;
@@ -393,11 +407,12 @@ public final class NativeSession {
         } finally { closing = false; }
         // Frames can still be in transit to a native Message constructor; expire independently.
     }
-    public static void cancel() {
+    public static void cancel() { cancel("module_request"); }
+    static void cancel(String source) {
         // Never wait for handle() while Android's main thread is needed by an in-flight action.
         State s = active;
         if (s != null) {
-            s.run.cancel();
+            s.run.cancel(source);
             cleanupAsync(s);
         }
     }

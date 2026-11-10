@@ -39,12 +39,19 @@ public final class NativeModelHook {
     }
     public static void install(Context context, ClassLoader loader, List<HookCallback.Unhook> hooks) throws Exception {
         PhoneUseLog.initRemote(context);
+        HostTrace.stage("model.plugin_tools");
         NativePluginTools.install(context, loader, hooks);
+        HostTrace.stage("model.turn_lifecycle");
         NativeTurnLifecycle.install(context, loader, hooks);
+        HostTrace.stage("model.intent");
         NativeIntentHook.install(context, loader, hooks);
+        HostTrace.stage("model.reasoning");
         NativeReasoningHook.install(context, loader, hooks);
+        HostTrace.stage("model.chat_routing");
         NativeChatRoutingHook.install(context, loader, hooks);
+        HostTrace.stage("model.voice_routing");
         NativeVoiceRoutingHook.install(context, loader, hooks);
+        HostTrace.stage("model.messages");
         Class<?> message = Reflector.findClass("com.aios.osbot.agent.model.Message", loader);
         Class<?> image = Reflector.findClass("com.aios.osbot.agent.model.ImageContent", loader);
         var imageConstructor = image.getConstructor(String.class, String.class, String.class, int.class, int.class, Long.class);
@@ -103,7 +110,9 @@ public final class NativeModelHook {
                 }
             }
         }));
+        HostTrace.stage("model.turn_stop");
         installTurnStop(context, loader, hooks, toolSuccess);
+        HostTrace.stage("model.transport");
         Class<?> nativeConfig = Reflector.findClass("sm.a", loader);
         var configConstructor = configConstructor(loader);
         // Cover the dispatcher and every concrete OSBot transport, including callers
@@ -126,6 +135,8 @@ public final class NativeModelHook {
             Reflector.findClass("kotlin.coroutines.Continuation", loader));
         for (String className : new String[]{"qm.c", "um.h", "qm.i", "qm.j", "qm.b"}) {
             Class<?> client = Reflector.findClass(className, loader);
+            // The resolved name for this XiaoAi build, as it appears in that build's own stack traces.
+            final String clientName = client.getName();
             Method stream = client.getDeclaredMethod("streamCompletion", List.class, List.class, nativeConfig,
                 Reflector.findClass("kotlin.coroutines.Continuation", loader));
             hooks.add(Hooks.hookMethod(stream, new HookCallback() {
@@ -135,9 +146,14 @@ public final class NativeModelHook {
                     Bundle setting;
                     try { setting = requestConfig(context); }
                     catch (Exception unavailable) {
-                        if (modelConfig != null && modelConfig.getBoolean("globalModel")) param.setThrowable(new IllegalStateException("外部模型配置服务不可用"));
+                        boolean blocked = modelConfig != null && modelConfig.getBoolean("globalModel");
+                        if (blocked) param.setThrowable(new IllegalStateException("外部模型配置服务不可用"));
+                        modelCall(clientName, param, blocked ? "blocked_config_unavailable" : "official_config_unavailable");
+                        PhoneUseLog.hostFailure("native_model_config", unavailable);
                         return;
                     }
+                    // One record per model round: which transport answers and whether it was offered the tools.
+                    modelCall(clientName, param, setting.getBoolean("globalModel") ? "external" : "official");
                     if (!setting.getBoolean("globalModel")) return;
                     try {
                     String endpoint = Endpoint.validate(setting.getString("endpoint", ""));
@@ -152,10 +168,14 @@ public final class NativeModelHook {
                     delegating.set(true);
                     try { param.setResult(nativeStream.invoke(delegate, param.args[0], param.args[1], replacement, param.args[3])); }
                     finally { delegating.remove(); }
-                    } catch (Throwable failure) { param.setThrowable(new IllegalStateException("外部主模型初始化失败，请检查配置或关闭全局替换", failure)); }
+                    } catch (Throwable failure) {
+                        PhoneUseLog.hostFailure("native_model_init", failure);
+                        param.setThrowable(new IllegalStateException("外部主模型初始化失败，请检查配置或关闭全局替换", failure));
+                    }
                 }
             }));
         }
+        HostTrace.stage("model.memory");
         // Claw memory summaries have a separate non-streaming OpenAI path.
         // Preserve its request/response, retry and cancellation code; replace only
         // model configuration and the HTTP getter during synchronous request setup.
@@ -182,6 +202,7 @@ public final class NativeModelHook {
                 memorySettings.set(setting);
                 memoryTransport.set(true);
                 } catch (Throwable failure) {
+                    PhoneUseLog.hostFailure("native_memory_init", failure);
                     p.setThrowable(new IllegalStateException("记忆推理模型配置不可用", failure));
                 }
             }
@@ -202,6 +223,33 @@ public final class NativeModelHook {
                 }
             }
         }));
+    }
+    /**
+     * Counts only: how many tools the request carries and whether the two control tools are among them. XiaoAi's
+     * dispatcher and its concrete client are both hooked, so one round can produce two records.
+     */
+    private static void modelCall(String client, HookCallback.MethodHookParam param, String transport) {
+        Object offered = param.args[1];
+        int messages = param.args[0] instanceof List<?> list ? list.size() : -1;
+        HostTrace.Snapshot route = HostTrace.snapshot();
+        PhoneUseLog.hostInspect(() -> {
+        try {
+            int tools = -1;
+            boolean foreground = false, background = false;
+            if (offered instanceof List<?> list) {
+                tools = list.size();
+                for (Object tool : list) {
+                    Object name = Reflector.callMethod(tool, "getName");
+                    foreground |= PhoneUseRouting.FOREGROUND_TOOL.equals(name);
+                    background |= PhoneUseRouting.BACKGROUND_TOOL.equals(name);
+                }
+            }
+            PhoneUseLog.hostEvent("model_call", "transport", transport, "client", client,
+                "messages", messages,
+                "tools", tools, "foregroundTool", foreground, "backgroundTool", background,
+                "route", route.reference(), "sinceRouteMs", route.ageMs());
+        } catch (RuntimeException unavailable) { PhoneUseLog.hostFailure("model_call_read", unavailable); }
+        });
     }
     /** The pinned host consumes this decision for every result, including mixed parallel-tool batches. */
     private static void installTurnStop(Context app, ClassLoader loader, List<HookCallback.Unhook> hooks, Class<?> success)
@@ -297,6 +345,7 @@ public final class NativeModelHook {
     static synchronized void dispose() {
         NativeVoiceRoutingHook.dispose();
         NativeChatRoutingHook.dispose();
+        HostTrace.clear();
         PhoneUseLog.disposeRemote();
         for (Object http : externalHttp.values()) Reflector.callMethod(http, "close");
         externalHttp.clear(); modelConfig = null; fetchedAt = 0;

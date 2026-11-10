@@ -62,14 +62,19 @@ public final class ScreenService extends AccessibilityService {
     @Override public void onAccessibilityEvent(AccessibilityEvent event) { /* Read only on an explicit task. */ }
     @Override public void onInterrupt() {
         // Android interrupts accessibility feedback here; it does not revoke the connection.
-        if (instance == this && !isHealthy()) BridgeProvider.onScreenDisconnected();
+        if (instance == this && !isHealthy()) {
+            PhoneUseLog.event("accessibility_disconnected", "via", "interrupt");
+            BridgeProvider.onScreenDisconnected();
+        }
     }
     @Override public void onDestroy() {
-        disconnected(); super.onDestroy();
+        disconnected("destroy"); super.onDestroy();
     }
-    @Override public boolean onUnbind(Intent intent) { disconnected(); return super.onUnbind(intent); }
-    private void disconnected() {
+    @Override public boolean onUnbind(Intent intent) { disconnected("unbind"); return super.onUnbind(intent); }
+    private void disconnected(String via) {
         if (instance == this) {
+            // HyperOS can revoke the service mid-task; the task then only reports that it stopped.
+            PhoneUseLog.event("accessibility_disconnected", "via", via);
             instance = null;
             BridgeProvider.onScreenDisconnected();
         }
@@ -79,7 +84,10 @@ public final class ScreenService extends AccessibilityService {
     }
     private void unlocked(RunState run) {
         run.check();
-        if (getSystemService(KeyguardManager.class).isKeyguardLocked()) throw new IllegalStateException("请先解锁手机");
+        if (getSystemService(KeyguardManager.class).isKeyguardLocked()) {
+            PhoneUseLog.event("keyguard_blocked", "displayId", 0);
+            throw new IllegalStateException("请先解锁手机");
+        }
     }
     /** Prefer the actually focused window: OEM permission dialogs may leave the old active root cached. */
     private AccessibilityNodeInfo currentRoot() {
@@ -355,7 +363,7 @@ public final class ScreenService extends AccessibilityService {
         try {
             Frame frame = capturePhysical(run);
             PhoneUseLog.frame(frame);
-            PhoneUseLog.event("capture_complete", "displayId", 0, "source", "accessibility",
+            PhoneUseLog.event("capture_complete", "displayId", 0, "captureSource", "accessibility",
                 "durationMs", android.os.SystemClock.elapsedRealtime() - started);
             return frame;
         } catch (Exception failure) { PhoneUseLog.failure("capture_physical", failure); throw failure; }
@@ -677,13 +685,18 @@ public final class ScreenService extends AccessibilityService {
         onMain(() -> {
             unlocked(run);
             AccessibilityNodeInfo root = currentRoot();
-            if (root == null || !String.valueOf(root.getPackageName()).equals(frame.foreground()))
+            if (root == null || !String.valueOf(root.getPackageName()).equals(frame.foreground())) {
+                PhoneUseLog.event("gesture_withheld", "reason", root == null ? "no_root" : "foreground_changed");
                 throw new ObservationChanged();
+            }
             verifySystemDialog(action, frame, root, systemDialogApproved);
             // Reject stale coordinates after rotation rather than tapping the wrong UI.
             Rect current = getSystemService(WindowManager.class).getMaximumWindowMetrics().getBounds();
-            if (current.width() != frame.width() || current.height() != frame.height())
+            if (current.width() != frame.width() || current.height() != frame.height()) {
+                PhoneUseLog.event("gesture_withheld", "reason", "screen_size_changed", "frameWidth", frame.width(),
+                    "frameHeight", frame.height(), "liveWidth", current.width(), "liveHeight", current.height());
                 throw new ObservationChanged();
+            }
             if (action != null) verifyActionTarget(action, frame, root);
             Path path = new Path();
             path.moveTo(pixel(from[0], frame.width()), pixel(from[1], frame.height()));
@@ -693,11 +706,41 @@ public final class ScreenService extends AccessibilityService {
                 @Override public void onCompleted(GestureDescription gesture) { done.complete(true); }
                 @Override public void onCancelled(GestureDescription gesture) { done.complete(false); }
             }, main);
+            logGesture(accepted, from, to, duration, frame);
             if (!accepted) done.complete(false);
             return null;
         });
-        if (!done.get(3, TimeUnit.SECONDS)) throw new IllegalStateException("手势执行失败或被用户打断");
+        boolean completed;
+        try { completed = done.get(3, TimeUnit.SECONDS); }
+        catch (java.util.concurrent.TimeoutException silent) {
+            // The system accepted the gesture and never reported back.
+            PhoneUseLog.event("gesture_result", "outcome", "no_callback");
+            throw silent;
+        }
+        if (!completed) {
+            PhoneUseLog.event("gesture_result", "outcome", "cancelled_or_refused");
+            throw new IllegalStateException("手势执行失败或被用户打断");
+        }
         run.check();
+    }
+    /**
+     * The pixels actually sent, with the geometry they were computed from: enough to redo the mapping for a
+     * screen the developer does not own (cutout, fold, scaling, rotation). Never allowed to fail the gesture.
+     */
+    private void logGesture(boolean accepted, double[] from, double[] to, long duration, Frame frame) {
+        if (!PhoneUseLog.enabled()) return;
+        try {
+            int rotation = -1;
+            android.view.Display display = getSystemService(android.hardware.display.DisplayManager.class)
+                .getDisplay(android.view.Display.DEFAULT_DISPLAY);
+            if (display != null) rotation = display.getRotation();
+            PhoneUseLog.event("gesture_dispatch", "accepted", accepted,
+                "fromX", (int)pixel(from[0], frame.width()), "fromY", (int)pixel(from[1], frame.height()),
+                "toX", (int)pixel(to[0], frame.width()), "toY", (int)pixel(to[1], frame.height()),
+                "durationMs", duration, "frameWidth", frame.width(), "frameHeight", frame.height(),
+                "imageWidth", frame.imageWidth(), "imageHeight", frame.imageHeight(),
+                "densityDpi", getResources().getDisplayMetrics().densityDpi, "rotation", rotation);
+        } catch (RuntimeException unavailable) { /* Geometry is evidence, not a precondition. */ }
     }
     private static float pixel(double n, int size) { return (float)Math.min(size - 1, n * size / 1000); }
 

@@ -126,6 +126,8 @@ final class PhoneUsePlugin {
                     return NativePluginTools.failure(loader, PhoneUseResult.stopped(text), true);
             }
         } catch (Exception error) {
+            // "控屏工具调用失败" covers a malformed call and a XiaoAi binding that no longer resolves alike.
+            PhoneUseLog.hostFailure("phone_tool_call", error, "tool", spec.name());
             return NativePluginTools.failure(loader, PhoneUseResult.stopped(error instanceof org.json.JSONException
                 ? "缺少goal或session/action参数" : "控屏工具调用失败"), true);
         }

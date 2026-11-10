@@ -30,4 +30,13 @@ public class HostCompatibilityTest {
         assertEquals("A", HostCompatibility.choose("A", "B"));
         assertEquals("com.xiaomi.voiceassistant.TabHostMainActivity", HostCompatibility.chatActivity());
     }
+
+    @Test public void diagnosticProfileLookupDoesNotChangeActiveBindings() {
+        assertTrue(HostCompatibility.select("8.3.30.4420", 508003030L));
+        assertEquals("legacy", HostCompatibility.profile("8.2.65.4714", 508002065L));
+        assertEquals("unsupported", HostCompatibility.profile("8.3.30.4420", 508003031L));
+        assertEquals("unsupported", HostCompatibility.profile(null, 0));
+        assertTrue(HostCompatibility.modern());
+        assertEquals("dn.i", HostCompatibility.name("qm.i"));
+    }
 }

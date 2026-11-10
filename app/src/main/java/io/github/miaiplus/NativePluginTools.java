@@ -63,10 +63,14 @@ final class NativePluginTools {
     /** Local IPC only. Registry query hooks use this snapshot without any IPC or network discovery. */
     static boolean refresh(Context context) {
         synchronized (LOCK) {
+            // Where a failure happened: the module was unreachable, sent something unusable, or a tool could not
+            // be built against this XiaoAi build. All three withdraw every tool, the control tools included.
+            String stage = "ipc";
             try {
                 if (hostLoader == null) return false;
                 Bundle response = context.getContentResolver().call(BridgeProvider.URI, "plugin_catalog", null, null);
                 if (response == null) throw new IllegalStateException("Plugin catalog unavailable");
+                stage = "decode";
                 String revision = response.getString("revision", "");
                 if (revision.isBlank()) throw new IllegalStateException("Missing plugin revision");
                 if (revision.equals(catalog.revision())) return true;
@@ -76,6 +80,7 @@ final class NativePluginTools {
                 JSONArray tools = new JSONArray(encoded);
                 if (tools.length() > 128) throw new IllegalStateException("Too many plugin tools");
                 Map<String, Entry> next = new LinkedHashMap<>();
+                stage = "build_tools";
                 for (int i = 0; i < tools.length(); i++) {
                     JSONObject value = tools.getJSONObject(i);
                     PluginToolSpec spec = PluginToolSpec.fromJson(value);
@@ -92,11 +97,20 @@ final class NativePluginTools {
                 catalog = new Catalog(revision, Collections.unmodifiableMap(next));
                 definitions.removeIf(reference -> reference.get() == null);
                 for (Entry entry : next.values()) definitions.add(new WeakReference<>(entry.definition()));
+                stage = "register";
                 synchronizeKnownRegistries();
+                PhoneUseLog.hostEvent("plugin_catalog", "state", "ok", "tools", next.size(),
+                    "foreground", next.containsKey(PhoneUseRouting.FOREGROUND_TOOL),
+                    "background", next.containsKey(PhoneUseRouting.BACKGROUND_TOOL),
+                    "revision", PhoneUseLog.reference(revision));
+                HostTrace.changed("plugin_catalog", "ok", 0);
                 return true;
             } catch (Exception unavailable) {
                 // Do not advertise or execute cached tools while the authoritative catalog is unavailable.
                 catalog = new Catalog("", Map.of());
+                // Called on every prompt and routing decision: report the state, not each attempt.
+                if (HostTrace.changed("plugin_catalog", stage + ":" + unavailable.getClass().getSimpleName(), 30_000))
+                    PhoneUseLog.hostFailure("plugin_catalog", unavailable, "state", "unavailable", "stage", stage);
                 synchronizeKnownRegistries();
                 return false;
             }
@@ -166,22 +180,25 @@ final class NativePluginTools {
         Hooks.enter();
         try {
             if (Looper.myLooper() == Looper.getMainLooper())
-                return unavailable(loader, spec, "插件工具不可在主线程执行");
-            if (!refresh(context)) return unavailable(loader, spec, "插件配置不可用，本次调用未执行");
+                return unavailable(loader, spec, "main_thread", "插件工具不可在主线程执行");
+            if (!refresh(context)) return unavailable(loader, spec, "catalog_unavailable", "插件配置不可用，本次调用未执行");
             Entry current = catalog.tools().get(spec.name());
             if (!revision.equals(catalog.revision()) || current == null || current.proxy() != proxy
                 || !current.spec().equals(spec))
-                return unavailable(loader, spec, "插件配置已更改或工具已停用，本次调用未执行，不要自动重试");
+                return unavailable(loader, spec, current == null ? "tool_withdrawn" : "catalog_changed",
+                    "插件配置已更改或工具已停用，本次调用未执行，不要自动重试");
             if (args == null || args.length < 2 || args[0] == null)
-                return unavailable(loader, spec, "插件工具参数不完整");
+                return unavailable(loader, spec, "arguments_missing", "插件工具参数不完整");
             return "builtin".equals(spec.kind())
                 ? PhoneUsePlugin.execute(context, loader, spec, args[0], args[1])
                 : executeRemote(context, loader, revision, spec, args[0].toString());
         } finally { Hooks.leave(); }
     }
 
-    private static Object unavailable(ClassLoader loader, PluginToolSpec spec, String reason) {
+    private static Object unavailable(ClassLoader loader, PluginToolSpec spec, String code, String reason) {
         boolean phone = "builtin".equals(spec.kind());
+        // The model called a tool and nothing ran. Third-party tool names are configuration and stay out.
+        PhoneUseLog.hostEvent("tool_call_rejected", "kind", spec.kind(), "tool", phone ? spec.name() : "", "reason", code);
         return failure(loader, phone ? PhoneUseResult.stopped(reason) : reason, phone);
     }
 
@@ -190,6 +207,11 @@ final class NativePluginTools {
         String id = null;
         boolean finished = false;
         boolean termux = PluginSettings.TERMUX_ID.equals(spec.pluginId());
+        // Every ending below tells the model a similar sentence. Keep which one it was, never the tool's
+        // name, arguments or output: those are the user's configuration and data.
+        long began = SystemClock.elapsedRealtime();
+        String outcome = "interrupted";
+        Throwable thrown = null;
         try {
             new JSONObject(arguments);
             Bundle request = new Bundle();
@@ -198,10 +220,14 @@ final class NativePluginTools {
             request.putString("toolName", spec.name());
             request.putString("arguments", arguments);
             Bundle started = context.getContentResolver().call(BridgeProvider.URI, "plugin_start", null, request);
-            if (termux && started != null && started.getBoolean("termuxNotRun"))
+            if (termux && started != null && started.getBoolean("termuxNotRun")) {
+                outcome = "termux_not_run";
                 return termuxNotRun(loader, started);
-            if (started == null || started.containsKey("error"))
+            }
+            if (started == null || started.containsKey("error")) {
+                outcome = started == null ? "bridge_null" : "start_rejected";
                 return failure(loader, "插件工具启动失败，配置可能已更改；不要自动重试", false);
+            }
             id = started.getString("id");
             if (id == null || id.isBlank()) throw new IllegalStateException("Missing plugin run");
             long deadline = SystemClock.elapsedRealtime() + 65000L;
@@ -211,11 +237,13 @@ final class NativePluginTools {
                 if (state == null) throw new IllegalStateException("Missing plugin state");
                 String status = state.getString("status", "");
                 if ("done".equals(status)) {
-                    finished = true;
+                    finished = true; outcome = "done";
                     return success(loader, remoteText(state.getString("result", "")), Map.of(), false);
                 }
                 if ("error".equals(status) || state.containsKey("error")) {
                     finished = true;
+                    outcome = termux && state.getBoolean("termuxNotRun") ? "termux_not_run"
+                        : termux && state.getBoolean("termuxStartupFailure") ? "termux_startup_failed" : "error";
                     if (termux && state.getBoolean("termuxNotRun")) return termuxNotRun(loader, state);
                     if (termux && state.getBoolean("termuxStartupFailure"))
                         return failure(loader, state.getString("error", "Termux MCP 未启动；本次命令未执行"), false);
@@ -224,11 +252,18 @@ final class NativePluginTools {
                 if (!"running".equals(status)) throw new IllegalStateException("Invalid plugin state");
                 Thread.sleep(100);
             }
+            outcome = "host_timeout";
             return failure(loader, "插件工具调用超时，已请求取消；不要自动重试", false);
         } catch (Exception failure) {
+            thrown = failure; outcome = "exception";
             if (failure instanceof InterruptedException) Thread.currentThread().interrupt();
             return failure(loader, "插件工具调用已中断或服务不可用；不要自动重试", false);
         } finally {
+            Object[] fields = {"kind", termux ? "termux" : "mcp", "outcome", outcome,
+                "argumentChars", arguments.length(), "durationMs", SystemClock.elapsedRealtime() - began};
+            Throwable failure = thrown;
+            PhoneUseLog.hostInspect(() -> PhoneUseLog.hostEvent("plugin_tool_call",
+                failure == null ? fields : PhoneUseLog.concat(fields, PhoneUseLog.describe(failure))));
             if (id != null && !finished) {
                 try { context.getContentResolver().call(BridgeProvider.URI, "plugin_cancel", id, null); }
                 catch (Exception ignored) { /* Module-side timeout remains authoritative. */ }
@@ -319,7 +354,11 @@ final class NativePluginTools {
         synchronized (LOCK) {
             Object registry = null;
             try { registry = registry(context, hostLoader); synchronizeRegistry(registry); }
-            catch (RuntimeException unavailable) { /* Existing native definitions remain authoritative. */ }
+            catch (RuntimeException unavailable) {
+                // Existing native definitions remain authoritative, and this request goes out without our tools.
+                if (HostTrace.changed("tool_registry", unavailable.getClass().getSimpleName(), 30_000))
+                    PhoneUseLog.hostFailure("tool_registry", unavailable);
+            }
             List<Object> tools = new ArrayList<>();
             for (Object value : previous) {
                 boolean ours = false;

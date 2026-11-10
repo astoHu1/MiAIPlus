@@ -58,18 +58,26 @@ final class ForegroundConsent {
             pending = request;
         }
         run.progress = "等待你同意使用当前应用：" + TaskProgress.compact(label);
+        long started = SystemClock.elapsedRealtime();
+        String outcome = "interrupted";
+        PhoneUseLog.event("prompt_wait", "kind", "foreground_consent", "package", packageName);
         try {
             while (request.answer() == null) {
                 run.check();
-                if (SystemClock.elapsedRealtime() >= request.expires)
+                if (SystemClock.elapsedRealtime() >= request.expires) {
+                    outcome = "timeout";
                     throw new Paused("PAUSE：未收到使用当前应用的同意，任务已暂停，本轮已结束");
+                }
                 run.pause(100);
             }
             run.check();
+            outcome = request.answer() ? "allowed" : "denied";
             if (!request.answer())
                 throw new Paused("PAUSE：你已拒绝使用当前应用，任务已暂停，本轮已结束；不要继续调用控屏工具");
         } finally {
             synchronized (ForegroundConsent.class) { if (pending == request) pending = null; }
+            PhoneUseLog.event("prompt_result", "kind", "foreground_consent", "outcome", outcome,
+                "cancelSource", run.cancelSource(), "waitMs", SystemClock.elapsedRealtime() - started);
         }
     }
 

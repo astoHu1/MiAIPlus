@@ -151,7 +151,7 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
         }
         check(editor.commit()) { "保存失败，请重试" }
         config = Config(context)
-        if (key == "enabled" && value == false) BridgeProvider.cancelActive()
+        if (key == "enabled" && value == false) BridgeProvider.cancelActive("module_disabled")
         notice = if (key == "globalModel" || key == "enabled") "已保存，请重启小爱" else "已保存"
     }
 
@@ -282,7 +282,7 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun stopTest() { BridgeProvider.cancelActive(); result = "已请求停止" }
+    fun stopTest() { BridgeProvider.cancelActive("settings_stop"); result = "已请求停止" }
 }
 
 data class BackgroundCheck(val title: String, val summary: String) {

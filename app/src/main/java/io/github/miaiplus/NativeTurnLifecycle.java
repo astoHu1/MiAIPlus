@@ -35,6 +35,7 @@ final class NativeTurnLifecycle {
                 bindings.retire(turn, previous);
         } catch (RuntimeException failure) {
             android.util.Log.e("MiAIPlus", "Cannot bind screen task to native model turn", failure);
+            PhoneUseLog.hostFailure("turn_bind", failure);
         }
     }
 
@@ -64,6 +65,7 @@ final class NativeTurnLifecycle {
                     endTurn(context, Reflector.callMethod(p.args[0], "getExecutionContext"), "model_exhausted");
                 } catch (RuntimeException failure) {
                     android.util.Log.e("MiAIPlus", "Cannot release exhausted native model screen task", failure);
+                    PhoneUseLog.hostFailure("turn_exhausted", failure);
                 }
             }
         }));
@@ -75,6 +77,7 @@ final class NativeTurnLifecycle {
                         endTurn(context, Reflector.callMethod(p.thisObject, "getExecutionContext"), "model_finished");
                     } catch (RuntimeException failure) {
                         android.util.Log.e("MiAIPlus", "Cannot release unfinished native model screen task", failure);
+                        PhoneUseLog.hostFailure("turn_release", failure);
                     }
                 }
             }));

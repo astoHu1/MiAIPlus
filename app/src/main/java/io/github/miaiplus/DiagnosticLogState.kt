@@ -76,7 +76,7 @@ class DiagnosticLogState(private val application: Application, private val scope
         withContext(Dispatchers.IO) {
             val output = application.contentResolver.openOutputStream(uri, "wt")
                 ?: throw java.io.IOException("No output stream")
-            output.use { store.exportZip(it, Config(application).phoneUseDetailedLog) }
+            output.use { store.exportZip(it, logEnabled(), DiagnosticEnvironment.snapshot(application)) }
         }
         notice = "日志压缩包已保存"
     }
@@ -89,11 +89,14 @@ class DiagnosticLogState(private val application: Application, private val scope
                 if (!it.delete()) throw java.io.IOException("Cannot remove old export")
             }
             val file = File(directory, archiveName())
-            try { file.outputStream().use { store.exportZip(it, Config(application).phoneUseDetailedLog) } }
+            try { file.outputStream().use { store.exportZip(it, logEnabled(), DiagnosticEnvironment.snapshot(application)) } }
             catch (failure: Exception) { file.delete(); throw failure }
             FileProvider.getUriForFile(application, "${application.packageName}.log-files", file)
         }
     }
+
+    // Read the one switch directly: a configuration that no longer parses must not block exporting its evidence.
+    private fun logEnabled() = Config.prefs(application).all[Config.PHONE_USE_LOG_KEY] == true
 
     private fun exportDirectory() = File(application.cacheDir, "log-exports")
 

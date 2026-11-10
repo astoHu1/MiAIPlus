@@ -39,6 +39,11 @@ final class NativeResponsesAdapter {
                     io.github.miaiplus.hook.Hooks.enter();
                     requests.incrementAndGet();
                     try { return adapter.intercept(args[0]); }
+                    catch (Throwable failure) {
+                        // The boundary below deliberately hides the cause from XiaoAi; keep its shape here.
+                        PhoneUseLog.failure("native_transport", failure, "api", adapter.api);
+                        throw failure;
+                    }
                     finally { requests.decrementAndGet(); io.github.miaiplus.hook.Hooks.leave(); }
                 });
             }
@@ -75,7 +80,14 @@ final class NativeResponsesAdapter {
         Object requestBody = Reflector.callStaticMethod(type("gg2.g0"), "create", jsonType(), serialized);
         Reflector.callMethod(builder, "method", "POST", requestBody);
         Reflector.callMethod(builder, "removeHeader", "Content-Length");
+        long sent = android.os.SystemClock.elapsedRealtime();
         Object response = Reflector.callMethod(chain, "proceed", Reflector.callMethod(builder, "build"));
+        try {
+            // Headers received; a streamed body follows. A non-2xx status is all XiaoAi turns into its own sentence.
+            PhoneUseLog.event("model_http_response", "code", Reflector.callMethod(response, "code"), "api", api,
+                "transport", "native_external", "stream", body.optBoolean("stream"),
+                "durationMs", android.os.SystemClock.elapsedRealtime() - sent);
+        } catch (RuntimeException unavailable) { PhoneUseLog.failure("native_transport_status", unavailable); }
         if (!"responses".equals(api) || !Boolean.TRUE.equals(Reflector.callMethod(response, "isSuccessful")))
             return trackResponse(response);
         Object originalBody = Reflector.callMethod(response, "body");

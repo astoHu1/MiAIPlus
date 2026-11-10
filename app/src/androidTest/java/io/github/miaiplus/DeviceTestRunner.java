@@ -93,6 +93,7 @@ public final class DeviceTestRunner extends HookProbeRunner {
         } catch (java.io.FileNotFoundException expected) { }
     }
     @Override public void onStart() {
+        if ("true".equals(arguments.getString("diagnostics"))) { DiagnosticsRunner.run(this); return; }
         if ("true".equals(arguments.getString("native_foreground_video"))) {
             NativeForegroundModelRunner.run(this, true,
                 "true".equals(arguments.getString("native_foreground_official")), true); return;

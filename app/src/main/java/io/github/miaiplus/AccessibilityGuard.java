@@ -62,10 +62,36 @@ public final class AccessibilityGuard {
             }
         });
     }
+    private static final class RootFailure extends java.io.IOException {
+        final int code;
+        RootFailure(String message, int code) { super(message); this.code = code; }
+    }
+    /** Root manager, script and service each fail differently, and the user is told one sentence for all three. */
     static void prepare(Context context, RunState run) throws Exception {
         run.check();
         if (ScreenService.isHealthy()) return;
-        if (!enabled(context)) throw new IllegalStateException("MiAIPlus 无障碍未连接，请开启服务或启用 root 任务前检查");
+        boolean guard = enabled(context);
+        long started = android.os.SystemClock.elapsedRealtime();
+        String outcome = "interrupted";
+        int exit = Integer.MIN_VALUE;
+        try {
+            if (!guard) { outcome = "guard_disabled"; throw new IllegalStateException("MiAIPlus 无障碍未连接，请开启服务或启用 root 任务前检查"); }
+            String command = command(context, run);
+            try { root(command, run); }
+            catch (java.util.concurrent.CancellationException cancelled) { throw cancelled; }
+            catch (RootFailure failure) { outcome = "root_failed"; exit = failure.code; throw new IllegalStateException("无障碍恢复失败，请检查 MiAIPlus 的 root 授权与系统设置"); }
+            catch (Exception failure) { outcome = "root_unavailable"; throw new IllegalStateException("无障碍恢复失败，请检查 MiAIPlus 的 root 授权与系统设置"); }
+            run.check();
+            if (!ScreenService.isHealthy()) { outcome = "still_disconnected"; throw new IllegalStateException("无障碍未恢复连接，已停止任务"); }
+            outcome = "recovered";
+        } finally {
+            // exitCode: the preflight script's own status, -1 for its 45 s timeout; absent when su did not start.
+            PhoneUseLog.event("accessibility_preflight", "outcome", outcome, "guardEnabled", guard,
+                "servicePresent", ScreenService.instance != null, "exitCode", exit == Integer.MIN_VALUE ? "" : String.valueOf(exit),
+                "durationMs", android.os.SystemClock.elapsedRealtime() - started);
+        }
+    }
+    private static String command(Context context, RunState run) throws Exception {
         run.progress = "正在恢复无障碍连接";
         int user = android.os.Process.myUid() / 100000;
         String encoded;
@@ -73,12 +99,7 @@ public final class AccessibilityGuard {
             encoded = Base64.encodeToString(input.readAllBytes(), Base64.NO_WRAP);
         }
         // The UUID/UID are local and applicationId is a build constant; model text never enters this command.
-        String command = preflightCommand(encoded, user, run.id);
-        try { root(command, run); }
-        catch (java.util.concurrent.CancellationException cancelled) { throw cancelled; }
-        catch (Exception failure) { throw new IllegalStateException("无障碍恢复失败，请检查 MiAIPlus 的 root 授权与系统设置"); }
-        run.check();
-        if (!ScreenService.isHealthy()) throw new IllegalStateException("无障碍未恢复连接，已停止任务");
+        return preflightCommand(encoded, user, run.id);
     }
     static String preflightCommand(String encoded, int user, String runId) {
         return legacyRetirementScript(BuildConfig.APPLICATION_ID) + "printf '%s' '" + encoded
@@ -96,9 +117,9 @@ public final class AccessibilityGuard {
             long deadline = android.os.SystemClock.elapsedRealtime() + 45_000;
             while (!process.waitFor(100, TimeUnit.MILLISECONDS)) {
                 if (run != null) run.check();
-                if (android.os.SystemClock.elapsedRealtime() >= deadline) throw new java.io.IOException("root timeout");
+                if (android.os.SystemClock.elapsedRealtime() >= deadline) throw new RootFailure("root timeout", -1);
             }
-            if (process.exitValue() != 0) throw new java.io.IOException("root rejected");
+            if (process.exitValue() != 0) throw new RootFailure("root rejected", process.exitValue());
         } finally { process.destroy(); }
     }
 }

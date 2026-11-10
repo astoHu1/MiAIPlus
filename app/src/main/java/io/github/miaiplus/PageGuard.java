@@ -35,16 +35,29 @@ final class PageGuard {
      * comparing only the smallest clickable node misses a newly drawn dialog or transparent touch interceptor.
      */
     static boolean canExecute(Action action, ScreenService.Frame before, ScreenService.Frame current) throws Exception {
-        if (!sameScreen(before, current)) return false;
-        if (!needsFreshFrame(action.name)) return true;
+        String blocked = blockReason(action, before, current);
+        // "The page changed" covers a rotation, a new dialog, a moving ad and a field that lost focus. The
+        // model only needs to replan; a diagnosis needs to know which, especially when it repeats until a stop.
+        if (blocked != null) PhoneUseLog.event("action_blocked", "action", action.name, "reason", blocked);
+        return blocked == null;
+    }
+
+    /** Null when the action may run; otherwise a fixed label for the first check that failed. */
+    static String blockReason(Action action, ScreenService.Frame before, ScreenService.Frame current) throws Exception {
+        String screen = screenChange(before, current);
+        if (screen != null) return screen;
+        if (!needsFreshFrame(action.name)) return null;
         List<Node> oldNodes = nodes(before.tree());
         List<Node> newNodes = nodes(current.tree());
         if (action.name.equals("type")) {
             Node oldTarget = focusedEditable(oldNodes), newTarget = focusedEditable(newNodes);
-            if (oldTarget == null || !oldTarget.equals(newTarget) || oldTarget.password() || oldTarget.metadata().contains("enabled=false")) return false;
+            if (oldTarget == null) return "no_single_focused_field";
+            if (!oldTarget.equals(newTarget)) return newTarget == null ? "focus_lost" : "field_changed";
+            if (oldTarget.password()) return "password_field";
+            if (oldTarget.metadata().contains("enabled=false")) return "field_disabled";
             double x = (oldTarget.left() + (double) oldTarget.right()) / 2;
             double y = (oldTarget.top() + (double) oldTarget.bottom()) / 2;
-            return stableCover(covering(oldNodes, x, y), covering(newNodes, x, y), oldTarget,
+            return coverChange(covering(oldNodes, x, y), covering(newNodes, x, y), oldTarget,
                 before, current, x, y);
         }
         double[] point = action.point("element");
@@ -52,36 +65,43 @@ final class PageGuard {
         double y = Math.min(before.height() - 1, point[1] * before.height() / 1000);
         List<Node> oldCover = covering(oldNodes, x, y), newCover = covering(newNodes, x, y);
         Node oldTarget = target(oldCover), newTarget = target(newCover);
-        if (!Objects.equals(oldTarget, newTarget) || (oldTarget != null && oldTarget.metadata().contains("enabled=false"))) return false;
-        if (!stableCover(oldCover, newCover, oldTarget, before, current, x, y)) return false;
+        if (!Objects.equals(oldTarget, newTarget)) return "target_changed";
+        if (oldTarget != null && oldTarget.metadata().contains("enabled=false")) return "target_disabled";
+        String cover = coverChange(oldCover, newCover, oldTarget, before, current, x, y);
+        if (cover != null) return cover;
         // A canvas has no semantic target. Anchor the point and a surrounding margin in the actual JPEG,
         // rather than requiring unrelated ads elsewhere on the screen to stop animating.
         // A bare clickable container is not a semantic anchor: ads/videos often expose the same anonymous
         // FrameLayout while replacing every pixel inside it. Require local visual proof for those as well.
-        return (oldTarget != null && oldTarget.labeled()) || VisualRegion.stable(before, current, x, y, x, y);
+        return (oldTarget != null && oldTarget.labeled()) || VisualRegion.stable(before, current, x, y, x, y)
+            ? null : "pixels_changed_unlabeled_target";
     }
 
-    private static boolean stableCover(List<Node> before, List<Node> current, Node target,
+    private static String coverChange(List<Node> before, List<Node> current, Node target,
         ScreenService.Frame oldFrame, ScreenService.Frame newFrame, double x, double y) {
-        if (before.equals(current)) return true;
-        if (before.size() != current.size()) return false;
+        if (before.equals(current)) return null;
+        if (before.size() != current.size()) return "covering_nodes_count";
         for (int index = 0; index < before.size(); index++) {
             Node old = before.get(index), now = current.get(index);
             // Content aggregated by a parent can include an unrelated ad. Only relax its content, never
             // geometry, identity, flags, order, or the target's own semantics; pixels supply the local proof.
-            if (!old.structure().equals(now.structure())) return false;
-            if (old.equals(target) && !old.equals(now)) return false;
+            if (!old.structure().equals(now.structure())) return "covering_nodes_structure";
+            if (old.equals(target) && !old.equals(now)) return "target_content";
         }
-        return target == null ? VisualRegion.stable(oldFrame, newFrame, x, y, x, y)
-            : VisualRegion.stable(oldFrame, newFrame, target.left(), target.top(), target.right(), target.bottom());
+        return (target == null ? VisualRegion.stable(oldFrame, newFrame, x, y, x, y)
+            : VisualRegion.stable(oldFrame, newFrame, target.left(), target.top(), target.right(), target.bottom()))
+            ? null : "pixels_changed";
     }
 
-    private static boolean sameScreen(ScreenService.Frame before, ScreenService.Frame current) {
-        return before != null && current != null && before.width() > 0 && before.height() > 0
-            && before.width() == current.width() && before.height() == current.height()
-            && before.imageWidth() == current.imageWidth() && before.imageHeight() == current.imageHeight()
-            && before.displayId() == current.displayId() && Objects.equals(before.generation(), current.generation())
-            && Objects.equals(before.foreground(), current.foreground());
+    private static String screenChange(ScreenService.Frame before, ScreenService.Frame current) {
+        if (before == null || current == null) return "frame_missing";
+        if (before.width() <= 0 || before.height() <= 0) return "frame_size_invalid";
+        if (before.width() != current.width() || before.height() != current.height()) return "screen_size_changed";
+        if (before.imageWidth() != current.imageWidth() || before.imageHeight() != current.imageHeight()) return "image_size_changed";
+        if (before.displayId() != current.displayId()) return "display_changed";
+        if (!Objects.equals(before.generation(), current.generation())) return "display_recreated";
+        if (!Objects.equals(before.foreground(), current.foreground())) return "foreground_changed";
+        return null;
     }
 
     private record Node(String signature, int left, int top, int right, int bottom, String metadata, String content) {

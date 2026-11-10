@@ -118,26 +118,46 @@ public final class BackgroundDisplay implements AutoCloseable {
             if (active != null && active.isOpen()) return active;
             if (active != null) active.close();
             Context app = context.getApplicationContext();
-            BackgroundDisplay display = start(app);
+            // No su binary, a denied grant, a ROM that refuses the display and a helper that died all reach
+            // the user as one stop. The stage and the helper's exit status separate them.
+            long began = android.os.SystemClock.elapsedRealtime();
+            BackgroundDisplay display;
+            try { display = start(app); }
+            catch (Exception failure) {
+                PhoneUseLog.failure("display_open", failure, "phase", "start_helper");
+                throw failure;
+            }
             active = display;
+            String phase = "probe";
             try {
                 JSONObject probe = display.request(run, "probe", null);
                 if (!"0".equals(probe.optString("uid")))
                     throw new IllegalStateException(ERROR_PERMISSION + "：后台显示需要 root 授权，请在 root 管理器中允许 MiAIPlus");
                 if ("true".equals(probe.optString("keyguardLocked")))
                     throw new IllegalStateException(ERROR_DEVICE_LOCKED + "：请先解锁手机再使用后台显示");
+                phase = "create";
                 JSONObject created = display.request(run, "create",
                     config.displayWidth + " " + config.displayHeight + " " + config.displayDensity);
                 DisplaySession createdSession = new DisplaySession(created.getInt("displayId"), created.optString("surfaceFlingerId"),
                     config.displayWidth, config.displayHeight, config.displayDensity, 0);
+                phase = "ime";
                 // Creation already verified no-steal focus and HIDE; recheck without reapplying a ready policy.
                 JSONObject ime = display.request(run, "ime", null);
                 if (!"HIDE".equals(ime.optString("policy")) || !"true".equals(ime.optString("verified")))
                     throw new IllegalStateException(ERROR_IME_ISOLATION + "：无法确认后台屏输入法隔离，任务已停止");
                 display.session = createdSession;
                 run.progress = "后台显示已就绪";
+                PhoneUseLog.event("display_open", "displayId", createdSession.displayId, "width", config.displayWidth,
+                    "height", config.displayHeight, "density", config.displayDensity,
+                    "durationMs", android.os.SystemClock.elapsedRealtime() - began);
                 return display;
             } catch (Exception failure) {
+                // Read before close() destroys the process.
+                boolean alive = display.helper.isAlive();
+                String exit = "";
+                if (!alive) try { exit = String.valueOf(display.helper.exitValue()); } catch (IllegalThreadStateException racing) { }
+                PhoneUseLog.failure("display_open", failure, "phase", phase, "helperAlive", alive, "helperExit", exit,
+                    "durationMs", android.os.SystemClock.elapsedRealtime() - began);
                 display.close();
                 throw failure;
             }
@@ -183,7 +203,7 @@ public final class BackgroundDisplay implements AutoCloseable {
             try {
                 JSONObject result = requestLocked(run, verb, arguments);
                 PhoneUseLog.event("helper_reply", "verb", verb, "status", result.optString("status"),
-                    "source", result.optString("source"), "frames", result.optString("frames"),
+                    "helperSource", result.optString("source"), "frames", result.optString("frames"),
                     "foreground", result.optString("foreground"), "focus", verb.equals("focus") ? result.optString("display") : "",
                     "durationMs", android.os.SystemClock.elapsedRealtime() - started);
                 return result;
@@ -273,7 +293,7 @@ public final class BackgroundDisplay implements AutoCloseable {
                 reply.optInt("imageWidth", session.width), reply.optInt("imageHeight", session.height),
                 foreground, session.displayId, session.generation);
             PhoneUseLog.frame(frame);
-            PhoneUseLog.event("capture_complete", "displayId", session.displayId, "source", reply.optString("source"),
+            PhoneUseLog.event("capture_complete", "displayId", session.displayId, "captureSource", reply.optString("source"),
                 "frames", reply.optString("frames"), "durationMs", android.os.SystemClock.elapsedRealtime() - started);
             return frame;
         } catch (Exception failure) {

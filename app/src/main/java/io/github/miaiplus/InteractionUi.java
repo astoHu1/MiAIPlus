@@ -133,6 +133,10 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
                     actionConfirmation ? "action_confirmation" : "foreground_consent", screenTask, answer);
                 return;
             }
+            // A tap that reached XiaoAi but matched no live prompt: a consumed, replaced or foreign button.
+            if (allow.equals(intent.getAction()) || deny.equals(intent.getAction()))
+                PhoneUseLog.hostEvent("prompt_tap_ignored", "running", running, "promptShown", consentToken != null,
+                    "taskMatches", java.util.Objects.equals(screenTask, intent.getStringExtra("screen_task")));
             if (running && STOP.equals(intent.getAction()) && controlToken != null
                 && controlToken.equals(intent.getStringExtra("token")))
                 app.getContentResolver().call(BridgeProvider.URI, "stop_screen", null, null);
@@ -366,11 +370,17 @@ final class InteractionUi implements Application.ActivityLifecycleCallbacks {
                             try {
                                 publish(notice.title, notice.text, true);
                                 shownProgress = notice.progress;
+                                if (notice.token != null && HostTrace.changed("prompt_shown", notice.token, Long.MAX_VALUE))
+                                    PhoneUseLog.hostEvent("prompt_shown", "confirmation", notice.confirmation);
                             }
                             catch (Exception failure) {
                                 // Deduplicate against published state, never the unshown request token.
                                 // A transient native template/notification error must retry on the next poll.
                                 android.util.Log.w("MiAIPlus", "Unable to update task intent", failure);
+                                // A prompt that cannot be shown is a task that waits until it times out.
+                                String problem = failure.getClass().getSimpleName() + ":" + (notice.token != null);
+                                if (HostTrace.changed("island_publish", problem, 30_000))
+                                    PhoneUseLog.hostFailure("island_publish", failure, "prompt", notice.token != null);
                             }
                         });
                         return;

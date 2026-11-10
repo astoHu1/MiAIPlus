@@ -83,6 +83,16 @@ public final class NativeChatRoutingTest {
             NativeChatRouting.requestedPhoneTool("在后台打开计算器输入137乘29"));
     }
 
+    @Test public void diagnosticDecisionsKeepOnlyFixedRulesAndTheSelectedCapability() {
+        assertEquals(new NativeChatRouting.Decision("", "blank"), NativeChatRouting.decide(null));
+        assertEquals(new NativeChatRouting.Decision("", "explanation"), NativeChatRouting.decide("如何在后台打开应用"));
+        assertEquals(new NativeChatRouting.Decision("", "no_match"), NativeChatRouting.decide("你好 private-query"));
+        assertEquals(new NativeChatRouting.Decision(PhoneUseRouting.FOREGROUND_TOOL, "phone_control"),
+            NativeChatRouting.decide("用控屏自己操作 private-query"));
+        assertEquals(new NativeChatRouting.Decision(PhoneUseRouting.BACKGROUND_TOOL, "background_action"),
+            NativeChatRouting.decide("在后台打开计算器 private-query"));
+    }
+
     @Test public void scopeEndsAfterAnExceptionalSubmission() {
         Object callback = new Object();
         try {

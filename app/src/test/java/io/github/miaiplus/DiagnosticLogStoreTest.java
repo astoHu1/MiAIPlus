@@ -100,4 +100,49 @@ public final class DiagnosticLogStoreTest {
         store.append("{\"event\":\"after_clear\"}");
         assertEquals(java.util.List.of("{\"event\":\"after_clear\"}"), store.snapshot().lines());
     }
+
+    @Test public void summaryUsesEventTimeAndSeparatesProcessesVersionsAndIncompleteRecords() throws Exception {
+        JSONObject summary = DiagnosticLogStore.summary(java.util.List.of(
+            "{\"event\":\"host_error\",\"source\":\"host\",\"time\":300,\"pid\":11,\"ver\":10,\"hostDropped\":2}",
+            "{\"event\":\"observation\",\"source\":\"module\",\"time\":200,\"pid\":22}",
+            "{\"event\":\"capture_complete\",\"source\":\"accessibility\",\"time\":250,\"pid\":44}",
+            "invalid-json",
+            "{\"event\":\"host_error\",\"source\":\"host\",\"time\":100,\"pid\":33,\"ver\":20,\"hostDeliveryErrors\":3}"
+        ));
+        assertEquals(1, summary.getInt("moduleRecords"));
+        assertEquals(2, summary.getInt("hostRecords"));
+        assertEquals(1, summary.getInt("unknownSourceRecords"));
+        assertEquals("[22]", summary.getJSONArray("modulePids").toString());
+        assertEquals(1, summary.getInt("unreadable"));
+        assertEquals(100, summary.getLong("firstTime"));
+        assertEquals(300, summary.getLong("lastTime"));
+        assertEquals("[11,33]", summary.getJSONArray("hostPids").toString());
+        assertEquals("[10,20]", summary.getJSONArray("hostModuleVersions").toString());
+        assertEquals(2, summary.getLong("hostDroppedMax"));
+        assertEquals(3, summary.getLong("hostDeliveryErrorsMax"));
+        assertEquals(2, summary.getJSONObject("events").getInt("host_error"));
+        assertFalse(DiagnosticLogStore.summary(java.util.List.of()).has("firstTime"));
+    }
+
+    @Test public void zipIncludesCurrentEnvironmentEvenWhenNoDetailedRecordsWereCaptured() throws Exception {
+        DiagnosticLogStore store = new DiagnosticLogStore(temporary.newFolder(), 1000);
+        JSONObject state = new JSONObject().put("host", new JSONObject().put("profile", "modern"))
+            .put("config", new JSONObject().put("enabled", false));
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        store.exportZip(bytes, false, state);
+        JSONObject environment = null;
+        try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(bytes.toByteArray()))) {
+            java.util.zip.ZipEntry entry;
+            while ((entry = zip.getNextEntry()) != null) {
+                if (entry.getName().equals("environment.json"))
+                    environment = new JSONObject(new String(zip.readAllBytes(), StandardCharsets.UTF_8));
+            }
+        }
+        assertNotNull(environment);
+        assertEquals(DiagnosticEnvironment.SCHEMA, environment.getInt("schema"));
+        assertEquals(0, environment.getInt("records"));
+        assertEquals("modern", environment.getJSONObject("host").getString("profile"));
+        assertFalse(environment.getJSONObject("config").getBoolean("enabled"));
+        assertEquals(0, environment.getJSONObject("log").getInt("hostRecords"));
+    }
 }

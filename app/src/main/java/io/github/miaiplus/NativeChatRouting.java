@@ -45,27 +45,41 @@ final class NativeChatRouting {
     private NativeChatRouting() { }
 
     static boolean requestsBackgroundTools(String query) {
-        if (query == null || query.isBlank()) return false;
-        String text = query.strip().toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");
-        // Search terms, text to enter and a request's final explanation can themselves
-        // contain question words. Only a question at the start selects the ordinary route.
-        if (EXPLANATION.matcher(text).find() || CAPABILITY_QUESTION.matcher(text).find()
-            || NEGATED.matcher(text).find()) return false;
-        if (text.contains(PhoneUseRouting.BACKGROUND_TOOL)) return true;
-        return BACKGROUND.matcher(text).find() && ACTION.matcher(text).find();
+        return PhoneUseRouting.BACKGROUND_TOOL.equals(decide(query).tool());
     }
 
     /** Returns only the requested capability; plugin availability is checked at submission. */
-    static String requestedPhoneTool(String query) {
-        if (requestsBackgroundTools(query)) return PhoneUseRouting.BACKGROUND_TOOL;
-        if (query == null || query.isBlank()) return "";
+    static String requestedPhoneTool(String query) { return decide(query).tool(); }
+
+    /**
+     * The requested capability and the rule that decided it. The rule is a fixed label, never the wording: it
+     * is what a diagnostic record keeps, so "the request was not sent to the agent" can be traced to a pattern.
+     */
+    record Decision(String tool, String rule) { }
+
+    static Decision decide(String query) {
+        if (query == null || query.isBlank()) return new Decision("", "blank");
         String text = query.strip().toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");
-        if (EXPLANATION.matcher(text).find() || CAPABILITY_QUESTION.matcher(text).find()
-            || CONTROL_QUESTION.matcher(text).find() || NO_CONTROL.matcher(text).find()
-            || ADVICE_REQUEST.matcher(text).find()
-            || NEGATED.matcher(text).find() || BACKGROUND.matcher(text).find()) return "";
-        return PHONE_CONTROL.matcher(text).find() || APP_OPERATION.matcher(text).find()
-            ? PhoneUseRouting.FOREGROUND_TOOL : "";
+        // Search terms, text to enter and a request's final explanation can themselves
+        // contain question words. Only a question at the start selects the ordinary route.
+        boolean explanation = EXPLANATION.matcher(text).find(), capability = CAPABILITY_QUESTION.matcher(text).find();
+        boolean negated = NEGATED.matcher(text).find(), background = BACKGROUND.matcher(text).find();
+        if (!explanation && !capability && !negated) {
+            if (text.contains(PhoneUseRouting.BACKGROUND_TOOL))
+                return new Decision(PhoneUseRouting.BACKGROUND_TOOL, "background_tool_name");
+            if (background && ACTION.matcher(text).find())
+                return new Decision(PhoneUseRouting.BACKGROUND_TOOL, "background_action");
+        }
+        if (explanation) return new Decision("", "explanation");
+        if (capability) return new Decision("", "capability_question");
+        if (CONTROL_QUESTION.matcher(text).find()) return new Decision("", "control_question");
+        if (NO_CONTROL.matcher(text).find()) return new Decision("", "no_control");
+        if (ADVICE_REQUEST.matcher(text).find()) return new Decision("", "advice_request");
+        if (negated) return new Decision("", "negated_background");
+        if (background) return new Decision("", "background_without_action");
+        if (PHONE_CONTROL.matcher(text).find()) return new Decision(PhoneUseRouting.FOREGROUND_TOOL, "phone_control");
+        if (APP_OPERATION.matcher(text).find()) return new Decision(PhoneUseRouting.FOREGROUND_TOOL, "app_operation");
+        return new Decision("", "no_match");
     }
 
     static Scope begin(Object callback, boolean forceAgent) {

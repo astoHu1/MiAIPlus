@@ -45,17 +45,31 @@ final class NativeChatRoutingHook {
         // Stop the UI submit explicitly when configuration cannot be read.
         hooks.add(Hooks.hookMethod(callback.getDeclaredMethod(HostCompatibility.choose("A", "B"), String.class, String.class), new HookCallback() {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
+                // This is where a typed request is sent to XiaoAi's agent or left on its ordinary path. The
+                // wording never leaves this method; the record keeps the rule that matched and what it led to.
+                String query = (String)p.args[0];
+                var decision = NativeChatRouting.decide(query);
+                String stage = "model_config";
                 try {
                     var settings = NativeModelHook.requestConfig(context);
-                    String requestedTool = NativeChatRouting.requestedPhoneTool((String)p.args[0]);
-                    boolean phoneUse = !settings.getBoolean("globalModel") && !requestedTool.isEmpty()
-                        && NativePluginTools.availableForRouting(context, requestedTool);
+                    String requestedTool = decision.tool();
+                    boolean global = settings.getBoolean("globalModel"), available = false;
+                    if (!global && !requestedTool.isEmpty()) {
+                        stage = "plugin_catalog";
+                        available = NativePluginTools.availableForRouting(context, requestedTool);
+                    }
+                    boolean phoneUse = !global && !requestedTool.isEmpty() && available;
                     // D()/C() runs synchronously inside this submission. Do not leave a flag on
                     // the callback or the main thread for a later, unrelated chat to consume.
                     p.setObjectExtra("phoneChatRoute", NativeChatRouting.begin(p.thisObject, phoneUse));
+                    PhoneUseLog.hostEvent("chat_route", "entry", "text", "route", HostTrace.route(phoneUse || global),
+                        "queryChars", query == null ? -1 : query.length(), "rule", decision.rule(),
+                        "tool", requestedTool, "globalModel", global, "toolAvailable", available,
+                        "agent", phoneUse ? "forced_for_tool" : global ? "forced_global_model" : "host_default");
                 }
                 catch (Exception unavailable) {
                     p.setResult(null);
+                    PhoneUseLog.hostFailure("chat_route", unavailable, "stage", stage, "rule", decision.rule());
                     Toast.makeText(context, "模型配置不可用，请检查 MiAIPlus 后重试", Toast.LENGTH_LONG).show();
                 }
             }

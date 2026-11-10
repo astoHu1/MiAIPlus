@@ -6,13 +6,16 @@ public final class HostCompatibility {
     private HostCompatibility() {}
 
     static boolean select(String versionName, long versionCode) {
-        modern = false;
-        if (versionCode == 508002065L && "8.2.65.4714".equals(versionName)) return true;
-        if (versionCode == 508003030L && "8.3.30.4420".equals(versionName)) {
-            modern = true;
-            return true;
-        }
-        return false;
+        String profile = profile(versionName, versionCode);
+        modern = profile.equals("modern");
+        return !profile.equals("unsupported");
+    }
+
+    /** Which pinned binding set an installed XiaoAi matches. Pure, so a diagnostic export can ask too. */
+    static String profile(String versionName, long versionCode) {
+        if (versionCode == 508002065L && "8.2.65.4714".equals(versionName)) return "legacy";
+        if (versionCode == 508003030L && "8.3.30.4420".equals(versionName)) return "modern";
+        return "unsupported";
     }
 
     static boolean modern() { return modern; }

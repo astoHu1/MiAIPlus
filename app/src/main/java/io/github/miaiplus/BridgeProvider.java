@@ -28,13 +28,121 @@ public final class BridgeProvider extends ContentProvider {
     // A task spans all native CONTINUE calls, including the idle model-planning gaps.
     private static String screenTaskId;
     private static boolean screenTaskActive;
-    @Override public boolean onCreate() { PhoneUseLog.init(getContext()); return true; }
+    // Memory-only reachability facts for the diagnostic export. Updated on every host call, never logged per call.
+    private static final java.util.concurrent.atomic.AtomicLong hostCalls = new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong deniedCalls = new java.util.concurrent.atomic.AtomicLong();
+    private static volatile long lastHostCallAt, lastFlagsAt, lastCatalogAt;
+    private static volatile int lastHostPid;
+    private static volatile String lastHostMethod = "";
+    private static final java.util.Set<String> HOST_METHODS = java.util.Set.of("flags", "start", "poll", "cancel",
+        "screen_ready", "screen_state", "stop_screen", "model_config", "set_reasoning", "conversation_settings",
+        "hook_report", "hook_status", "model_exhausted", "model_finished", "foreground_consent", "action_confirmation",
+        "phone_use_log_settings", "phone_use_log_append", "plugin_catalog", "plugin_start", "plugin_poll",
+        "plugin_cancel", "plugin_busy");
+    private static final java.util.Set<String> STATUS_KEYS = java.util.Set.of("phase", "stage", "reason", "exception",
+        "site", "causes", "causeSite", "binding", "hostVersionName", "hostVersionCode", "profile", "process",
+        "moduleVersionName", "moduleVersionCode", "hooks", "unguarded", "optional", "frameworkName",
+        "frameworkVersion", "frameworkVersionCode", "frameworkApi", "gate", "pid");
+    private static final java.util.Set<String> STATUS_NUMBERS = java.util.Set.of("hostVersionCode", "moduleVersionCode",
+        "hooks", "unguarded", "frameworkVersionCode", "frameworkApi", "pid");
+    private static final String SYMBOL = "[A-Za-z_$][A-Za-z0-9_.$]*";
+    @Override public boolean onCreate() {
+        PhoneUseLog.init(getContext());
+        // A new pid here after a task started means the module process was replaced and its tasks were lost.
+        PhoneUseLog.event("module_process_start", "versionCode", BuildConfig.VERSION_CODE);
+        return true;
+    }
     private void enforceCaller() {
         int uid = Binder.getCallingUid();
         if (uid == Process.myUid()) return;
         String[] packages = getContext().getPackageManager().getPackagesForUid(uid);
-        if (packages == null || !Arrays.asList(packages).contains("com.miui.voiceassist"))
+        if (packages == null || !Arrays.asList(packages).contains("com.miui.voiceassist")) {
+            deniedCalls.incrementAndGet();
             throw new SecurityException("MiAIPlus bridge is private to XiaoAi");
+        }
+    }
+    /** Whether XiaoAi has reached this process at all, and when; an idle bridge and a disabled module look alike otherwise. */
+    static JSONObject bridgeSnapshot() throws org.json.JSONException {
+        long now = System.currentTimeMillis();
+        JSONObject bridge = new JSONObject().put("hostCalls", hostCalls.get()).put("deniedCalls", deniedCalls.get())
+            .put("lastHostMethod", lastHostMethod).put("lastHostPid", lastHostPid);
+        if (lastHostCallAt > 0) bridge.put("lastHostCallAgeMs", now - lastHostCallAt);
+        if (lastFlagsAt > 0) bridge.put("lastFlagsAgeMs", now - lastFlagsAt);
+        if (lastCatalogAt > 0) bridge.put("lastCatalogAgeMs", now - lastCatalogAt);
+        synchronized (JOBS) {
+            RunState current = active;
+            bridge.put("jobs", JOBS.size()).put("activeRun", current != null)
+                .put("screenTaskActive", screenTaskActive).put("probeRunning", backgroundProbeRunning);
+        }
+        return bridge.put("nativeSession", NativeSession.hasActiveSession())
+            .put("nativePending", NativeSession.hasPendingOperation())
+            .put("backgroundDisplayOpen", BackgroundDisplay.active() != null);
+    }
+    private static String methodName(String method) { return HOST_METHODS.contains(method) ? method : "other"; }
+    private static Bundle rejected(Bundle b, String reason, String mode, String query, String message) {
+        // The model is told why in words; the log needs the branch, without the goal or the session id.
+        PhoneUseLog.event("start_rejected", "reason", reason, "mode", "chat".equals(mode) ? "chat" : "screen",
+            "continuation", query != null && query.startsWith("MIAIPLUS:"),
+            "activeRun", active != null, "nativeSession", NativeSession.hasActiveSession(),
+            "nativePending", NativeSession.hasPendingOperation(),
+            "displayOpen", BackgroundDisplay.active() != null);
+        b.putString("error", message);
+        return b;
+    }
+    private static String resultKind(String text) {
+        if (text == null || text.isEmpty()) return "empty";
+        for (String kind : new String[]{"CONTINUE", "STOP", "PAUSE"}) if (text.startsWith(kind)) return kind;
+        return "other";
+    }
+    /** Kept both when receiving a status and when exporting an older persisted one. */
+    static JSONObject sanitizeHookStatus(JSONObject received) throws org.json.JSONException {
+        JSONObject kept = new JSONObject();
+        for (String key : STATUS_KEYS) {
+            Object value = received.opt(key);
+            if (STATUS_NUMBERS.contains(key)) {
+                // Framework API metadata is sent as strings by the host; normalize it to an integer.
+                if (value instanceof Byte || value instanceof Short || value instanceof Integer || value instanceof Long) {
+                    if (((Number)value).longValue() >= 0) kept.put(key, ((Number)value).longValue());
+                } else if (key.startsWith("framework") && value instanceof String text && text.matches("[0-9]{1,10}")) {
+                    kept.put(key, Long.parseLong(text));
+                }
+            } else if (value instanceof String text && text.length() <= 240) {
+                String safe = statusText(key, text);
+                if (safe != null) kept.put(key, safe);
+            }
+        }
+        return kept;
+    }
+    private static String statusText(String key, String text) {
+        boolean valid = switch (key) {
+            case "phase" -> java.util.Set.of("ready", "unsupported", "rolled_back", "reload_refused", "reload_cleanup_failed").contains(text);
+            case "stage" -> java.util.Set.of("host_version", "interaction_ui", "control_app", "tool_definitions", "prompt_builder",
+                "conversation_limits", "conversation", "model", "probes", "diagnostics", "ready", "model.plugin_tools",
+                "model.turn_lifecycle", "model.intent", "model.reasoning", "model.chat_routing", "model.voice_routing",
+                "model.messages", "model.turn_stop", "model.transport", "model.memory").contains(text);
+            case "reason" -> java.util.Set.of("hook_call_in_progress", "screen_task_running", "model_request_running", "plugin_call_running").contains(text);
+            case "profile" -> java.util.Set.of("legacy", "modern", "unsupported").contains(text);
+            case "gate" -> java.util.Set.of("unknown", "flags_true", "flags_false", "bridge_null").contains(text)
+                || text.matches("bridge_exception:" + SYMBOL);
+            case "process" -> text.matches("com\\.miui\\.voiceassist(?::[A-Za-z0-9_.]+)?");
+            case "exception" -> text.matches(SYMBOL);
+            case "causes" -> text.matches(SYMBOL + "(?:>" + SYMBOL + "){0,5}");
+            case "site", "causeSite" -> text.isEmpty() || text.matches("[A-Za-z0-9_.$]+(?:\\.<(?:cl)?init>)?(?::[0-9]+)?(?:<[A-Za-z0-9_.$]+(?:\\.<(?:cl)?init>)?(?::[0-9]+)?){0,2}");
+            case "binding" -> text.matches("(?:(?:Missing host (?:class|method|field)|Missing compatible host (?:method|constructor)|Ambiguous host (?:overload|constructor)): )?"
+                + SYMBOL + "(?:\\((?:" + SYMBOL + "(?:\\[\\])*(?:, " + SYMBOL + "(?:\\[\\])*)*)?\\))?");
+            case "optional" -> text.isEmpty() || text.matches("(?:error_handler|agent_error|agent_support)(?:,(?:error_handler|agent_error|agent_support)){0,2}");
+            case "hostVersionName", "moduleVersionName" -> text.matches("[0-9]+(?:\\.[0-9]+){1,5}(?:-(?:preview|debug|alpha|beta|rc)(?:[0-9.]*)?)?");
+            case "frameworkVersion" -> text.matches("[vV]?[0-9]+(?:[._-][0-9]+)*(?:-(?:release|preview|debug|alpha|beta|rc)[0-9.]*)?(?: \\([0-9]+\\))?");
+            default -> false;
+        };
+        if (key.equals("frameworkName")) {
+            String lower = text.toLowerCase(java.util.Locale.ROOT);
+            if (lower.contains("lsposed")) return "LSPosed";
+            if (lower.contains("vector")) return "Vector";
+            if (lower.contains("xposed")) return "Xposed";
+            return "other";
+        }
+        return valid ? text : null;
     }
     @Override public Bundle call(String method, String arg, Bundle extras) {
         if (method.equals("accessibility_health") || method.equals("accessibility_recover")) {
@@ -58,11 +166,25 @@ public final class BridgeProvider extends ContentProvider {
             return backgroundDisplay(method.equals("background_display_probe"), arg, extras);
         }
         enforceCaller();
+        if (Binder.getCallingUid() != Process.myUid()) {
+            long now = System.currentTimeMillis();
+            hostCalls.incrementAndGet(); lastHostCallAt = now; lastHostPid = Binder.getCallingPid();
+            lastHostMethod = methodName(method);
+            if (method.equals("flags")) lastFlagsAt = now;
+            if (method.equals("plugin_catalog")) lastCatalogAt = now;
+        }
         // Remote plugin jobs have their own bounded executor and never claim a screen task.
         if (method.startsWith("plugin_")) {
             int uid = Binder.getCallingUid();
+            if (method.equals("plugin_catalog")) {
+                try { return PluginRuntime.catalog(getContext()); }
+                catch (RuntimeException failure) {
+                    // The host only sees an unavailable catalog and withdraws every tool; the cause is here.
+                    PhoneUseLog.failure("plugin_catalog", failure);
+                    throw failure;
+                }
+            }
             return switch (method) {
-                case "plugin_catalog" -> PluginRuntime.catalog(getContext());
                 case "plugin_start" -> PluginRuntime.start(getContext(), uid, extras);
                 case "plugin_poll" -> PluginRuntime.poll(getContext(), uid, arg);
                 case "plugin_cancel" -> PluginRuntime.cancel(uid, arg);
@@ -89,13 +211,28 @@ public final class BridgeProvider extends ContentProvider {
             }
             return b;
         }
+        if (method.equals("hook_status")) {
+            // Structured install state for the diagnostic export. Fixed keys and bounded scalars only, and a
+            // separate slot for reload refusals so a busy old generation cannot overwrite the install report.
+            String status = extras == null ? null : extras.getString("status");
+            if (status != null && status.length() <= 4096) {
+                try {
+                    JSONObject kept = sanitizeHookStatus(new JSONObject(status));
+                    boolean reload = "reload".equals(extras.getString("slot"));
+                    Config.prefs(getContext()).edit()
+                        .putString(reload ? "hook_reload" : "hook_status", kept.toString())
+                        .putLong(reload ? "hook_reload_at" : "hook_status_at", System.currentTimeMillis()).apply();
+                } catch (org.json.JSONException ignored) { /* Invalid diagnostic data is discarded. */ }
+            }
+            return b;
+        }
         Config config = new Config(getContext());
         if (method.equals("hook_report")) {
             String report = extras == null ? "" : extras.getString("report", "");
             Config.prefs(getContext()).edit().putString("hook_report", report).putLong("hook_at", System.currentTimeMillis()).apply();
             return b;
         }
-        if (method.equals("stop_screen")) { cancelActive(); return b; }
+        if (method.equals("stop_screen")) { cancelActive("user_stop"); return b; }
         if (method.equals("model_exhausted") || method.equals("model_finished")) {
             synchronized (JOBS) {
                 refreshScreenTask();
@@ -106,21 +243,26 @@ public final class BridgeProvider extends ContentProvider {
                         ? "小爱主模型已达到最大执行轮次，无法继续调用控屏工具"
                         : "小爱主模型已结束本轮，未提交控屏完成确认");
                     screenResult = screenStopReason;
-                    cancelActive();
+                    cancelActive(method.equals("model_exhausted") ? "host_model_exhausted" : "host_turn_finished");
                     refreshScreenTask();
                 }
                 b.putBoolean("accepted", matches);
             }
+            // A turn that ends without a matching task is normal; one that stops a task explains its ending.
+            if (b.getBoolean("accepted")) PhoneUseLog.event("host_turn_stop", "signal", method);
             return b;
         }
         if (method.equals("foreground_consent") || method.equals("action_confirmation")) {
+            boolean current;
             synchronized (JOBS) {
-                boolean current = screenTaskActive && java.util.Objects.equals(arg, screenTaskId)
+                current = screenTaskActive && java.util.Objects.equals(arg, screenTaskId)
                     && active != null && active.owner == Binder.getCallingUid() && !active.cancelled.get();
                 b.putBoolean("accepted", current && (method.equals("action_confirmation")
                     ? ActionConfirmation.respond(arg, Binder.getCallingUid(), extras)
                     : ForegroundConsent.respond(arg, Binder.getCallingUid(), extras)));
             }
+            PhoneUseLog.event("prompt_answer", "kind", method, "allow", extras != null && extras.getBoolean("allow"),
+                "accepted", b.getBoolean("accepted"), "taskCurrent", current);
             return b;
         }
         if (method.equals("screen_state")) {
@@ -181,13 +323,16 @@ public final class BridgeProvider extends ContentProvider {
             return b;
         }
         if (method.equals("start")) {
-            if (!config.enabled) { b.putString("error", "MiAIPlus 未启用"); return b; }
             String query = extras == null ? null : extras.getString("query");
             String mode = extras == null ? "screen" : extras.getString("mode", "screen");
+            if (!config.enabled) return rejected(b, "module_disabled", mode, query, "MiAIPlus 未启用");
             final PhoneUseRouting.Request route;
             try { route = mode.equals("screen") ? PhoneUseRouting.decode(query, config.backgroundDisplay)
                 : new PhoneUseRouting.Request(query, false, ""); }
-            catch (Exception e) { b.putString("error", publicError(e)); return b; }
+            catch (Exception e) {
+                PhoneUseLog.failure("start_route", e);
+                return rejected(b, "route_invalid", mode, query, publicError(e));
+            }
             if (mode.equals("screen")) {
                 final boolean originalBackground;
                 try {
@@ -195,39 +340,41 @@ public final class BridgeProvider extends ContentProvider {
                         ? NativeSession.continuationBackground(query, Binder.getCallingUid(), route.sourceTool())
                         : route.sourceTool().isEmpty() ? route.background() : PhoneUseRouting.background(route.sourceTool());
                 } catch (Exception invalid) {
-                    b.putString("error", PhoneUseResult.stopped(publicError(invalid))); return b;
+                    PhoneUseLog.failure("start_continuation", invalid);
+                    return rejected(b, "continuation_invalid", mode, query, PhoneUseResult.stopped(publicError(invalid)));
                 }
                 try {
                     String pluginId = originalBackground ? PluginSettings.BACKGROUND_ID : PluginSettings.FOREGROUND_ID;
-                    if (!PluginSettings.load(getContext()).find(pluginId).enabled()) {
-                        b.putString("error", PhoneUseResult.stopped("对应 Phone Use 插件已停用")); return b;
-                    }
+                    if (!PluginSettings.load(getContext()).find(pluginId).enabled())
+                        return rejected(b, originalBackground ? "background_plugin_disabled" : "foreground_plugin_disabled",
+                            mode, query, PhoneUseResult.stopped("对应 Phone Use 插件已停用"));
                 } catch (Exception unavailable) {
-                    b.putString("error", PhoneUseResult.stopped("插件配置不可用")); return b;
+                    PhoneUseLog.failure("start_plugin_settings", unavailable);
+                    return rejected(b, "plugin_settings_unavailable", mode, query, PhoneUseResult.stopped("插件配置不可用"));
                 }
             }
             query = route.query();
             final String taskQuery = query;
-            if (!mode.equals("screen") && !mode.equals("chat")) { b.putString("error", "未知模式"); return b; }
-            if (NativeSession.hasActiveSession() && (!mode.equals("screen") || !config.planner.equals("native"))) {
-                b.putString("error", "已有小爱逐步控屏会话，请先停止"); return b;
-            }
-            if (NativeSession.hasActiveSession() && (query == null || !query.startsWith("MIAIPLUS:"))) {
-                b.putString("error", "已有控屏会话，请先停止或继续当前会话"); return b;
-            }
+            if (!mode.equals("screen") && !mode.equals("chat")) return rejected(b, "unknown_mode", mode, query, "未知模式");
+            if (NativeSession.hasActiveSession() && (!mode.equals("screen") || !config.planner.equals("native")))
+                return rejected(b, "native_session_active", mode, query, "已有小爱逐步控屏会话，请先停止");
+            if (NativeSession.hasActiveSession() && (query == null || !query.startsWith("MIAIPLUS:")))
+                return rejected(b, "session_active_new_goal", mode, query, "已有控屏会话，请先停止或继续当前会话");
             synchronized (JOBS) {
-                if (backgroundProbeRunning) { b.putString("error", "后台显示检测进行中，请等待检测结束"); return b; }
-                if (active != null) { b.putString("error", "已有任务执行中，请先停止"); return b; }
+                if (backgroundProbeRunning) return rejected(b, "display_probe_running", mode, query, "后台显示检测进行中，请等待检测结束");
+                if (active != null) return rejected(b, "run_active", mode, query, "已有任务执行中，请先停止");
                 if (!NativeSession.hasActiveSession()
-                    && (BackgroundDisplay.active() != null || NativeSession.hasPendingOperation())) {
-                    b.putString("error", "上一控屏任务仍在清理，请等待结束"); return b;
-                }
+                    && (BackgroundDisplay.active() != null || NativeSession.hasPendingOperation()))
+                    return rejected(b, "cleanup_pending", mode, query, "上一控屏任务仍在清理，请等待结束");
                 // A stale continuation is a rejected call, not a new screen task. Reserving a task here
                 // would reopen the focus island and hide/show the chat on every model retry.
                 if (mode.equals("screen") && config.planner.equals("native")
                     && query != null && query.startsWith("MIAIPLUS:")) {
                     try { NativeSession.verifyContinuation(query, Binder.getCallingUid(), route.sourceTool()); }
-                    catch (Exception invalid) { b.putString("error", PhoneUseResult.stopped(publicError(invalid))); return b; }
+                    catch (Exception invalid) {
+                        PhoneUseLog.failure("start_continuation", invalid);
+                        return rejected(b, "continuation_stale", mode, query, PhoneUseResult.stopped(publicError(invalid)));
+                    }
                 }
                 JOBS.entrySet().removeIf(e -> !e.getValue().status.equals("running")
                     && android.os.SystemClock.elapsedRealtime() > e.getValue().deadline + 300_000);
@@ -242,26 +389,44 @@ public final class BridgeProvider extends ContentProvider {
                 }
                 if (!run.screen || extras == null || !extras.getBoolean("screen_ui")) run.screenReady.countDown();
                 active = run; JOBS.put(run.id, run);
-                var timeout = WATCHDOG.schedule(run::cancel, RunState.STEP_BUDGET_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+                var timeout = WATCHDOG.schedule(() -> run.cancel("step_watchdog"), RunState.STEP_BUDGET_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+                final boolean continuation = query != null && query.startsWith("MIAIPLUS:");
+                final long accepted = android.os.SystemClock.elapsedRealtime();
                 WORKER.execute(() -> {
-                    try {
-                        if (!run.screenReady.await(6, java.util.concurrent.TimeUnit.SECONDS))
-                            throw new IllegalStateException("小爱交互界面未就绪，已停止");
-                        run.check();
-                        if (run.preparingScreen) {
-                            AccessibilityGuard.prepare(getContext(), run);
-                            run.preparingScreen = false;
+                    // Everything before the engine used to be invisible: a missing interface, a failed
+                    // accessibility recovery and a stop during either all ended as the same sentence.
+                    String phase = "ui_wait";
+                    try (PhoneUseLog.Scope ignored = PhoneUseLog.scope(run.id, 0)) {
+                        try {
+                            if (!run.screenReady.await(6, java.util.concurrent.TimeUnit.SECONDS))
+                                throw new IllegalStateException("小爱交互界面未就绪，已停止");
                             run.check();
+                            if (run.preparingScreen) {
+                                phase = "accessibility";
+                                AccessibilityGuard.prepare(getContext(), run);
+                                run.preparingScreen = false;
+                                run.check();
+                            }
+                            phase = "engine";
+                            String text = AgentEngine.run(config, mode, taskQuery, run, route.background(), route.sourceTool());
+                            run.result = text.length() > 24000 ? text.substring(0, 24000) + "\n[结果过长已截断]" : text;
+                            phase = "finish";
+                            run.check(); run.status = "done";
                         }
-                        String text = AgentEngine.run(config, mode, taskQuery, run, route.background(), route.sourceTool());
-                        run.result = text.length() > 24000 ? text.substring(0, 24000) + "\n[结果过长已截断]" : text;
-                        run.check(); run.status = "done";
-                    }
-                    catch (Exception e) {
-                        // Keep exception details out of IPC to avoid echoing API bodies or typed content.
-                        String reason = run.cancelled.get() ? "任务已停止或超时" : publicError(e);
-                        run.result = run.screen ? PhoneUseResult.stopped(reason) : reason;
-                        run.status = "error";
+                        catch (Exception e) {
+                            // The engine records its own failures; the phases around it had no record at all.
+                            if (!phase.equals("engine")) PhoneUseLog.failure("run_" + phase, e);
+                            // Keep exception details out of IPC to avoid echoing API bodies or typed content.
+                            String reason = run.cancelled.get() ? "任务已停止或超时" : publicError(e);
+                            run.result = run.screen ? PhoneUseResult.stopped(reason) : reason;
+                            run.status = "error";
+                        } finally {
+                            PhoneUseLog.event("run_end", "status", run.status, "phase", phase,
+                                "mode", run.screen ? "screen" : "chat", "continuation", continuation,
+                                "cancelled", run.cancelled.get(), "cancelSource", run.cancelSource(),
+                                "resultKind", resultKind(run.result),
+                                "durationMs", android.os.SystemClock.elapsedRealtime() - accepted);
+                        }
                     } finally {
                         timeout.cancel(false);
                         synchronized (JOBS) {
@@ -278,10 +443,13 @@ public final class BridgeProvider extends ContentProvider {
         }
         RunState run = JOBS.get(arg);
         if (run == null || (run.owner != Binder.getCallingUid() && Binder.getCallingUid() != Process.myUid())) {
+            // The host polls a task this process no longer knows: usually the module process was replaced.
+            PhoneUseLog.event("bridge_task_missing", "method", methodName(method), "known", run != null,
+                "jobs", JOBS.size(), "processAgeMs", android.os.SystemClock.elapsedRealtime() - Process.getStartElapsedRealtime());
             b.putString("error", "任务不存在或不可访问"); return b;
         }
         if (method.equals("screen_ready")) run.screenReady.countDown();
-        else if (method.equals("cancel")) run.cancel();
+        else if (method.equals("cancel")) run.cancel("host_cancel");
         else if (!method.equals("poll")) throw new IllegalArgumentException("Unknown bridge method");
         b.putString("status", run.status); b.putString("result", run.result); b.putString("progress", run.progress);
         return b;
@@ -354,7 +522,12 @@ public final class BridgeProvider extends ContentProvider {
         if (cause instanceof org.json.JSONException) return "模型响应不符合动作协议";
         return "任务失败（" + cause.getClass().getSimpleName() + "），未切回原控屏以免重复操作";
     }
-    public static void cancelActive() { RunState run = active; if (run != null) run.cancel(); NativeSession.cancel(); }
+    public static void cancelActive() { cancelActive("module_request"); }
+    public static void cancelActive(String source) {
+        RunState run = active;
+        if (run != null) run.cancel(source);
+        NativeSession.cancel(source);
+    }
     static String screenTaskFor(int owner) {
         synchronized (JOBS) {
             if (active == null || !active.screen || active.owner != owner || !screenTaskActive
@@ -365,8 +538,8 @@ public final class BridgeProvider extends ContentProvider {
     }
     static void onScreenDisconnected() {
         RunState run = active;
-        if (run != null && !run.preparingScreen) run.cancel();
-        NativeSession.cancel();
+        if (run != null && !run.preparingScreen) run.cancel("accessibility_disconnected");
+        NativeSession.cancel("accessibility_disconnected");
     }
     private static void refreshScreenTask() {
         // Called under JOBS. A done tool reply is not a terminal task signal;

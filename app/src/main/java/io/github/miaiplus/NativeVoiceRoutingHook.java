@@ -28,15 +28,31 @@ final class NativeVoiceRoutingHook {
                 String requestId = (String)Reflector.callMethod(p.args[0], "getRequestId");
                 // MiClaw's own Final callback has no request id. It already starts its
                 // agent coroutine and must never be submitted a second time here.
-                String requestedTool = NativeChatRouting.requestedPhoneTool(query);
-                if (requestedTool.isEmpty() || requestId == null || requestId.isBlank()) return;
+                var decision = NativeChatRouting.decide(query);
+                String requestedTool = decision.tool();
+                // Every exit below used to be silent, so a voice request that behaved differently from the same
+                // typed request left nothing to compare. One record per final result names the exit taken.
+                if (requestedTool.isEmpty()) {
+                    // Ordinary speech: no handoff was ever intended. Kept, because "not recognised as a control
+                    // request" is itself the most common complaint.
+                    route(query, decision, "stock", requestId == null || requestId.isBlank() ? "agent_final" : "rule");
+                    return;
+                }
+                if (requestId == null || requestId.isBlank()) { route(query, decision, "stock", "agent_final"); return; }
                 Object manager = Reflector.getObjectField(p.thisObject, "c");
-                if (wasClaimed(manager, requestId)) { p.setResult(null); return; }
-                if (!ownsMainVoiceRequest(manager, requestId)) return;
+                if (wasClaimed(manager, requestId)) { p.setResult(null); route(query, decision, "suppressed", "duplicate_final"); return; }
+                if (!ownsMainVoiceRequest(manager, requestId)) { route(query, decision, "stock", "not_main_request"); return; }
+                String stage = "model_config";
                 try {
                     NativeModelHook.requestConfig(context);
-                    if (!NativePluginTools.availableForRouting(context, requestedTool)) return;
+                    stage = "plugin_catalog";
+                    if (!NativePluginTools.availableForRouting(context, requestedTool)) {
+                        route(query, decision, "stock", "tool_unavailable");
+                        return;
+                    }
                 } catch (Exception unavailable) {
+                    PhoneUseLog.hostFailure("voice_route", unavailable, "stage", stage);
+                    route(query, decision, "stopped", "config_unavailable");
                     stopOwnedRequest(context, manager, requestId);
                     p.setResult(null);
                     return;
@@ -44,15 +60,16 @@ final class NativeVoiceRoutingHook {
                 // Only this current main request can consume the handoff. Repeated
                 // final callbacks cannot cancel or resubmit the new MiClaw turn.
                 p.setResult(null);
-                if (!claim(manager, requestId)) return;
+                if (!claim(manager, requestId)) { route(query, decision, "suppressed", "claim_lost"); return; }
                 Hooks.enter();
                 Runnable handoff = () -> {
                     try {
                         // The user may have cancelled or begun another recording
                         // while this final result waited for the UI thread.
-                        if (!ownsMainVoiceRequest(manager, requestId)) return;
+                        if (!ownsMainVoiceRequest(manager, requestId)) { route(query, decision, "dropped", "owner_changed"); return; }
                         NativeModelHook.requestConfig(context);
                         if (!NativePluginTools.availableForRouting(context, requestedTool)) {
+                            route(query, decision, "stopped", "tool_unavailable_late");
                             stopOwnedRequest(context, manager, requestId);
                             return;
                         }
@@ -60,20 +77,35 @@ final class NativeVoiceRoutingHook {
                         if (sender == null) throw new IllegalStateException("Native chat sender unavailable");
                         // Native support gating, stopEngine, history and floating UI
                         // handling remain in Xiaomi's own submission implementation.
+                        // Recorded before the call: XiaoAi's own gate and any error it raises come after it.
+                        route(query, decision, "handoff", "submitted");
                         Reflector.callMethod(sender, "sendToMiClaw", query, query, null, List.of());
-                        PhoneUseLog.event("native_voice_phone_handoff", "tool", requestedTool);
+                        PhoneUseLog.hostEvent("native_voice_phone_handoff", "tool", requestedTool);
                     } catch (Exception failure) {
-                        PhoneUseLog.failure("native_voice_phone_handoff", failure);
+                        PhoneUseLog.hostFailure("native_voice_phone_handoff", failure);
                         stopOwnedRequest(context, manager, requestId);
                     } finally { Hooks.leave(); }
                 };
                 if (Looper.myLooper() == Looper.getMainLooper()) handoff.run();
                 else if (!new Handler(Looper.getMainLooper()).post(handoff)) {
                     Hooks.leave();
+                    route(query, decision, "stopped", "post_failed");
                     stopOwnedRequest(context, manager, requestId);
                 }
             }
         }));
+    }
+
+    private static void route(String query, NativeChatRouting.Decision decision, String outcome, String reason) {
+        boolean handoff = outcome.equals("handoff");
+        // A new ordinary final must supersede an old typed/tool request. MiClaw's own id-less final and stale
+        // callbacks are not new requests and must not replace the route established by the actual submission.
+        String reference = handoff ? HostTrace.route(true)
+            : reason.equals("rule") || reason.equals("tool_unavailable") || reason.equals("config_unavailable")
+                ? HostTrace.route(false) : "";
+        PhoneUseLog.hostEvent("voice_route", "entry", "voice", "route", reference,
+            "queryChars", query == null ? -1 : query.length(), "rule", decision.rule(), "tool", decision.tool(),
+            "outcome", outcome, "reason", reason);
     }
 
     static boolean ownsMainVoiceRequest(Object manager, String requestId) {
@@ -105,7 +137,11 @@ final class NativeVoiceRoutingHook {
             // Current task/event identity plus the actual main engine's request
             // lifecycle is authoritative; a known finished entry still rejects.
             return !"FINISH".equals(String.valueOf(state));
-        } catch (RuntimeException unavailable) { return false; }
+        } catch (RuntimeException unavailable) {
+            // A lookup that fails on this XiaoAi build reads as "not this request" and silently disables voice.
+            PhoneUseLog.hostFailure("voice_ownership", unavailable);
+            return false;
+        }
     }
 
     private static boolean eventMatches(Object event, String requestId) {
@@ -140,7 +176,7 @@ final class NativeVoiceRoutingHook {
                         HostCompatibility.choose("x", "z"), HostCompatibility.choose("W", "Y")))
                         watchdog.post(() -> Toast.makeText(context,
                             "控屏任务未启动，请检查 MiAIPlus 后重试", Toast.LENGTH_LONG).show());
-                } catch (RuntimeException failure) { PhoneUseLog.failure("native_voice_phone_cancel", failure); }
+                } catch (RuntimeException failure) { PhoneUseLog.hostFailure("native_voice_phone_cancel", failure); }
                 finally { watchdog.removeCallbacks(timeout[0]); pending.finish(); }
             };
             // Xiaomi clears this handler queue when a newer recording starts. A
@@ -154,7 +190,7 @@ final class NativeVoiceRoutingHook {
             } finally {
                 if (!posted) { watchdog.removeCallbacks(timeout[0]); pending.expire(); }
             }
-        } catch (RuntimeException failure) { PhoneUseLog.failure("native_voice_phone_cancel", failure); }
+        } catch (RuntimeException failure) { PhoneUseLog.hostFailure("native_voice_phone_cancel", failure); }
     }
 
     static boolean cancelOwnedTask(Object manager, Object main, String requestId,

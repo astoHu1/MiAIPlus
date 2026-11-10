@@ -193,6 +193,8 @@ public final class PluginRuntime {
                 if (!job.cancelled) { job.result = text; job.status = "done"; }
             }
         } catch (TermuxMcp.Unavailable unavailable) {
+            // Module-authored reasons; the digest tells them apart without the plugin's name or address.
+            PhoneUseLog.failure("plugin_call", unavailable, "kind", "termux");
             synchronized (job) {
                 if (!job.cancelled) {
                     job.termuxStartupFailure = true;
@@ -200,6 +202,10 @@ public final class PluginRuntime {
                 }
             }
         } catch (Exception | LinkageError failure) {
+            // The host is told one sentence for a refused handshake, an HTTP error, a timeout and a changed
+            // configuration. Class, code location and message digest separate them; nothing remote is kept.
+            PhoneUseLog.failure("plugin_call", failure, "kind", job.termux ? "termux" : "mcp",
+                "cancelled", job.cancelled);
             job.cancel("插件工具失败、已停用或配置已更改；远端可能已执行，请勿自动重试");
         } finally {
             try {
