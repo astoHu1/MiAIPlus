@@ -45,7 +45,12 @@ public final class AgentEngine {
         if (config.model.isBlank()) throw new IllegalStateException("请配置模型名称");
         config.completionsUrl();
         if (mode.equals("chat")) {
-            JSONArray messages = new JSONArray().put(ModelClient.message("system", "你是用户选择的第三方对话模型。此请求是纯对话，没有手机工具，也没有手机屏幕上下文。"))
+            // The standalone chat is the only AgentEngine path that may carry the user's prompt, and only when
+            // opted in. The screen loop and the permission audit keep their own fixed instructions.
+            String system = "你是用户选择的第三方对话模型。此请求是纯对话，没有手机工具，也没有手机屏幕上下文。";
+            if (config.promptApplyStandaloneChat)
+                system = PromptInjection.composeStandalone(system, config.customPromptMode, config.customPromptText);
+            JSONArray messages = new JSONArray().put(ModelClient.message("system", system))
                 .put(ModelClient.message("user", query));
             return ModelClient.complete(config, messages, null, run).getString("content");
         }

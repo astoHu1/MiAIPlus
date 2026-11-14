@@ -261,16 +261,28 @@ public final class XiaoAiHook extends XposedModule {
             installed.add(Reflector.findAndHookMethod(builder, name, new HookCallback() {
                 @Override protected void afterHookedMethod(MethodHookParam param) {
                     if (!enabled() || !(param.getResult() instanceof String text)) return;
-                    // Without the policy the model is never told the tools exist; record why it was left out.
+                    // Fetched fresh per call: a saved prompt must reach the next build, and a failure leaves
+                    // the host prompt exactly as XiaoAi produced it.
+                    Bundle prompt;
+                    try { prompt = context.getContentResolver().call(BridgeProvider.URI, "prompt_settings", null, null); }
+                    catch (Throwable unavailable) { prompt = null; }
+                    String mode = prompt == null ? Config.CUSTOM_PROMPT_OFF : prompt.getString("mode", Config.CUSTOM_PROMPT_OFF);
+                    String custom = prompt == null ? "" : prompt.getString("text", "");
+                    boolean apply = prompt != null && Config.effectivePrompt(mode, custom);
+                    // The capability policy is computed from the original host text in every mode, so a replaced
+                    // prompt still tells the model the tools exist.
                     String outcome = "no_marker";
                     int policyChars = 0;
+                    String policy = "";
                     if ((text.contains("voiceassist__controlApp") || text.contains("你是超级小爱") || text.contains("你是用户的智能助手超级小爱"))
                         && !text.contains("[MiAIPlus 扩展能力")) {
-                        String policy = NativePluginTools.promptPolicy(context);
-                        if (!policy.isEmpty()) param.setResult(text + policy);
+                        policy = NativePluginTools.promptPolicy(context);
                         outcome = policy.isEmpty() ? "no_enabled_tool" : "injected";
                         policyChars = policy.length();
                     } else if (text.contains("[MiAIPlus 扩展能力")) outcome = "already_present";
+                    if (prompt == null) outcome = "settings_unavailable";
+                    else if (apply) param.setResult(PromptInjection.compose(text, policy, mode, custom));
+                    else if (!policy.isEmpty()) param.setResult(text + policy);
                     if (HostTrace.changed("prompt_policy:" + name, outcome, 60_000))
                         PhoneUseLog.hostEvent("prompt_policy", "builder", name, "outcome", outcome,
                             "promptChars", text.length(), "policyChars", policyChars);

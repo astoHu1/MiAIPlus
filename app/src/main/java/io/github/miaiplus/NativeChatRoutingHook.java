@@ -1,6 +1,7 @@
 package io.github.miaiplus;
 
 import android.content.Context;
+import android.os.Bundle;
 import android.widget.Toast;
 import io.github.miaiplus.hook.HookCallback;
 import io.github.miaiplus.hook.Hooks;
@@ -60,14 +61,22 @@ final class NativeChatRoutingHook {
                         available = languageRoute ? NativePhoneLanguageRouting.available(context)
                             : NativePluginTools.availableForRouting(context, requestedTool);
                     }
+                    // A custom prompt only reaches the model on the agent path, so an opted-in non-empty prompt
+                    // forces ordinary text submissions there. The C()/D() hook is untouched.
+                    stage = "prompt_settings";
+                    Bundle prompt = context.getContentResolver().call(BridgeProvider.URI, "prompt_settings", null, null);
+                    if (prompt == null) throw new IllegalStateException("MiAIPlus 提示词配置不可用");
+                    boolean promptRoute = PromptInjection.routesTextChat(global, requestedTool, languageRoute,
+                        prompt.getBoolean("routeText"), prompt.getString("mode"), prompt.getString("text"));
                     boolean phoneUse = !global && available;
                     // D()/C() runs synchronously inside this submission. Do not leave a flag on
                     // the callback or the main thread for a later, unrelated chat to consume.
-                    p.setObjectExtra("phoneChatRoute", NativeChatRouting.begin(p.thisObject, phoneUse));
-                    PhoneUseLog.hostEvent("chat_route", "entry", "text", "route", HostTrace.route(phoneUse || global),
+                    p.setObjectExtra("phoneChatRoute", NativeChatRouting.begin(p.thisObject, phoneUse || promptRoute));
+                    PhoneUseLog.hostEvent("chat_route", "entry", "text", "route", HostTrace.route(phoneUse || global || promptRoute),
                         "queryChars", query == null ? -1 : query.length(), "rule", languageRoute && available ? "locale_agent" : decision.rule(),
                         "tool", requestedTool, "globalModel", global, "toolAvailable", available,
-                        "agent", phoneUse ? languageRoute ? "forced_for_language" : "forced_for_tool"
+                        "agent", promptRoute ? "forced_for_prompt"
+                            : phoneUse ? languageRoute ? "forced_for_language" : "forced_for_tool"
                             : global ? "forced_global_model" : "host_default");
                 }
                 catch (Exception unavailable) {

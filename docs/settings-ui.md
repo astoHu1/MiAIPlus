@@ -120,6 +120,25 @@ MCP 管理改为「列表 → 插件详情 → 编辑连接」，操作行与导
 | --- | --- |
 | ![虚拟屏](images/settings-virtual-integrated.png) | ![深色虚拟屏](images/settings-virtual-integrated-dark.png) |
 
+## 系统提示词页
+
+首页「对话」分组下的「系统提示词」进入二级页，摘要显示 `已关闭`、`追加人设 · <名称>` 或 `替换提示词 · <名称>`。它和「模型 API」一样是显式保存的草稿页：离开时若有未保存修改会先询问，底栏上方出现「还原／保存配置」。
+
+| 系统提示词 | 生效方式 | 离开确认 |
+| --- | --- | --- |
+| ![系统提示词](images/settings-prompt.png) | ![生效方式](images/settings-prompt-mode.png) | ![离开确认](images/settings-prompt-leave.png) |
+
+页面分四组：
+
+- **生效方式**：`关闭`（默认）、`追加人设`、`替换系统提示词`。
+- **人设方案**：下拉切换已保存的人设；可改名、`另存为人设`、`删除当前人设`。只剩一套时删除行禁用并说明「至少保留一个人设」。
+- **提示词内容**：最小六行，右下角显示 `n/4000`。超出上限时在输入处截断，不弹出提示。
+- **三个开关**：`文字对话走智能体`、`语音对话也应用`、`独立对话也应用`，默认全关。开关立即写入，不进入草稿，因此不会把未保存的正文一起提交。
+
+草稿只存在于页面状态，提示词正文不写 `SavedStateHandle`。切换人设或另存时若有未保存修改，弹窗提供「保存并切换／放弃并切换」。错误按现有样式显示在列表上方而不是列表内，避免滚动到编辑区后看不见保存失败的提示。
+
+注入语义、隐私边界与验证范围见 [本轮记录](validation/prompt-persona-2026-11-14.md)。
+
 ## 设备专项入口
 
 以下命令仅供已授权、无活动控屏任务的测试设备使用；文档不授予设备操作权限。使用独立测试应用，运行前确认配置可恢复。
@@ -129,6 +148,14 @@ MCP 管理改为「列表 → 插件详情 → 编辑连接」，操作行与导
 adb shell am instrument --user 0 -w -e virtual true \
   io.github.miaiplus.test/io.github.miaiplus.SettingsUiRunner
 ```
+
+MIUI／HyperOS 设备上 `startActivitySync` 会被判为后台启动并被静默丢弃，表现为 `am instrument` 永久挂住、无输出、无截图。每次运行前必须先授予后台弹出界面 op：
+
+```sh
+adb shell cmd appops set io.github.miaiplus 10021 allow
+```
+
+其余陷阱（测试包必须用 `-PsettingsUiTests=true` 构建、残留 instrumentation、`uiautomator dump` 等不到空闲、不要手点验证流程）见 [设备测试环境陷阱](validation/prompt-persona-2026-11-14.md#设备测试环境陷阱务必先读)。
 
 `-e virtualIdle true` 提供 45 秒页面空闲采样窗口，不启动 root 前置检查或能力检测。测试应用标签为「虚拟屏测试」，搜索使用包名 `virtualfixture`，避免误点同名输入框。日志专项入口与清空影响见 [详细日志](phone-use-logging.md#设备回归)。
 

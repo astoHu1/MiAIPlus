@@ -49,6 +49,8 @@ final class EndpointProfilesRunner {
 
     static void runMenus(Instrumentation test) { new EndpointProfilesRunner(test).runMenus(); }
 
+    static void runPrompt(Instrumentation test) { new EndpointProfilesRunner(test).runPrompt(); }
+
     /** Synthetic UI-only menu checks: no model requests, phone-use execution or display probes. */
     private void runMenus() {
         var context = test.getTargetContext();
@@ -140,6 +142,143 @@ final class EndpointProfilesRunner {
                 }
             }
             if (code == Activity.RESULT_OK) result.putString("stream", result.getString("stream") + "Original settings and night mode restored and verified.\n");
+        }
+        test.finish(code, result);
+    }
+
+    /**
+     * Synthetic system-prompt checks: real Compose UI, real preference writes, no model requests.
+     * The prompt text is a fixture, so it never leaves the device through a diagnostic export.
+     */
+    private void runPrompt() {
+        var context = test.getTargetContext();
+        var prefs = Config.prefs(context);
+        Map<String, ?> original = prefs.getAll();
+        Bundle result = new Bundle();
+        int code = Activity.RESULT_CANCELED;
+        boolean changed = false;
+        try {
+            Bundle health = context.getContentResolver().call(BridgeProvider.URI, "accessibility_health", null, null);
+            check(health != null && !health.getBoolean("busy") && !health.getBoolean("preparing"),
+                "Stop active work before prompt UI checks");
+            changed = true;
+            check(prefs.edit().clear().putBoolean("enabled", true).putString("protocol", "phone_use").commit(),
+                "Synthetic prompt fixture save failed");
+            activity = (MainActivity) test.startActivitySync(new Intent(context, MainActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
+            onMain(() -> state = new ViewModelProvider(activity).get(SettingsState.class));
+            settle();
+
+            // The home row states the shipped default before anything is saved.
+            waitFor(() -> findWithScroll(n -> "系统提示词".equals(text(n))) != null, "Home did not render");
+            click("系统提示词");
+            waitFor(() -> find(n -> "生效方式".equals(text(n))) != null, "Prompt page did not open");
+            for (String label : new String[]{"人设方案", "人设名称", "提示词内容", "另存为人设", "删除当前人设",
+                "文字对话走智能体", "语音对话也应用", "独立对话也应用"}) {
+                check(findWithScroll(n -> label.equals(text(n))) != null, "Prompt control missing: " + label);
+            }
+            check(findWithScroll(n -> "0/4000".equals(text(n))) != null, "Prompt counter missing at empty");
+            check(findWithScroll(n -> "至少保留一个人设".equals(text(n))) != null,
+                "Last persona delete is not explained");
+
+            // Mode menu: every option is visible. The mode belongs to the persona draft, so it is
+            // staged here and only reaches the preferences when the bar above the tabs saves.
+            click("生效方式");
+            checkMenuOptions("关闭", "追加人设", "替换系统提示词");
+            capture("prompt-mode-menu-device");
+            click("追加人设");
+            waitFor(() -> "append".equals(state.getPersonaDraft().getMode()), "Mode selection did not stage");
+            check(!prefs.contains(Config.CUSTOM_PROMPT_MODE_KEY), "Mode menu wrote before an explicit save");
+
+            // The editor is a minimal height only; long text must scroll inside it, not be clipped.
+            String fixture = "你是一位严谨的翻译，只输出译文。";
+            edit("", fixture);
+            hideKeyboard();
+            settle();
+            check(findWithScroll(n -> (fixture.length() + "/" + Config.MAX_CUSTOM_PROMPT_CHARS).equals(text(n))) != null,
+                "Prompt counter did not follow the draft");
+            capture("prompt-page-device-draft");
+
+            click("另存为人设");
+            edit("", "翻译助手");
+            click("保存并切换");
+            waitFor(() -> "翻译助手".equals(new PersonaProfiles(prefs).active().name), "New persona did not become active");
+            check(fixture.equals(prefs.getString(Config.CUSTOM_PROMPT_TEXT_KEY, null)), "Persona text snapshot wrong");
+            check("append".equals(new Config(context).customPromptMode), "Saved mode did not reach Config");
+            check(new Config(context).hasEffectivePrompt(), "Saved persona does not read as effective");
+
+            // The host-facing bundle carries the same values the screen shows.
+            Bundle prompt = context.getContentResolver().call(BridgeProvider.URI, "prompt_settings", null, null);
+            check(prompt != null && "append".equals(prompt.getString("mode")) && fixture.equals(prompt.getString("text")),
+                "prompt_settings does not reflect the saved persona");
+
+            // Switches save at once and leave the draft clean.
+            click("文字对话走智能体");
+            waitFor(() -> prefs.getBoolean(Config.PROMPT_ROUTE_TEXT_CHAT_KEY, false), "Route switch did not persist");
+            check(!state.getPromptDirty(), "Prompt switches left unsaved edits");
+            capture("prompt-page-device-light");
+
+            // Leaving with a dirty draft asks, and discarding restores the saved summary.
+            edit(fixture, fixture + "草稿");
+            // The editor keeps the IME up; the tab bar sits under it, so close it before tapping through.
+            // ACTION_SET_TEXT leaves the field focused without an IME transaction, so clear focus too.
+            clearEditorFocus();
+            hideKeyboard(); settle();
+            // Back reaches the same leave guard the tab bar uses, without depending on tab hit areas
+            // once the navigation bar has moved.
+            test.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK); settle();
+            check(find(n -> "保存当前人设？".equals(text(n))) != null, "Dirty prompt did not ask before leaving");
+            capture("prompt-leave-confirm-device");
+            click("放弃修改");
+            waitFor(() -> "prompt-settings" != null, "Discard did not leave the page");
+            check(findWithScroll(n -> "追加人设 · 翻译助手".equals(text(n))) != null,
+                "Home summary does not name the saved persona");
+
+            // Deletion keeps at least one persona.
+            click("系统提示词");
+            click("删除当前人设");
+            click("删除");
+            waitFor(() -> new PersonaProfiles(prefs).profiles.size() == 1, "Persona delete did not run");
+            check("默认人设".equals(new PersonaProfiles(prefs).active().name), "Delete did not fall back to the default");
+            check(!prefs.getAll().toString().contains(fixture), "Deleted persona text survived in preferences");
+            check(findWithScroll(n -> "至少保留一个人设".equals(text(n))) != null,
+                "Last persona delete is not rejected");
+
+            // Diagnostics keep the mode and a character count, never the prompt or the persona name.
+            String exported = DiagnosticEnvironment.snapshot(context).toString();
+            check(exported.contains("\"customPromptMode\""), "Diagnostics omit the prompt mode");
+            check(!exported.contains(fixture) && !exported.contains("翻译助手"),
+                "Diagnostics leaked prompt text or a persona name");
+
+            result.putString("stream", "PASS: default state, mode menu, persona create/switch/delete, flat snapshot, "
+                + "prompt_settings bundle, switches, unsaved-changes prompt and metadata-only diagnostics; "
+                + "five synthetic screenshots; no model requests.\n");
+            code = Activity.RESULT_OK;
+        } catch (Throwable failure) {
+            try { if (activity != null) capture("prompt-ui-failure"); } catch (Exception ignored) { }
+            result.putString("stream", "FAIL: " + android.util.Log.getStackTraceString(failure));
+        } finally {
+            if (activity != null) { onMain(activity::finish); test.waitForIdleSync(); }
+            if (changed) {
+                var editor = prefs.edit().clear();
+                for (var entry : original.entrySet()) {
+                    Object value = entry.getValue(); String key = entry.getKey();
+                    if (value instanceof String v) editor.putString(key, v);
+                    else if (value instanceof Boolean v) editor.putBoolean(key, v);
+                    else if (value instanceof Integer v) editor.putInt(key, v);
+                    else if (value instanceof Long v) editor.putLong(key, v);
+                    else if (value instanceof Float v) editor.putFloat(key, v);
+                    else if (value instanceof Set<?>) {
+                        @SuppressWarnings("unchecked") Set<String> strings = (Set<String>) value;
+                        editor.putStringSet(key, strings);
+                    }
+                }
+                if (!editor.commit() || !original.equals(prefs.getAll())) {
+                    code = Activity.RESULT_CANCELED; result.putString("stream", "FAIL: Prompt settings restore failed\n");
+                }
+            }
+            if (code == Activity.RESULT_OK) result.putString("stream",
+                result.getString("stream") + "Original settings restored and verified.\n");
         }
         test.finish(code, result);
     }
@@ -1002,6 +1141,16 @@ final class EndpointProfilesRunner {
         onMain(() -> visible[0] = activity.getWindow().getDecorView().getRootWindowInsets()
             .isVisible(WindowInsets.Type.ime()));
         if (visible[0]) { test.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK); settle(); }
+    }
+
+    /** Dismisses the editor without touching the draft; ACTION_SET_TEXT leaves no IME to hide. */
+    private void clearEditorFocus() {
+        onMain(() -> {
+            var focused = activity.getCurrentFocus();
+            if (focused != null) focused.clearFocus();
+            activity.getWindow().getDecorView().requestFocus();
+        });
+        settle();
     }
 
     private void settle() { test.waitForIdleSync(); SystemClock.sleep(350); }

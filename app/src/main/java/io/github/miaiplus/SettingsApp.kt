@@ -40,6 +40,7 @@ import top.yukonga.miuix.kmp.icon.basic.ArrowRight
 internal enum class Route(val title: String) {
     Home("MiAIPlus"), Model("模型 API"), Plugins("插件"),
     Control("控屏配置"), Virtual("虚拟屏"), Termux("Termux 配置"), Mcp("MCP 插件"),
+    Prompt("系统提示词"),
     Status("运行状态"), Test("直接测试"), Logs("日志");
 
     val isTab: Boolean get() = this == Home || this == Model || this == Plugins
@@ -86,8 +87,8 @@ internal fun SettingsApp(state: SettingsState, openSettings: (Boolean) -> Unit, 
 
     fun go(next: List<Route>) {
         if (next == stack) return
-        // The model form is the only page with an explicit-save draft; leaving it asks first.
-        if (page == Route.Model && state.dirty) pending = next
+        // Pages with an explicit-save draft ask before leaving.
+        if ((page == Route.Model && state.dirty) || (page == Route.Prompt && state.promptDirty)) pending = next
         else { state.error = null; stack = next }
     }
     fun switchTab(tab: Route) = go(listOf(tab))
@@ -119,7 +120,8 @@ internal fun SettingsApp(state: SettingsState, openSettings: (Boolean) -> Unit, 
         },
         bottomBar = {
             if (page != Route.Logs) Column(Modifier.imePadding()) {
-                if (page == Route.Model && state.dirty) UnsavedBar(state)
+                if (page == Route.Model && state.dirty) UnsavedBar({ state.discard() }, { state.saveProfile() })
+                if (page == Route.Prompt && state.promptDirty) UnsavedBar({ state.discardPersona() }, { state.savePersona() })
                 NavigationBar {
                     Tabs.forEach { tab ->
                         NavigationBarItem(
@@ -146,10 +148,17 @@ internal fun SettingsApp(state: SettingsState, openSettings: (Boolean) -> Unit, 
             }
         }
         ConfirmDialog(
-            show = pending != null, title = "保存当前配置？", summary = null,
+            show = pending != null,
+            title = if (page == Route.Prompt) "保存当前人设？" else "保存当前配置？", summary = null,
             confirm = "保存并离开", onDismiss = { pending = null }, error = state.error,
-            onConfirm = { if (state.saveProfile()) { stack = pending!!; pending = null } },
-            alternative = "放弃修改", onAlternative = { state.discard(); stack = pending!!; pending = null },
+            onConfirm = {
+                val saved = if (page == Route.Prompt) state.savePersona() else state.saveProfile()
+                if (saved) { stack = pending!!; pending = null }
+            },
+            alternative = "放弃修改", onAlternative = {
+                if (page == Route.Prompt) state.discardPersona() else state.discard()
+                stack = pending!!; pending = null
+            },
         )
         // The MCP editor opens from the plugin list (add) and the plugin page (edit).
         McpPluginEditor(state.plugins, onCreated = ::openMcp)
@@ -163,18 +172,19 @@ internal class Navigation(val open: (Route) -> Unit, val back: () -> Unit, val o
 private fun PageBody(route: Route, state: SettingsState, nav: Navigation, mcpId: String?, followLogs: Boolean,
                      openSettings: (Boolean) -> Unit, onScreenTask: () -> Unit) {
     // Lazy pages own their scrolling; everything else scrolls as one column.
-    val ownScroll = route == Route.Model || route == Route.Logs
+    val ownScroll = route == Route.Model || route == Route.Prompt || route == Route.Logs
     val scroll = rememberScrollState()
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         Column(
             Modifier.widthIn(max = 680.dp).fillMaxWidth()
                 .then(if (ownScroll) Modifier else Modifier.verticalScroll(scroll)).imePadding()
-                .padding(top = 8.dp, bottom = if (route == Route.Model) 0.dp else 24.dp),
+                .padding(top = 8.dp, bottom = if (route == Route.Model || route == Route.Prompt) 0.dp else 24.dp),
         ) {
-            if (route != Route.Model) state.error?.let { ErrorGroup(it) }
+            if (route != Route.Model && route != Route.Prompt) state.error?.let { ErrorGroup(it) }
             when (route) {
                 Route.Home -> HomePage(state, nav)
                 Route.Model -> ModelPage(state)
+                Route.Prompt -> PromptPage(state)
                 Route.Plugins -> PluginPage(state.plugins, state.config.enabled, state.config.planner == "native", nav)
                 Route.Control -> ControlPage(state, openSettings, nav)
                 Route.Virtual -> VirtualScreenPage(state)
@@ -189,13 +199,13 @@ private fun PageBody(route: Route, state: SettingsState, nav: Navigation, mcpId:
 }
 
 @Composable
-private fun UnsavedBar(state: SettingsState) {
+private fun UnsavedBar(discard: () -> Unit, save: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
-        TextButton("还原", { state.discard() }, Modifier.weight(1f))
-        PrimaryButton("保存配置", { state.saveProfile() }, Modifier.weight(2f))
+        TextButton("还原", discard, Modifier.weight(1f))
+        PrimaryButton("保存配置", save, Modifier.weight(2f))
     }
 }
 

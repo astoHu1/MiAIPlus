@@ -44,6 +44,7 @@ internal fun HomePage(state: SettingsState, nav: Navigation) {
                 state.error = null
                 editTimeout = true
             })
+        ArrowPreference(title = "系统提示词", summary = promptSummary(state), onClick = { nav.open(Route.Prompt) })
     }
     Section("诊断") {
         ArrowPreference(title = "运行状态", summary = "连接、权限与直接测试", onClick = { nav.open(Route.Status) })
@@ -58,6 +59,17 @@ internal fun HomePage(state: SettingsState, nav: Navigation) {
             else if (state.setConversationTimeoutMinutes(value)) editTimeout = false
         },
         onDismiss = { editTimeout = false; state.error = null })
+}
+
+/** Reads the saved snapshot, never the in-progress draft. */
+private fun promptSummary(state: SettingsState): String {
+    val saved = state.personaSaved ?: return "已关闭"
+    val name = saved.name.ifBlank { "默认人设" }
+    return when (saved.mode) {
+        PromptKeys.MODE_APPEND -> "追加人设 · $name"
+        PromptKeys.MODE_REPLACE -> "替换提示词 · $name"
+        else -> "已关闭"
+    }
 }
 
 private fun controlSummary(state: SettingsState): String {

@@ -1,6 +1,7 @@
 package io.github.miaiplus;
 
 import android.content.Context;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.widget.Toast;
@@ -35,9 +36,46 @@ final class NativeVoiceRoutingHook {
                 // Every exit below used to be silent, so a voice request that behaved differently from the same
                 // typed request left nothing to compare. One record per final result names the exit taken.
                 if (requestedTool.isEmpty() && !languageRoute) {
+                    // Ordinary speech stays on stock behavior unless the user opted into applying the prompt and
+                    // the native chat sender can carry it. A missing sender never cancels the user's voice turn.
+                    Bundle prompt = null;
+                    try { prompt = context.getContentResolver().call(BridgeProvider.URI, "prompt_settings", null, null); }
+                    catch (RuntimeException unavailable) { prompt = null; }
+                    if (prompt != null && prompt.getBoolean("applyVoice")
+                        && Config.effectivePrompt(prompt.getString("mode"), prompt.getString("text"))) {
+                        if (requestId == null || requestId.isBlank()) { route(query, decision, "stock", "agent_final"); return; }
+                        Object manager = Reflector.getObjectField(p.thisObject, "c");
+                        if (wasClaimed(manager, requestId)) { p.setResult(null); route(query, decision, "suppressed", "duplicate_final"); return; }
+                        if (!ownsMainVoiceRequest(manager, requestId)) { route(query, decision, "stock", "not_main_request"); return; }
+                        Object sender = NativeChatRoutingHook.voiceSender(context, loader);
+                        if (sender == null) { route(query, decision, "stock", "sender_unavailable"); return; }
+                        p.setResult(null);
+                        if (!claim(manager, requestId)) { route(query, decision, "suppressed", "claim_lost"); return; }
+                        Hooks.enter();
+                        Runnable handoff = () -> {
+                            try {
+                                if (!ownsMainVoiceRequest(manager, requestId)) { route(query, decision, "dropped", "owner_changed"); return; }
+                                Object current = NativeChatRoutingHook.voiceSender(context, loader);
+                                if (current == null) { route(query, decision, "stock", "sender_unavailable"); return; }
+                                route(query, decision, "handoff", "prompt_applied");
+                                NativeSpeechPolicyHook.voiceHandoff(() -> Reflector.callMethod(current, "sendToMiClaw", query, query, null, List.of()));
+                                PhoneUseLog.hostEvent("native_voice_phone_handoff", "tool", "prompt");
+                            } catch (Exception failure) {
+                                PhoneUseLog.hostFailure("native_voice_phone_handoff", failure);
+                                stopOwnedRequest(context, manager, requestId);
+                            } finally { Hooks.leave(); }
+                        };
+                        if (Looper.myLooper() == Looper.getMainLooper()) handoff.run();
+                        else if (!new Handler(Looper.getMainLooper()).post(handoff)) {
+                            Hooks.leave();
+                            route(query, decision, "stopped", "post_failed");
+                            stopOwnedRequest(context, manager, requestId);
+                        }
+                        return;
+                    }
                     // Ordinary speech: no handoff was ever intended. Kept, because "not recognised as a control
                     // request" is itself the most common complaint.
-                    route(query, decision, "stock", requestId == null || requestId.isBlank() ? "agent_final" : "rule");
+                    route(query, decision, "stock", prompt == null ? "settings_unavailable" : "rule");
                     return;
                 }
                 if (requestId == null || requestId.isBlank()) { route(query, decision, "stock", "agent_final"); return; }

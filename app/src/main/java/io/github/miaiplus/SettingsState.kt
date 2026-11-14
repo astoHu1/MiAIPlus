@@ -27,6 +27,29 @@ data class ProfileDraft(val id: String, val name: String, val endpoint: String,
     fun toProfile() = EndpointProfiles.Profile(id, name, endpoint, apiKey, model, api)
 }
 
+/** Short aliases for the flat runtime keys Config owns; the host reads them through prompt_settings. */
+internal object PromptKeys {
+    const val MODE = Config.CUSTOM_PROMPT_MODE_KEY
+    const val ROUTE_TEXT = Config.PROMPT_ROUTE_TEXT_CHAT_KEY
+    const val APPLY_VOICE = Config.PROMPT_APPLY_VOICE_KEY
+    const val APPLY_STANDALONE = Config.PROMPT_APPLY_STANDALONE_CHAT_KEY
+    const val MODE_OFF = Config.CUSTOM_PROMPT_OFF
+    const val MODE_APPEND = Config.CUSTOM_PROMPT_APPEND
+    const val MODE_REPLACE = Config.CUSTOM_PROMPT_REPLACE
+    const val MAX_NAME_CHARS = PersonaProfiles.MAX_NAME_CHARS
+}
+
+/** Active persona plus the global prompt options; text never goes to SavedStateHandle. */
+data class PersonaDraft(val id: String, val name: String, val text: String, val mode: String,
+                        val routeText: Boolean, val applyVoice: Boolean, val applyStandalone: Boolean) {
+    fun withSwitch(key: String, value: Boolean) = when (key) {
+        PromptKeys.ROUTE_TEXT -> copy(routeText = value)
+        PromptKeys.APPLY_VOICE -> copy(applyVoice = value)
+        PromptKeys.APPLY_STANDALONE -> copy(applyStandalone = value)
+        else -> this
+    }
+}
+
 data class DisplayGeometry(val width: Int, val height: Int, val density: Int)
 
 /** UI state only. Runtime configuration and task safeguards stay in their existing owners. */
@@ -73,10 +96,90 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
         draft != profiles?.active()?.let(::ProfileDraft)
     }
     val external: Boolean get() = config.globalModel || config.planner == "external"
+    var personas by mutableStateOf<PersonaProfiles?>(null)
+        private set
+    /** Last committed persona state; the home summary reads this, never the draft. */
+    var personaSaved by mutableStateOf<PersonaDraft?>(null)
+        private set
+    var personaDraft by mutableStateOf<PersonaDraft?>(null)
+        private set
+    val promptDirty: Boolean by derivedStateOf(structuralEqualityPolicy()) { personaDraft != personaSaved }
 
     init {
         try { loadProfiles() } catch (failure: Exception) { error = failure.message }
+        try { loadPersonas() } catch (failure: Exception) { error = failure.message ?: "无法读取人设" }
         refresh()
+    }
+
+    private fun loadPersonas() {
+        val collection = PersonaProfiles(prefs)
+        val active = collection.active()
+        val values = prefs.all
+        val saved = PersonaDraft(active.id, active.name, Config.truncatePrompt(active.text),
+            Config.normalizePromptMode(values[PromptKeys.MODE]),
+            values[PromptKeys.ROUTE_TEXT] == true, values[PromptKeys.APPLY_VOICE] == true,
+            values[PromptKeys.APPLY_STANDALONE] == true)
+        personas = collection; personaSaved = saved; personaDraft = saved
+    }
+
+    fun updatePersona(name: String? = null, text: String? = null, mode: String? = null) {
+        val current = personaDraft ?: return
+        personaDraft = current.copy(name = name?.take(PromptKeys.MAX_NAME_CHARS) ?: current.name,
+            text = text?.let(Config::truncatePrompt) ?: current.text, mode = mode ?: current.mode)
+        error = null
+    }
+
+    fun discardPersona() { personaDraft = personaSaved; error = null }
+
+    /** Saves the draft into the active persona, or as a new persona when [newName] is given. */
+    fun savePersona(newName: String? = null): Boolean = attempt {
+        val current = requireNotNull(personaDraft) { "无法读取人设" }
+        val collection = requireNotNull(personas) { "无法读取人设" }
+        val name = (newName ?: current.name).trim().take(PromptKeys.MAX_NAME_CHARS)
+        require(name.isNotEmpty()) { "请填写人设名称" }
+        // An empty persona is only kept while the prompt is off; a new persona always needs content.
+        require(current.text.isNotBlank() || (newName == null && current.mode == PromptKeys.MODE_OFF)) {
+            "请填写提示词内容"
+        }
+        val id = if (newName == null) current.id else UUID.randomUUID().toString()
+        require(collection.profiles.none { it.id != id && it.name == name }) { "人设名称已存在" }
+        val editor = prefs.edit()
+        // write() also stages the customPromptText snapshot, so the host only reads flat keys.
+        collection.write(editor, PersonaProfiles.Profile(id, name, Config.truncatePrompt(current.text)), false)
+        editor.putString(PromptKeys.MODE, current.mode)
+        check(editor.commit()) { "保存失败，请重试" }
+        loadPersonas(); config = Config(context)
+        notice = if (newName == null) "已保存" else "已新增人设"
+    }
+
+    fun switchPersona(id: String): Boolean = attempt {
+        val collection = requireNotNull(personas) { "无法读取人设" }
+        val selected = collection.find(id)
+        val editor = prefs.edit()
+        collection.write(editor, selected, false)
+        check(editor.commit()) { "切换失败，请重试" }
+        loadPersonas(); config = Config(context); notice = "已切换人设"
+    }
+
+    fun deletePersona(): Boolean = attempt {
+        val collection = requireNotNull(personas) { "无法读取人设" }
+        check(collection.profiles.size > 1) { "至少保留一个人设" }
+        val next = collection.profiles.first { it.id != collection.activeId }
+        val editor = prefs.edit()
+        collection.write(editor, next, true)
+        check(editor.commit()) { "删除失败，请重试" }
+        loadPersonas(); config = Config(context); notice = "人设已删除"
+    }
+
+    /** Prompt switches save at once through setOption and leave other unsaved draft edits intact. */
+    fun setPromptSwitch(key: String, value: Boolean): Boolean {
+        require(key == PromptKeys.ROUTE_TEXT || key == PromptKeys.APPLY_VOICE || key == PromptKeys.APPLY_STANDALONE)
+        val saved = setOption(key, value)
+        if (saved) {
+            personaSaved = personaSaved?.withSwitch(key, value)
+            personaDraft = personaDraft?.withSwitch(key, value)
+        }
+        return saved
     }
 
     private fun loadProfiles() {

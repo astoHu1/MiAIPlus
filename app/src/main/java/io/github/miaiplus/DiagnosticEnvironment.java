@@ -152,7 +152,13 @@ final class DiagnosticEnvironment {
             .put("endpointConfigured", !config.endpoint.isEmpty()).put("modelConfigured", !config.model.isEmpty())
             .put("apiKeyConfigured", !config.apiKey.isEmpty())
             .put("reasoningCustomized", !"default".equals(config.reasoning))
-            .put("detailedLog", config.phoneUseDetailedLog);
+            .put("detailedLog", config.phoneUseDetailedLog)
+            // The prompt itself and persona names never leave the device; only the mode and a character count.
+            .put("customPromptMode", choice(config.customPromptMode, "off", "append", "replace"))
+            .put("customPromptChars", config.customPromptText.length())
+            .put("promptRouteTextChat", config.promptRouteTextChat)
+            .put("promptApplyVoice", config.promptApplyVoice)
+            .put("promptApplyStandaloneChat", config.promptApplyStandaloneChat);
     }
 
     private static String choice(String value, String... allowed) {
