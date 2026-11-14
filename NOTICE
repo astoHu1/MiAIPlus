@@ -20,3 +20,8 @@ instructions are in third_party/termux-mcp/.
 The MiAIPlus managed Termux adapter (scripts/termux_mcp_managed.py) is
 AGPL-3.0-or-later and is included as source in the separate Python server asset.
 See third_party/termux-mcp/README.md and LICENSE in that directory.
+
+MiAIPlus downloads and privately caches model capability metadata from models.dev
+(models.dev contributors), MIT License. No catalog snapshot or upstream executable
+code is bundled in the APK. Upstream references and the license are in
+third_party/models-dev/.

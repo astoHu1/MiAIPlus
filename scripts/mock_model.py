@@ -99,6 +99,15 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     assert request.get("enable_thinking") is True, "selected native thinking switch missing"
                     assert "reasoning_effort" not in request and "thinking" not in request
+            if request["model"] == "future-effort-fixture":
+                expected_model = "future-effort-fixture"
+                if self.use_responses:
+                    assert request.get("reasoning", {}).get("effort") == "high", "remote Responses effort missing"
+                    assert "reasoning_effort" not in request
+                else:
+                    assert request.get("reasoning_effort") == "high", "remote Chat effort missing"
+                    assert "reasoning" not in request
+                assert not any(k in request for k in ("enable_thinking", "thinking", "temperature", "top_p")), "remote policy fields not applied"
             assert request["model"] == expected_model, "wrong API path for selected fixture model"
             messages = request["messages"]
             task = next(m["content"] for m in messages if m["role"] == "user")

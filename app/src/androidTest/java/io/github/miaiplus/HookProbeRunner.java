@@ -7,8 +7,8 @@ import java.util.Map;
 /** Configure the mock briefly, ask host to trigger the in-process debug smoke, then restore. */
 public class HookProbeRunner extends Instrumentation {
     private String api = "chat";
-    private boolean reasoning, focus, launch, conversation;
-    @Override public void onCreate(Bundle b) { super.onCreate(b); api = b.getString("api", "chat"); reasoning = "true".equals(b.getString("reasoning")); focus = "true".equals(b.getString("focus")); launch = "true".equals(b.getString("launch")); conversation = "true".equals(b.getString("conversation_return")); start(); }
+    private boolean reasoning, remoteReasoning, focus, launch, conversation;
+    @Override public void onCreate(Bundle b) { super.onCreate(b); api = b.getString("api", "chat"); remoteReasoning = "true".equals(b.getString("remote_reasoning")); reasoning = remoteReasoning || "true".equals(b.getString("reasoning")); focus = "true".equals(b.getString("focus")); launch = "true".equals(b.getString("launch")); conversation = "true".equals(b.getString("conversation_return")); start(); }
     private String probe(String token) throws Exception {
         Config.prefs(getTargetContext()).edit().remove("hook_report").commit();
         Bundle status = new Bundle(); status.putString("stream", "MIAIPLUS_RESTART_XIAOAI " + token + "\n"); sendStatus(1, status);
@@ -59,9 +59,25 @@ public class HookProbeRunner extends Instrumentation {
             throw new AssertionError("stale model menu accepted");
         } catch (IllegalStateException expected) { }
     }
+    private ModelsDevCatalog installRemoteReasoningFixture() throws Exception {
+        ModelsDevCache.start(getTargetContext());
+        long deadline = SystemClock.elapsedRealtime() + 90000;
+        while (!ModelsDevCache.status().loaded() || ModelsDevCache.status().refreshing()) {
+            if (SystemClock.elapsedRealtime() >= deadline) throw new AssertionError("catalog refresh did not settle before fixture");
+            Thread.sleep(100);
+        }
+        ModelsDevCatalog previous = ModelsDevCatalog.current();
+        ModelsDevCatalog.publish(ModelsDevCatalog.parse("""
+            {"fixture":{"api":"http://127.0.0.1:18765/v1","npm":"@ai-sdk/openai-compatible","models":{
+              "future-effort-fixture":{"reasoning":true,"temperature":false,
+                "reasoning_options":[{"type":"effort","values":["low","high","max"]}]}}}}
+            """));
+        return previous;
+    }
     @Override public void onStart() {
         var prefs = Config.prefs(getTargetContext()); Map<String, ?> saved = prefs.getAll();
         Bundle report = new Bundle(); int code = Activity.RESULT_CANCELED;
+        ModelsDevCatalog previousCatalog = null; boolean restoreCatalog = false;
         try {
             if (focus || launch || conversation) {
                 // These probes are about the physical screen: the launch probe asserts the Security page is the
@@ -78,7 +94,10 @@ public class HookProbeRunner extends Instrumentation {
                 String stock = probe("MIAIPLUS_STOCK_REASONING");
                 Bundle status = new Bundle(); status.putString("stream", stock + "\n"); sendStatus(1, status);
             }
-            String model = reasoning ? ("responses".equals(api) ? "gpt-6.1-sol" : "qwen3.8-max")
+            if (remoteReasoning) {
+                previousCatalog = installRemoteReasoningFixture(); restoreCatalog = true;
+            }
+            String model = remoteReasoning ? "future-effort-fixture" : reasoning ? ("responses".equals(api) ? "gpt-6.1-sol" : "qwen3.8-max")
                 : ("responses".equals(api) ? "fixture-responses-model" : "fixture-model");
             prefs.edit().putBoolean("enabled", true).putBoolean("globalModel", true).putString("planner", "native")
                 .putString("api", api).putString("endpoint", "http://127.0.0.1:18765/v1").putString("apiKey", "test-key").putString("model", model)
@@ -95,10 +114,12 @@ public class HookProbeRunner extends Instrumentation {
                 "synthetic fixture", 64, 64, "io.github.miaiplus"), targetUid);
             String result = probe(token);
             if (reasoning) result += "; native reasoning menu and selected wire effort";
+            if (remoteReasoning) result += "; new remote model policy crossed host IPC without host catalog";
             report.putString("stream", result + "\n"); code = Activity.RESULT_OK;
         } catch (Throwable e) { report.putString("stream", "PROBE FAIL: " + android.util.Log.getStackTraceString(e)); }
         finally {
             BridgeProvider.cancelActive();
+            if (restoreCatalog) ModelsDevCatalog.publish(previousCatalog);
             var edit = prefs.edit().clear();
             for (var e : saved.entrySet()) {
                 if (e.getValue() instanceof String v) edit.putString(e.getKey(), v);

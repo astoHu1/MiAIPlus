@@ -689,7 +689,15 @@ public final class HookSmokeProbe {
     private static String run(Context context, ClassLoader loader, String fixtureToken) throws Exception {
         var settings = NativeModelHook.config(context);
         chatRouting(context, loader);
-        String reasoningResult = Set.of("gpt-6.1-sol", "qwen3.8-max").contains(settings.getString("model"))
+        if ("future-effort-fixture".equals(settings.getString("model"))) {
+            if (ModelsDevCatalog.current() != null) throw new AssertionError("host unexpectedly loaded full model catalog");
+            var plan = ReasoningSettings.plan(settings);
+            if (!plan.choices().equals(List.of("default", "low", "high", "max")) || !plan.stripSampling())
+                throw new AssertionError("remote model policy did not cross host IPC");
+            if (!ReasoningPolicy.choices(settings.getString("model"), settings.getString("api")).equals(List.of("default")))
+                throw new AssertionError("remote fixture unexpectedly matched built-in model policy");
+        }
+        String reasoningResult = Set.of("gpt-6.1-sol", "qwen3.8-max", "future-effort-fixture").contains(settings.getString("model"))
             ? reasoningUi(context, loader, false) : "";
         Object ongoing = Reflector.newInstance(Reflector.findClass("com.aios.osbot.tools.ToolResult$Success", loader),
             "CONTINUE：控屏尚未完成。 MIAIPLUS_FRAME:00000000-0000-0000-0000-000000000000", Map.of("cli_internal_direct_answer", true), null, List.of(), true, null, false);
@@ -862,8 +870,8 @@ public final class HookSmokeProbe {
                     android.widget.PopupWindow popup = NativeReasoningHook.activePopup();
                     if (popup == null || !popup.isShowing()) throw new AssertionError("external popup missing");
                     android.widget.ListView list = (android.widget.ListView)popup.getContentView();
-                    String expected = "responses".equals(settings.getString("api")) ? "high" : "on";
-                    var choices = ReasoningPolicy.choices(settings.getString("model"), settings.getString("api"));
+                    String expected = ReasoningSettings.plan(settings).choices().contains("on") ? "on" : "high";
+                    var choices = ReasoningSettings.plan(settings).choices();
                     if (list.getAdapter().getCount() != choices.size()) throw new AssertionError("wrong effort choices");
                     for (int i = 0; i < choices.size(); i++)
                         if (!ReasoningPolicy.label(choices.get(i)).equals(list.getAdapter().getItem(i))) throw new AssertionError("wrong effort label");
@@ -899,9 +907,9 @@ public final class HookSmokeProbe {
                     Object menuPopup = Reflector.getObjectField(nativePopup, "a");
                     if (!Boolean.TRUE.equals(invoke(menuPopup, "isShowing"))) throw new AssertionError("native full-screen effort menu missing");
                     android.view.Menu menu = (android.view.Menu)invoke(menuPopup, "getMenu");
-                    var choices = ReasoningPolicy.choices(settings.getString("model"), settings.getString("api"));
+                    var choices = ReasoningSettings.plan(settings).choices();
                     if (menu.size() != choices.size()) throw new AssertionError("wrong native full-screen efforts");
-                    String expected = "responses".equals(settings.getString("api")) ? "high" : "on";
+                    String expected = ReasoningSettings.plan(settings).choices().contains("on") ? "on" : "high";
                     for (int i = 0; i < choices.size(); i++)
                         if (!ReasoningPolicy.label(choices.get(i)).contentEquals(menu.getItem(i).getTitle()))
                             throw new AssertionError("wrong native full-screen effort label");
@@ -920,8 +928,8 @@ public final class HookSmokeProbe {
                     android.widget.PopupWindow popup = NativeReasoningHook.activePopup();
                     if (popup == null || !popup.isShowing()) throw new AssertionError("full-screen effort menu missing");
                     android.widget.ListView list = (android.widget.ListView)popup.getContentView();
-                    var choices = ReasoningPolicy.choices(settings.getString("model"), settings.getString("api"));
-                    String expected = "responses".equals(settings.getString("api")) ? "high" : "on";
+                    var choices = ReasoningSettings.plan(settings).choices();
+                    String expected = ReasoningSettings.plan(settings).choices().contains("on") ? "on" : "high";
                     if (list.getAdapter().getCount() != choices.size()) throw new AssertionError("wrong full-screen efforts");
                     list.performItemClick(null, choices.indexOf(expected), choices.indexOf(expected));
                     if (currentMode(manager) != before) throw new AssertionError("full-screen selection overwrote Xiaomi mode");
@@ -974,7 +982,7 @@ public final class HookSmokeProbe {
                 Object popup = Reflector.getObjectField(visible, "a");
                 android.view.Menu menu = (android.view.Menu)invoke(popup, "getMenu");
                 Bundle config = NativeModelHook.config(bar.getContext());
-                var choices = ReasoningPolicy.choices(config.getString("model"), config.getString("api"));
+                var choices = ReasoningSettings.plan(config).choices();
                 int selected = choices.indexOf(config.getString("reasoning"));
                 for (int i = 0; i < menu.size(); i++)
                     if (menu.getItem(i).isChecked() != (i == selected))
@@ -1013,7 +1021,7 @@ public final class HookSmokeProbe {
                 return;
             }
             Bundle config = NativeModelHook.config(context);
-            var choices = ReasoningPolicy.choices(config.getString("model"), config.getString("api"));
+            var choices = ReasoningSettings.plan(config).choices();
             if (modes.size() != choices.size()) throw new AssertionError("floating effort choices missing");
             for (int i = 0; i < choices.size(); i++)
                 if (!ReasoningPolicy.label(choices.get(i)).contentEquals(modes.getItem(i).getTitle()))

@@ -8,6 +8,7 @@
 
 | 范围 | 已有证据 | 边界与详细记录 |
 | --- | --- | --- |
+| models.dev 远端推理能力缓存 | 673 项 JVM／Robolectric、33 项 Python、双变体完整 Lint 零错误及各 APK 构建；API 37 实际下载 236 个 provider／9,135 个模型、Preview 磁盘重载、Chat／Responses 实际宿主新模型 mock 探针通过 | 无新增界面，原配置及设备状态已核对恢复；未调用真实生产模型，新请求协议仍需代码适配。见 [缓存验证](validation/models-dev-2026-11-14.md) |
 | 系统提示词与人设交互修订 | 645 项 JVM／Robolectric、Debug／Release 完整 Lint 与构建、Preview／配套 AndroidTest 通过；API 37 的 `-e prompt true` 与明暗色 `-e menus true` 通过，原配置恢复核对一致 | 此轮验证设置交互与宿主配置回读；未发起真实或 mock 模型请求。深色与 1.5 倍字号的人设页为 Robolectric 覆盖。见 [交互修订](validation/prompt-persona-ux-2026-11-14.md)，注入与历史证据见 [初版记录](validation/prompt-persona-2026-11-14.md) |
 | 菜单层次、语音回复与非简中控屏 | 615 项 JVM／Robolectric、双变体完整 Lint 无错误及各 APK 构建；优化 Preview 深浅色菜单、三档语音真实请求／流式门禁、英文及繁体系统入口、英文系统真实模型计算器任务通过 | 语音 fixture 不播放音频、不测声学；旧小爱版本未降级实机复验，其他语言自由表达及任意任务质量未全面验证。见 [本轮记录](validation/menu-speech-language-2026-11-11.md) |
 | Termux Agent 可用性 | 604 项 JVM／Robolectric、12 项 Python、双变体完整 Lint 零错误及各 APK 构建；真实 Termux／模块桥接和小爱实际代理的原文、Bash、超时、后台任务、取消、大输出与策略拒绝通过 | 报告中的 P0 原始故障未在旧服务直接调用中重现；小爱原生 CLI 不在仓库内。已安装优化 Preview、保留用户配置并锁屏。见 [本轮记录](validation/termux-ux-2026-11-11.md) |

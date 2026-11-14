@@ -35,12 +35,16 @@ public final class Config {
     public final String customPromptMode, customPromptText;
     public final boolean promptRouteTextChat, promptApplyVoice, promptApplyStandaloneChat;
     public final String endpoint, apiKey, model, protocol, planner, api, reasoning;
+    public final ReasoningPolicy.Plan reasoningPolicy;
     public final String phoneUsePermissionMode;
     public final String speechReplyPolicy;
     public final int maxSteps;
     public final int conversationTimeoutMinutes;
     public final int displayWidth, displayHeight, displayDensity;
-    public Config(Context context) { this(prefs(context)); }
+    public Config(Context context) {
+        this(prefs(context));
+        ModelsDevCache.refreshIfDue(context);
+    }
     Config(SharedPreferences prefs) { this(prefs.getAll()); }
     Config(Map<String, ?> p) {
         enabled = Boolean.TRUE.equals(p.get("enabled"));
@@ -55,7 +59,8 @@ public final class Config {
         apiKey = string(p, "apiKey", "");
         model = string(p, "model", "").trim();
         api = ModelProtocol.resolve(string(p, "api", "auto"), model);
-        reasoning = ReasoningPolicy.normalize(model, api,
+        reasoningPolicy = ReasoningPolicy.plan(endpoint, model, api);
+        reasoning = reasoningPolicy.normalize(
             string(p, ReasoningPolicy.preferenceKey(endpoint, model, api), "default"));
         String storedProtocol = string(p, "protocol", "phone_use");
         protocol = "computer".equals(storedProtocol) ? "phone_use" : storedProtocol;

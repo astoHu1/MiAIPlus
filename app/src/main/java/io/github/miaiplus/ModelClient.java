@@ -40,7 +40,7 @@ public final class ModelClient {
             .put("stream", false).put("temperature", 0).put("max_tokens", 2048);
         if (tools != null) body.put("tools", tools).put("tool_choice", "required").put("parallel_tool_calls", false);
         if ("responses".equals(config.api)) body = ModelProtocol.request(body.put("max_tokens", 16384));
-        ReasoningPolicy.apply(body, config.model, config.api, config.reasoning);
+        config.reasoningPolicy.apply(body, config.model, config.api, config.reasoning);
         HttpURLConnection c = (HttpURLConnection) new URL(config.completionsUrl()).openConnection();
         run.connection = c;
         try {

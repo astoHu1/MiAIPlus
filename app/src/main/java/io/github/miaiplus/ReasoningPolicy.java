@@ -4,7 +4,9 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.List;
 import java.util.Locale;
+import org.json.JSONArray;
 import org.json.JSONObject;
+import org.json.JSONTokener;
 
 /** Explicit model capabilities, not a universal effort list for every compatible gateway. */
 public final class ReasoningPolicy {
@@ -20,6 +22,21 @@ public final class ReasoningPolicy {
         return value;
     }
     public static List<String> choices(String model, String api) {
+        return builtin(model, api).choices();
+    }
+    public static Plan plan(String endpoint, String model, String api) {
+        Plan remote = ModelsDevCatalog.resolve(endpoint, model, api);
+        return remote != null ? remote : builtin(model, api);
+    }
+    public static Plan builtin(String model, String api) {
+        List<String> choices = builtinChoices(model, api);
+        String m = canonical(model);
+        String wire = choices.size() == 1 ? "default" : qwenHybrid(m) ? "qwen"
+            : named(m, "deepseek-flash") && "chat".equals(api) ? "deepseek" : "standard";
+        boolean stripSampling = choices.size() > 1 && (m.startsWith("gpt-") || m.startsWith("deepseek-"));
+        return new Plan(choices, wire, stripSampling, stripSampling && m.startsWith("gpt-"));
+    }
+    private static List<String> builtinChoices(String model, String api) {
         String m = canonical(model);
         if (named(m, "gpt-6.1-sol") || named(m, "gpt-6-astra"))
             return List.of("default", "low", "medium", "high", "xhigh", "max");
@@ -46,7 +63,7 @@ public final class ReasoningPolicy {
             "qwen-plus-2025-04-28", "qwen-flash", "qwen-flash-2025-07-28").contains(model);
     }
     public static String normalize(String model, String api, String effort) {
-        return choices(model, api).contains(effort) ? effort : "default";
+        return builtin(model, api).normalize(effort);
     }
     public static String label(String effort) {
         return switch (effort) {
@@ -72,21 +89,66 @@ public final class ReasoningPolicy {
     }
     /** Applied to the final wire body; removes stock Xiaomi boolean thinking settings even for default. */
     public static void apply(JSONObject body, String model, String api, String selection) throws Exception {
-        body.remove("enable_thinking"); body.remove("thinking"); body.remove("thinking_budget");
-        body.remove("reasoning_effort"); body.remove("reasoning");
-        String effort = normalize(model, api, selection);
-        String m = canonical(model);
-        if (effort.equals("default")) { /* Omit explicit reasoning parameters; use provider default. */ }
-        else if (qwenHybrid(m)) body.put("enable_thinking", effort.equals("on"));
-        else if (m.equals("deepseek-flash") && "chat".equals(api)) {
-            body.put("thinking", new JSONObject().put("type", effort.equals("none") ? "disabled" : "enabled"));
-            if (!effort.equals("none")) body.put("reasoning_effort", effort);
-        } else if ("responses".equals(api)) body.put("reasoning", new JSONObject().put("effort", effort));
-        else body.put("reasoning_effort", effort);
-        // Fixed sampling values from native defaults are invalid on many reasoning models.
-        if (choices(model, api).size() > 1 && (m.startsWith("gpt-") || m.startsWith("deepseek-"))) {
-            body.remove("temperature"); body.remove("top_p");
-            if (m.startsWith("gpt-") && "chat".equals(api) && body.has("max_tokens")) {
+        builtin(model, api).apply(body, model, api, selection);
+    }
+    /** Small, validated wire contract shared with the scoped host instead of the full remote catalog. */
+    public record Plan(List<String> choices, String wire, boolean stripSampling, boolean completionTokens) {
+        public Plan {
+            if (choices == null || choices.isEmpty() || choices.size() > 10 || !"default".equals(choices.get(0))
+                || choices.stream().anyMatch(java.util.Objects::isNull)
+                || new java.util.HashSet<>(choices).size() != choices.size())
+                throw new IllegalArgumentException("Invalid reasoning choices");
+            if (wire == null || !List.of("default", "standard", "qwen", "deepseek").contains(wire))
+                throw new IllegalArgumentException("Invalid reasoning wire format");
+            List<String> allowed = "qwen".equals(wire) ? List.of("default", "off", "on")
+                : "default".equals(wire) ? List.of("default")
+                : List.of("default", "none", "minimal", "low", "medium", "high", "xhigh", "max");
+            if (!allowed.containsAll(choices) || completionTokens && !("standard".equals(wire) || "default".equals(wire)))
+                throw new IllegalArgumentException("Unsupported reasoning contract");
+            choices = List.copyOf(choices);
+        }
+        public String normalize(String selection) { return selection != null && choices.contains(selection) ? selection : "default"; }
+        public String encode() {
+            try {
+                return new JSONObject().put("version", 1).put("choices", new JSONArray(choices)).put("wire", wire)
+                    .put("stripSampling", stripSampling).put("completionTokens", completionTokens).toString();
+            } catch (org.json.JSONException impossible) { throw new IllegalStateException(impossible); }
+        }
+        /** Invalid, unknown-version and oversized IPC descriptors safely fall back to the local contract. */
+        public static Plan decode(String encoded) {
+            if (encoded == null || encoded.length() > 512) return null;
+            try {
+                JSONTokener tokener = new JSONTokener(encoded);
+                JSONObject value = new JSONObject(tokener);
+                if (tokener.nextClean() != 0 || value.length() != 5 || !Integer.valueOf(1).equals(value.opt("version"))
+                    || !(value.opt("choices") instanceof JSONArray choices)
+                    || !(value.opt("wire") instanceof String wire)
+                    || !(value.opt("stripSampling") instanceof Boolean stripSampling)
+                    || !(value.opt("completionTokens") instanceof Boolean completionTokens)
+                    || choices.length() > 10) return null;
+                java.util.ArrayList<String> efforts = new java.util.ArrayList<>();
+                for (int i = 0; i < choices.length(); i++) {
+                    if (!(choices.get(i) instanceof String effort)) return null;
+                    efforts.add(effort);
+                }
+                return new Plan(efforts, wire, stripSampling, completionTokens);
+            } catch (org.json.JSONException | IllegalArgumentException invalid) { return null; }
+        }
+        public void apply(JSONObject body, String model, String api, String selection) throws Exception {
+            body.remove("enable_thinking"); body.remove("thinking"); body.remove("thinking_budget");
+            body.remove("reasoning_effort"); body.remove("reasoning");
+            String effort = normalize(selection);
+            if (effort.equals("default")) { /* Use the provider default. */ }
+            else if ("qwen".equals(wire)) {
+                if ("chat".equals(api)) body.put("enable_thinking", effort.equals("on"));
+            } else if ("deepseek".equals(wire) && "chat".equals(api)) {
+                body.put("thinking", new JSONObject().put("type", effort.equals("none") ? "disabled" : "enabled"));
+                if (!effort.equals("none")) body.put("reasoning_effort", effort);
+            } else if ("responses".equals(api)) body.put("reasoning", new JSONObject().put("effort", effort));
+            else body.put("reasoning_effort", effort);
+            // These capabilities belong to the matched provider contract, not a guessed model prefix.
+            if (stripSampling) { body.remove("temperature"); body.remove("top_p"); }
+            if (completionTokens && "chat".equals(api) && body.has("max_tokens")) {
                 body.put("max_completion_tokens", Math.max(8192, body.getInt("max_tokens")));
                 body.remove("max_tokens");
             }

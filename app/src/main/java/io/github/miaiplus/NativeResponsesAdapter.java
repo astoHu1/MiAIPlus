@@ -12,6 +12,7 @@ import java.util.Map;
 final class NativeResponsesAdapter {
     private final ClassLoader loader;
     private final String api, reasoning;
+    private final ReasoningPolicy.Plan policy;
     // Bounded opaque output replay, indexed by the exact model + tool call group in native history.
     // Share replay across effort-specific clients so changing intensity retains tool reasoning.
     private static final Map<String, String> outputs = new LinkedHashMap<>();
@@ -19,12 +20,12 @@ final class NativeResponsesAdapter {
     private static final java.util.concurrent.atomic.AtomicInteger requests = new java.util.concurrent.atomic.AtomicInteger();
     static boolean isIdle() { return requests.get() == 0; }
     static synchronized void clear() { outputs.clear(); cachedCharacters = 0; }
-    private NativeResponsesAdapter(ClassLoader loader, String api, String reasoning) {
-        this.loader = loader; this.api = api; this.reasoning = reasoning;
+    private NativeResponsesAdapter(ClassLoader loader, String api, String reasoning, ReasoningPolicy.Plan policy) {
+        this.loader = loader; this.api = api; this.reasoning = reasoning; this.policy = policy;
     }
 
-    static void install(ClassLoader loader, Object engineConfig, String api, String reasoning) {
-        Object interceptor = interceptor(loader, api, reasoning);
+    static void install(ClassLoader loader, Object engineConfig, String api, String reasoning, ReasoningPolicy.Plan policy) {
+        Object interceptor = interceptor(loader, api, reasoning, policy);
         Reflector.callMethod(engineConfig, "config", NativeModelHook.function(loader, builder -> {
             Reflector.callMethod(builder, "followRedirects", false);
             Reflector.callMethod(builder, "followSslRedirects", false);
@@ -32,7 +33,10 @@ final class NativeResponsesAdapter {
         }));
     }
     static Object interceptor(ClassLoader loader, String api, String reasoning) {
-        NativeResponsesAdapter adapter = new NativeResponsesAdapter(loader, api, reasoning);
+        return interceptor(loader, api, reasoning, null);
+    }
+    static Object interceptor(ClassLoader loader, String api, String reasoning, ReasoningPolicy.Plan policy) {
+        NativeResponsesAdapter adapter = new NativeResponsesAdapter(loader, api, reasoning, policy);
         return Proxy.newProxyInstance(loader, new Class<?>[]{Reflector.findClass("gg2.w", loader)}, (proxy, method, args) -> {
             if (method.getName().equals("intercept")) {
                 return TransportBoundary.execute(() -> {
@@ -67,7 +71,7 @@ final class NativeResponsesAdapter {
         String replayIdentity = url + "\n" + model;
         if ("responses".equals(api)) restore(chat, replayIdentity);
         JSONObject body = "responses".equals(api) ? ModelProtocol.request(chat) : chat;
-        ReasoningPolicy.apply(body, model, api, reasoning);
+        (policy == null ? ReasoningPolicy.builtin(model, api) : policy).apply(body, model, api, reasoning);
         String serialized = body.toString();
         PhoneUseLog.request(body, api, serialized);
         Object builder = Reflector.callMethod(request, "newBuilder");

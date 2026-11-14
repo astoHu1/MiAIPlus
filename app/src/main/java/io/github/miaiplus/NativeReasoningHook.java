@@ -153,7 +153,7 @@ final class NativeReasoningHook {
                 Menu menu = (Menu)Reflector.callMethod(p.thisObject, "getMenu");
                 menu.clear();
                 Bundle config = request.config();
-                List<String> choices = ReasoningPolicy.choices(config.getString("model", ""), config.getString("api", "chat"));
+                List<String> choices = ReasoningSettings.plan(config).choices();
                 Boolean[] checked = floatingChecks(config);
                 var checks = new java.util.LinkedHashMap<Integer, Boolean>();
                 var selections = new java.util.HashMap<Integer, String>();
@@ -235,9 +235,8 @@ final class NativeReasoningHook {
         return true;
     }
     static Boolean[] floatingChecks(Bundle config) {
-        List<String> choices = ReasoningPolicy.choices(config.getString("model", ""), config.getString("api", "chat"));
-        String selected = ReasoningPolicy.normalize(config.getString("model", ""), config.getString("api", "chat"),
-            config.getString("reasoning", "default"));
+        List<String> choices = ReasoningSettings.plan(config).choices();
+        String selected = ReasoningSettings.plan(config).normalize(config.getString("reasoning", "default"));
         return choices.stream().map(selected::equals).toArray(Boolean[]::new);
     }
     static void replaceFloatingModes(Menu menu, Bundle config) {
@@ -246,7 +245,7 @@ final class NativeReasoningHook {
         if (parent == null || !parent.hasSubMenu()) return;
         SubMenu modes = parent.getSubMenu();
         modes.clear();
-        List<String> choices = ReasoningPolicy.choices(config.getString("model", ""), config.getString("api", "chat"));
+        List<String> choices = ReasoningSettings.plan(config).choices();
         Boolean[] checked = floatingChecks(config);
         for (int i = 0; i < choices.size(); i++) {
             String effort = choices.get(i);
@@ -297,7 +296,7 @@ final class NativeReasoningHook {
     static PopupWindow show(Context context, View anchor, Bundle config) {
         PopupWindow previous = active.get();
         if (previous != null) previous.dismiss();
-        List<String> choices = ReasoningPolicy.choices(config.getString("model", ""), config.getString("api", "chat"));
+        List<String> choices = ReasoningSettings.plan(config).choices();
         String selected = config.getString("reasoning", "default");
         int checked = choices.indexOf(selected);
         boolean dark = (context.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;

@@ -316,7 +316,7 @@ public final class BridgeProvider extends ContentProvider {
                 || !config.model.equals(extras.getString("model")) || !config.api.equals(extras.getString("api")))
                 throw new IllegalStateException("模型配置已更改，请重新打开推理强度菜单");
             String effort = extras.getString("reasoning", "default");
-            if (!ReasoningPolicy.choices(config.model, config.api).contains(effort))
+            if (!config.reasoningPolicy.choices().contains(effort))
                 throw new IllegalArgumentException("当前模型不支持该推理强度");
             if (!Config.prefs(getContext()).edit().putString(
                 ReasoningPolicy.preferenceKey(config.endpoint, config.model, config.api), effort).commit())
@@ -328,6 +328,7 @@ public final class BridgeProvider extends ContentProvider {
                 // Ephemeral IPC to the scoped XiaoAi UID; never write credentials into its files.
                 b.putString("endpoint", config.endpoint); b.putString("apiKey", config.apiKey); b.putString("model", config.model);
                 b.putString("api", config.api);
+                ReasoningSettings.attach(b, config);
                 b.putString("reasoning", method.equals("set_reasoning") ? extras.getString("reasoning", "default") : config.reasoning);
             }
             return b;
