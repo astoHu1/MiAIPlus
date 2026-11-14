@@ -88,7 +88,7 @@ internal fun SettingsApp(state: SettingsState, openSettings: (Boolean) -> Unit, 
     fun go(next: List<Route>) {
         if (next == stack) return
         // Pages with an explicit-save draft ask before leaving.
-        if ((page == Route.Model && state.dirty) || (page == Route.Prompt && state.promptDirty)) pending = next
+        if (page == Route.Model && state.dirty) pending = next
         else { state.error = null; stack = next }
     }
     fun switchTab(tab: Route) = go(listOf(tab))
@@ -121,7 +121,6 @@ internal fun SettingsApp(state: SettingsState, openSettings: (Boolean) -> Unit, 
         bottomBar = {
             if (page != Route.Logs) Column(Modifier.imePadding()) {
                 if (page == Route.Model && state.dirty) UnsavedBar({ state.discard() }, { state.saveProfile() })
-                if (page == Route.Prompt && state.promptDirty) UnsavedBar({ state.discardPersona() }, { state.savePersona() })
                 NavigationBar {
                     Tabs.forEach { tab ->
                         NavigationBarItem(
@@ -149,14 +148,13 @@ internal fun SettingsApp(state: SettingsState, openSettings: (Boolean) -> Unit, 
         }
         ConfirmDialog(
             show = pending != null,
-            title = if (page == Route.Prompt) "保存当前人设？" else "保存当前配置？", summary = null,
+            title = "保存当前配置？", summary = null,
             confirm = "保存并离开", onDismiss = { pending = null }, error = state.error,
             onConfirm = {
-                val saved = if (page == Route.Prompt) state.savePersona() else state.saveProfile()
-                if (saved) { stack = pending!!; pending = null }
+                if (state.saveProfile()) { stack = pending!!; pending = null }
             },
             alternative = "放弃修改", onAlternative = {
-                if (page == Route.Prompt) state.discardPersona() else state.discard()
+                state.discard()
                 stack = pending!!; pending = null
             },
         )

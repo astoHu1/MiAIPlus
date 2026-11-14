@@ -84,7 +84,9 @@ public final class PersonaProfiles {
             }
         }
         profiles = List.copyOf(loaded);
-        activeId = selected;
+        String active = loaded.get(0).id;
+        for (Profile profile : loaded) if (profile.id.equals(selected)) { active = selected; break; }
+        activeId = active;
     }
 
     public Profile active() { return find(activeId); }

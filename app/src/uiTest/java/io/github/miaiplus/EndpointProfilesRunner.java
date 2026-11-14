@@ -169,90 +169,110 @@ final class EndpointProfilesRunner {
             onMain(() -> state = new ViewModelProvider(activity).get(SettingsState.class));
             settle();
 
-            // The home row states the shipped default before anything is saved.
             waitFor(() -> findWithScroll(n -> "系统提示词".equals(text(n))) != null, "Home did not render");
             click("系统提示词");
             waitFor(() -> find(n -> "生效方式".equals(text(n))) != null, "Prompt page did not open");
-            for (String label : new String[]{"人设方案", "人设名称", "提示词内容", "另存为人设", "删除当前人设",
+            for (String label : new String[]{"人设方案", "人设名称", "提示词内容", "保存当前人设", "删除当前人设",
                 "文字对话走智能体", "语音对话也应用", "独立对话也应用"}) {
                 check(findWithScroll(n -> label.equals(text(n))) != null, "Prompt control missing: " + label);
             }
             check(findWithScroll(n -> "0/4000".equals(text(n))) != null, "Prompt counter missing at empty");
-            check(findWithScroll(n -> "至少保留一个人设".equals(text(n))) != null,
-                "Last persona delete is not explained");
+            check(find(n -> "保存配置".equals(text(n)) || "还原".equals(text(n))) == null,
+                "Prompt page still has a configuration footer");
 
-            // Mode menu: every option is visible. The mode belongs to the persona draft, so it is
-            // staged here and only reaches the preferences when the bar above the tabs saves.
             click("生效方式");
             checkMenuOptions("关闭", "追加人设", "替换系统提示词");
             capture("prompt-mode-menu-device");
             click("追加人设");
-            waitFor(() -> "append".equals(state.getPersonaDraft().getMode()), "Mode selection did not stage");
-            check(!prefs.contains(Config.CUSTOM_PROMPT_MODE_KEY), "Mode menu wrote before an explicit save");
+            waitFor(() -> "append".equals(new Config(context).customPromptMode), "Mode selection did not persist immediately");
+            check(!state.getPromptDirty(), "Mode selection left unsaved edits");
 
-            // The editor is a minimal height only; long text must scroll inside it, not be clipped.
+            // New profiles are created from the selector, then saved from the editor.
+            click("人设方案");
+            checkMenuOptions("默认人设", "新建人设");
+            click("新建人设");
+            edit("", "翻译助手");
+            click("创建");
+            waitFor(() -> "翻译助手".equals(new PersonaProfiles(prefs).active().name), "New persona did not become active");
             String fixture = "你是一位严谨的翻译，只输出译文。";
             edit("", fixture);
-            hideKeyboard();
-            settle();
+            clearEditorFocus(); hideKeyboard();
             check(findWithScroll(n -> (fixture.length() + "/" + Config.MAX_CUSTOM_PROMPT_CHARS).equals(text(n))) != null,
                 "Prompt counter did not follow the draft");
+            check("".equals(new Config(context).customPromptText), "Editing saved the prompt without the persona action");
             capture("prompt-page-device-draft");
-
-            click("另存为人设");
-            edit("", "翻译助手");
-            click("保存并切换");
-            waitFor(() -> "翻译助手".equals(new PersonaProfiles(prefs).active().name), "New persona did not become active");
-            check(fixture.equals(prefs.getString(Config.CUSTOM_PROMPT_TEXT_KEY, null)), "Persona text snapshot wrong");
-            check("append".equals(new Config(context).customPromptMode), "Saved mode did not reach Config");
+            click("保存当前人设");
+            waitFor(() -> fixture.equals(new Config(context).customPromptText), "Save current persona did not persist text");
+            check("append".equals(new Config(context).customPromptMode), "Saving a persona changed the selected mode");
             check(new Config(context).hasEffectivePrompt(), "Saved persona does not read as effective");
 
-            // The host-facing bundle carries the same values the screen shows.
             Bundle prompt = context.getContentResolver().call(BridgeProvider.URI, "prompt_settings", null, null);
             check(prompt != null && "append".equals(prompt.getString("mode")) && fixture.equals(prompt.getString("text")),
                 "prompt_settings does not reflect the saved persona");
 
-            // Switches save at once and leave the draft clean.
             click("文字对话走智能体");
             waitFor(() -> prefs.getBoolean(Config.PROMPT_ROUTE_TEXT_CHAT_KEY, false), "Route switch did not persist");
+            click("语音对话也应用");
+            waitFor(() -> prefs.getBoolean(Config.PROMPT_APPLY_VOICE_KEY, false), "Voice switch did not persist");
+            click("独立对话也应用");
+            waitFor(() -> prefs.getBoolean(Config.PROMPT_APPLY_STANDALONE_CHAT_KEY, false), "Standalone switch did not persist");
             check(!state.getPromptDirty(), "Prompt switches left unsaved edits");
-            capture("prompt-page-device-light");
 
-            // Leaving with a dirty draft asks, and discarding restores the saved summary.
+            // Switching takes effect at once; each editor keeps its own unsaved changes.
             edit(fixture, fixture + "草稿");
-            // The editor keeps the IME up; the tab bar sits under it, so close it before tapping through.
-            // ACTION_SET_TEXT leaves the field focused without an IME transaction, so clear focus too.
-            clearEditorFocus();
-            hideKeyboard(); settle();
-            // Back reaches the same leave guard the tab bar uses, without depending on tab hit areas
-            // once the navigation bar has moved.
+            clearEditorFocus(); hideKeyboard();
+            click("人设方案");
+            checkMenuOptions("默认人设", "翻译助手", "新建人设");
+            capture("prompt-persona-menu-device");
+            click("默认人设");
+            waitFor(() -> "默认人设".equals(new PersonaProfiles(prefs).active().name), "Persona selection did not persist immediately");
+            check("".equals(new Config(context).customPromptText), "Persona switch did not apply saved target text");
+            check(find(n -> "切换前保存修改？".equals(text(n))) == null, "Persona switch still asks to save");
+            click("人设方案"); click("翻译助手");
+            waitFor(() -> (fixture + "草稿").equals(state.getPersonaDraft().getText()), "Persona switch lost the editor draft");
+            check(fixture.equals(new Config(context).customPromptText), "Persona switch published an unsaved draft");
+
+            // Back navigation leaves directly, and reopening retains the draft in this settings session.
+            clearEditorFocus(); hideKeyboard();
             test.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK); settle();
-            check(find(n -> "保存当前人设？".equals(text(n))) != null, "Dirty prompt did not ask before leaving");
-            capture("prompt-leave-confirm-device");
-            click("放弃修改");
-            waitFor(() -> "prompt-settings" != null, "Discard did not leave the page");
+            waitFor(() -> findWithScroll(n -> "系统提示词".equals(text(n))) != null, "Back did not return to the home page");
+            check(find(n -> "保存当前人设？".equals(text(n))) == null, "Leaving still asks to save the persona");
             check(findWithScroll(n -> "追加人设 · 翻译助手".equals(text(n))) != null,
                 "Home summary does not name the saved persona");
-
-            // Deletion keeps at least one persona.
             click("系统提示词");
-            click("删除当前人设");
-            click("删除");
+            waitFor(() -> (fixture + "草稿").equals(state.getPersonaDraft().getText()), "Reopening lost the editor draft");
+            edit(fixture + "草稿", fixture); clearEditorFocus(); hideKeyboard();
+            click("保存当前人设");
+            check(!state.getPromptDirty(), "Saving the current persona left unsaved edits");
+            check(find(n -> "保存配置".equals(text(n)) || "还原".equals(text(n))) == null,
+                "Prompt configuration footer returned after saving");
+            capture("prompt-actions-device-light");
+            click("生效方式"); click("替换系统提示词");
+            waitFor(() -> "replace".equals(new Config(context).customPromptMode), "Replacement mode did not save immediately");
+            click("生效方式"); click("追加人设");
+            capture("prompt-page-device-light");
+
+            // Clearing a saved prompt must also clear the runtime snapshot.
+            edit(fixture, ""); clearEditorFocus(); hideKeyboard();
+            click("保存当前人设");
+            waitFor(() -> "".equals(new Config(context).customPromptText), "Saving empty content did not clear the prompt");
+            check(!new Config(context).hasEffectivePrompt(), "Empty persona still applies a prompt");
+            edit("", fixture); clearEditorFocus(); hideKeyboard();
+            click("保存当前人设");
+
+            click("删除当前人设"); click("删除");
             waitFor(() -> new PersonaProfiles(prefs).profiles.size() == 1, "Persona delete did not run");
             check("默认人设".equals(new PersonaProfiles(prefs).active().name), "Delete did not fall back to the default");
             check(!prefs.getAll().toString().contains(fixture), "Deleted persona text survived in preferences");
-            check(findWithScroll(n -> "至少保留一个人设".equals(text(n))) != null,
-                "Last persona delete is not rejected");
 
-            // Diagnostics keep the mode and a character count, never the prompt or the persona name.
             String exported = DiagnosticEnvironment.snapshot(context).toString();
             check(exported.contains("\"customPromptMode\""), "Diagnostics omit the prompt mode");
             check(!exported.contains(fixture) && !exported.contains("翻译助手"),
                 "Diagnostics leaked prompt text or a persona name");
-
-            result.putString("stream", "PASS: default state, mode menu, persona create/switch/delete, flat snapshot, "
-                + "prompt_settings bundle, switches, unsaved-changes prompt and metadata-only diagnostics; "
-                + "five synthetic screenshots; no model requests.\n");
+            result.putString("stream", "PASS: immediate mode and persona selection, create/save/clear/delete, "
+                + "retained editor drafts, direct navigation, no configuration footer, flat snapshot, "
+                + "prompt_settings bundle, three immediate switches and metadata-only diagnostics; "
+                + "synthetic screenshots; no model requests.\n");
             code = Activity.RESULT_OK;
         } catch (Throwable failure) {
             try { if (activity != null) capture("prompt-ui-failure"); } catch (Exception ignored) { }

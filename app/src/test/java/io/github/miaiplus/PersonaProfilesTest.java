@@ -119,6 +119,21 @@ public class PersonaProfilesTest {
         assertFalse(storage.values.toString().contains("甲的内容"));
     }
 
+    @Test public void missingOrDeletedActiveIdentitySelectsTheFirstStoredPersona() {
+        for (String active : new String[]{null, "deleted"}) {
+            Storage storage = new Storage();
+            storage.save(persona("a", "甲", "甲的内容"), true);
+            storage.save(persona("b", "乙", "乙的内容"), false);
+            if (active == null) storage.values.remove("activePersonaProfile");
+            else storage.values.put("activePersonaProfile", active);
+
+            PersonaProfiles profiles = new PersonaProfiles(storage.prefs);
+            assertEquals("a", profiles.activeId);
+            assertEquals("甲的内容", profiles.active().text);
+            assertEquals(2, profiles.profiles.size());
+        }
+    }
+
     @Test public void corruptJsonFallsBackToAnEmptyDefaultPersonaInsteadOfThrowing() {
         for (String broken : new String[]{"broken", "[]", "[\"not-json\"]",
             "[{\"id\":\"\",\"name\":\"有名\",\"text\":\"\"}]",

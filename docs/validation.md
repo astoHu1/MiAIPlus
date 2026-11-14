@@ -8,7 +8,7 @@
 
 | 范围 | 已有证据 | 边界与详细记录 |
 | --- | --- | --- |
-| 系统提示词与人设 | 638 项 JVM／Robolectric、Debug 完整 Lint 与各 APK 构建；API 37／小爱 8.3.30.4420 的 `-e prompt true` 设备用例通过（模式菜单、人设新建／切换／删除、扁平快照、`prompt_settings` 回读、三开关、脏草稿离开确认、仅元数据诊断），`-e menus true` 未回归 | 未用真实或 mock 模型完成带人设的端到端对话；语音转交与旧版小爱未实机验证；深色与 1.5 倍字号仅 Robolectric 覆盖。设备测试须先授予 MIUI op `10021`，见 [本轮记录](validation/prompt-persona-2026-11-14.md) |
+| 系统提示词与人设交互修订 | 645 项 JVM／Robolectric、Debug／Release 完整 Lint 与构建、Preview／配套 AndroidTest 通过；API 37 的 `-e prompt true` 与明暗色 `-e menus true` 通过，原配置恢复核对一致 | 此轮验证设置交互与宿主配置回读；未发起真实或 mock 模型请求。深色与 1.5 倍字号的人设页为 Robolectric 覆盖。见 [交互修订](validation/prompt-persona-ux-2026-11-14.md)，注入与历史证据见 [初版记录](validation/prompt-persona-2026-11-14.md) |
 | 菜单层次、语音回复与非简中控屏 | 615 项 JVM／Robolectric、双变体完整 Lint 无错误及各 APK 构建；优化 Preview 深浅色菜单、三档语音真实请求／流式门禁、英文及繁体系统入口、英文系统真实模型计算器任务通过 | 语音 fixture 不播放音频、不测声学；旧小爱版本未降级实机复验，其他语言自由表达及任意任务质量未全面验证。见 [本轮记录](validation/menu-speech-language-2026-11-11.md) |
 | Termux Agent 可用性 | 604 项 JVM／Robolectric、12 项 Python、双变体完整 Lint 零错误及各 APK 构建；真实 Termux／模块桥接和小爱实际代理的原文、Bash、超时、后台任务、取消、大输出与策略拒绝通过 | 报告中的 P0 原始故障未在旧服务直接调用中重现；小爱原生 CLI 不在仓库内。已安装优化 Preview、保留用户配置并锁屏。见 [本轮记录](validation/termux-ux-2026-11-11.md) |
 | 通用详细日志与宿主拒绝诊断 | 602 项 JVM／Robolectric、21 项 Python、双变体完整 Lint 零错误及各 APK 构建；API 37 mock 宿主／前后台／双工具、日志开关和真实 ZIP 导出通过 | 宿主 73 个 Hook 就绪、三个可选观察器均安装；未复现 HyperOS 3 用户故障，错误码映射不证明拒绝根因。见 [本轮记录](validation/diagnostics-2026-11-10.md) |

@@ -22,6 +22,7 @@ internal fun OverlayDropdownPreference(
     selectedIndex: Int,
     enabled: Boolean = true,
     summary: String? = null,
+    actionIndex: Int? = null,
     onSelectedIndexChange: (Int) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -55,8 +56,12 @@ internal fun OverlayDropdownPreference(
             ) {
                 ListPopupColumn {
                     items.forEachIndexed { index, label ->
+                        val isAction = index == actionIndex
                         DropdownImpl(item = DropdownItem(text = label), optionSize = items.size,
-                            isSelected = index == selectedIndex, index = index,
+                            isSelected = !isAction && index == selectedIndex, index = index,
+                            dropdownColors = if (isAction) DropdownDefaults.dropdownColors(
+                                contentColor = MiuixTheme.colorScheme.primary,
+                            ) else DropdownDefaults.dropdownColors(),
                             onSelectedIndexChange = {
                                 haptic.performHapticFeedback(HapticFeedbackType.Confirm)
                                 onSelectedIndexChange(it)

@@ -104,6 +104,7 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
     var personaDraft by mutableStateOf<PersonaDraft?>(null)
         private set
     val promptDirty: Boolean by derivedStateOf(structuralEqualityPolicy()) { personaDraft != personaSaved }
+    private val personaDrafts = mutableMapOf<String, PersonaDraft>()
 
     init {
         try { loadProfiles() } catch (failure: Exception) { error = failure.message }
@@ -111,7 +112,7 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
         refresh()
     }
 
-    private fun loadPersonas() {
+    private fun loadPersonas(restoreDraft: Boolean = false) {
         val collection = PersonaProfiles(prefs)
         val active = collection.active()
         val values = prefs.all
@@ -119,17 +120,40 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
             Config.normalizePromptMode(values[PromptKeys.MODE]),
             values[PromptKeys.ROUTE_TEXT] == true, values[PromptKeys.APPLY_VOICE] == true,
             values[PromptKeys.APPLY_STANDALONE] == true)
-        personas = collection; personaSaved = saved; personaDraft = saved
+        personas = collection; personaSaved = saved
+        val draft = if (restoreDraft) personaDrafts[active.id] else null
+        personaDraft = if (draft == null) saved else saved.copy(name = draft.name, text = draft.text)
     }
 
-    fun updatePersona(name: String? = null, text: String? = null, mode: String? = null) {
+    fun updatePersona(name: String? = null, text: String? = null) {
         val current = personaDraft ?: return
         personaDraft = current.copy(name = name?.take(PromptKeys.MAX_NAME_CHARS) ?: current.name,
-            text = text?.let(Config::truncatePrompt) ?: current.text, mode = mode ?: current.mode)
+            text = text?.let(Config::truncatePrompt) ?: current.text)
         error = null
     }
 
-    fun discardPersona() { personaDraft = personaSaved; error = null }
+    fun discardPersona() {
+        personaDraft?.let { personaDrafts.remove(it.id) }
+        personaDraft = personaSaved; error = null
+    }
+
+    private fun rememberPersonaDraft() {
+        personaDraft?.let { current ->
+            if (promptDirty) personaDrafts[current.id] = current
+            else personaDrafts.remove(current.id)
+        }
+    }
+
+    fun setPromptMode(mode: String): Boolean = attempt {
+        require(mode == PromptKeys.MODE_OFF || mode == PromptKeys.MODE_APPEND || mode == PromptKeys.MODE_REPLACE) {
+            "请选择生效方式"
+        }
+        check(prefs.edit().putString(PromptKeys.MODE, mode).commit()) { "保存失败，请重试" }
+        personaSaved = personaSaved?.copy(mode = mode)
+        personaDraft = personaDraft?.copy(mode = mode)
+        config = Config(context)
+        notice = "已保存"
+    }
 
     /** Saves the draft into the active persona, or as a new persona when [newName] is given. */
     fun savePersona(newName: String? = null): Boolean = attempt {
@@ -137,19 +161,29 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
         val collection = requireNotNull(personas) { "无法读取人设" }
         val name = (newName ?: current.name).trim().take(PromptKeys.MAX_NAME_CHARS)
         require(name.isNotEmpty()) { "请填写人设名称" }
-        // An empty persona is only kept while the prompt is off; a new persona always needs content.
-        require(current.text.isNotBlank() || (newName == null && current.mode == PromptKeys.MODE_OFF)) {
-            "请填写提示词内容"
-        }
         val id = if (newName == null) current.id else UUID.randomUUID().toString()
         require(collection.profiles.none { it.id != id && it.name == name }) { "人设名称已存在" }
         val editor = prefs.edit()
         // write() also stages the customPromptText snapshot, so the host only reads flat keys.
         collection.write(editor, PersonaProfiles.Profile(id, name, Config.truncatePrompt(current.text)), false)
-        editor.putString(PromptKeys.MODE, current.mode)
         check(editor.commit()) { "保存失败，请重试" }
-        loadPersonas(); config = Config(context)
+        if (newName != null) rememberPersonaDraft()
+        personaDrafts.remove(id)
+        loadPersonas(restoreDraft = true); config = Config(context)
         notice = if (newName == null) "已保存" else "已新增人设"
+    }
+
+    fun createPersona(name: String): Boolean = attempt {
+        val collection = requireNotNull(personas) { "无法读取人设" }
+        val trimmedName = name.trim()
+        require(trimmedName.isNotEmpty()) { "请填写人设名称" }
+        require(trimmedName.length <= PromptKeys.MAX_NAME_CHARS) { "人设名称过长" }
+        val editor = prefs.edit()
+        collection.write(editor, PersonaProfiles.Profile.blank(trimmedName), false)
+        check(editor.commit()) { "保存失败，请重试" }
+        rememberPersonaDraft()
+        loadPersonas(restoreDraft = true); config = Config(context)
+        notice = "已新增人设"
     }
 
     fun switchPersona(id: String): Boolean = attempt {
@@ -158,7 +192,8 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
         val editor = prefs.edit()
         collection.write(editor, selected, false)
         check(editor.commit()) { "切换失败，请重试" }
-        loadPersonas(); config = Config(context); notice = "已切换人设"
+        rememberPersonaDraft()
+        loadPersonas(restoreDraft = true); config = Config(context); notice = "已切换人设"
     }
 
     fun deletePersona(): Boolean = attempt {
@@ -168,7 +203,8 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
         val editor = prefs.edit()
         collection.write(editor, next, true)
         check(editor.commit()) { "删除失败，请重试" }
-        loadPersonas(); config = Config(context); notice = "人设已删除"
+        personaDrafts.remove(collection.activeId)
+        loadPersonas(restoreDraft = true); config = Config(context); notice = "人设已删除"
     }
 
     /** Prompt switches save at once through setOption and leave other unsaved draft edits intact. */
