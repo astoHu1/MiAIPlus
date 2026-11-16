@@ -11,6 +11,7 @@
 - **前台控屏**：打开应用、点击、滑动和输入。通知岛显示进度，随时可以停止。
 - **后台控屏**：在虚拟屏里执行任务，主屏可以继续使用。需要给 MiAIPlus 授予 root 权限。
 - **MCP 插件**：添加 HTTP MCP 服务，把它的工具交给小爱调用。
+- **Eta Agent**：把多步复杂任务、跨应用操作、深度调研、脚本和日志分析交给本机已安装的 [Eta](https://github.com/Mangi-11/Eta)，使用 Eta 自己配置的模型。
 - **自定义模型**：保存多套模型配置，支持 Responses 和 Chat Completions。
 
 ## 开始使用
@@ -35,6 +36,18 @@
 3. 保存后点击「获取工具」，在「工具列表」查看结果，再开启插件。
 
 默认协议为 `2025-11-25`，服务需要旧版时可选择 `2025-06-18`。保存配置不会连接服务器。当前支持 Streamable HTTP 的工具调用；使用实例见 [Plugin 与 MCP 文档](docs/plugin-platform.md)。
+
+## 接入 Eta
+
+MiAIPlus 不修改 Eta，只通过 Eta 的 AgentRuntimeService 接口转发任务。详见 [Eta 外部 Agent](docs/eta-agent.md)。
+
+1. 安装 [Eta](https://github.com/Mangi-11/Eta) 最新发布版（官方签名，版本不低于 3.4.4），并在 Eta 里配置好模型。
+2. 打开「插件」，开启「Eta Agent」。未安装或校验不通过时开关不可用，摘要会说明原因。
+3. 对小爱说「让 Eta 帮我……」即可委派。只是提到 Eta 不会触发。
+
+「插件 → 控屏配置 → 执行 → 动作协议」选 Eta 后，MiAIPlus 自己的控屏工具不再加载，控屏请求全部转给 Eta。在虚拟屏还是主屏执行由 Eta 自己决定，「规划模型」变灰。
+
+「终端和敏感工具」（含 shell、短信、联系人和系统设置）只在「Eta Agent」开关开启后出现，默认关闭。MiAIPlus 的「操作确认」不作用于 Eta，敏感操作是否确认取决于 Eta 自身。
 
 ## 使用自己的模型
 
@@ -64,6 +77,7 @@ GitHub Actions 会在 main 推送和 PR 时运行测试、Lint 与构建，产�
 
 - [文档索引](docs/README.md) · [架构](docs/architecture.md) · [开发指南](AGENTS.md)
 - [后台虚拟屏](docs/background-display.md) · [无障碍前置检查](docs/accessibility-guard.md)
+- [Eta 外部 Agent](docs/eta-agent.md)
 - [API 102 与热重载](docs/api102-migration.md) · [第三方许可](NOTICE)
 
 ## 免责声明
