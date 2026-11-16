@@ -9,6 +9,7 @@
 | 范围 | 已有证据 | 边界与详细记录 |
 | --- | --- | --- |
 | Eta 外部 Agent 中继与 Eta 控屏协议 | 727 项 JVM／Robolectric、Debug Lint 零错误、Debug／Preview 构建；真实 Eta 3.4.4 上 DONE／BUSY／RUNNING／取消／遗留结果确认通过；小爱官方模型点名 Eta 时委派，普通请求不委派；动作协议设为 Eta 后计算器、设置搜索交给 Eta 完成，无 MiAIPlus 控屏工具 | 未点名的多网页调研未委派；锁屏、敏感工具、冷绑定、热重载拒绝仅单元测试；Preview 包只核对加载。见 [本轮记录](validation/eta-agent-2026-11-16.md) |
+| 数字对话框输入顺序 | 单个 Compose／Robolectric 回归通过；优化 Preview 与配套测试包构建通过；API 37 单项 `-e numberInput true` 验证最大步数逐键 `2`→`20`、光标位置与取消后配置不变 | 使用独立测试包，原发布签名安装未覆盖；未运行其他设备回归或完整 Lint。见 [输入修复记录](validation/number-input-2026-11-16.md) |
 | models.dev 远端推理能力缓存 | 673 项 JVM／Robolectric、33 项 Python、双变体完整 Lint 零错误及各 APK 构建；API 37 实际下载 236 个 provider／9,135 个模型、Preview 磁盘重载、Chat／Responses 实际宿主新模型 mock 探针通过 | 无新增界面，原配置及设备状态已核对恢复；未调用真实生产模型，新请求协议仍需代码适配。见 [缓存验证](validation/models-dev-2026-11-14.md) |
 | 系统提示词与人设交互修订 | 645 项 JVM／Robolectric、Debug／Release 完整 Lint 与构建、Preview／配套 AndroidTest 通过；API 37 的 `-e prompt true` 与明暗色 `-e menus true` 通过，原配置恢复核对一致 | 此轮验证设置交互与宿主配置回读；未发起真实或 mock 模型请求。深色与 1.5 倍字号的人设页为 Robolectric 覆盖。见 [交互修订](validation/prompt-persona-ux-2026-11-14.md)，注入与历史证据见 [初版记录](validation/prompt-persona-2026-11-14.md) |
 | 菜单层次、语音回复与非简中控屏 | 615 项 JVM／Robolectric、双变体完整 Lint 无错误及各 APK 构建；优化 Preview 深浅色菜单、三档语音真实请求／流式门禁、英文及繁体系统入口、英文系统真实模型计算器任务通过 | 语音 fixture 不播放音频、不测声学；旧小爱版本未降级实机复验，其他语言自由表达及任意任务质量未全面验证。见 [本轮记录](validation/menu-speech-language-2026-11-11.md) |

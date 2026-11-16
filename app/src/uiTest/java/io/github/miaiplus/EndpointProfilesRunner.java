@@ -51,6 +51,64 @@ final class EndpointProfilesRunner {
 
     static void runPrompt(Instrumentation test) { new EndpointProfilesRunner(test).runPrompt(); }
 
+    static void runNumberInput(Instrumentation test) { new EndpointProfilesRunner(test).runNumberInput(); }
+
+    /** Only checks sequential numeric editing; cancels the draft and never writes a fixture. */
+    private void runNumberInput() {
+        var context = test.getTargetContext();
+        var prefs = Config.prefs(context);
+        Map<String, ?> original = prefs.getAll();
+        Bundle result = new Bundle();
+        int code = Activity.RESULT_CANCELED;
+        try {
+            Bundle screen = context.getContentResolver().call(BridgeProvider.URI, "screen_state", null, null);
+            Bundle health = context.getContentResolver().call(BridgeProvider.URI, "accessibility_health", null, null);
+            check(screen != null && !screen.getBoolean("active") && health != null
+                && !health.getBoolean("busy") && !health.getBoolean("preparing"),
+                "Stop active work before numeric input checks");
+            activity = (MainActivity) test.startActivitySync(new Intent(context, MainActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
+            onMain(() -> state = new ViewModelProvider(activity).get(SettingsState.class));
+            enterControlPage();
+            click("最大步数");
+            edit(Integer.toString(state.getConfig().maxSteps), "");
+            var field = find(n -> n.isEditable() && text(n).isEmpty());
+            check(field != null && field.performAction(AccessibilityNodeInfo.ACTION_FOCUS),
+                "Numeric editor could not receive keyboard focus");
+            settle();
+            test.sendKeyDownUpSync(KeyEvent.KEYCODE_2);
+            settle();
+            field = find(n -> n.isEditable() && "2".equals(text(n)));
+            check(field != null, "First digit did not reach the numeric editor");
+            int firstSelection = field.getTextSelectionStart();
+            test.sendKeyDownUpSync(KeyEvent.KEYCODE_0);
+            settle();
+            field = find(n -> n.isEditable());
+            check(field != null && "20".equals(text(field)),
+                "Sequential 2 then 0 produced " + (field == null ? "no editor" : text(field))
+                    + "; cursor after first digit was " + firstSelection);
+            check(firstSelection == 1 && field.getTextSelectionStart() == 2
+                && field.getTextSelectionEnd() == 2, "Numeric cursor did not remain after the typed digits");
+            hideKeyboard();
+            capture("number-input-20-device");
+            click("取消");
+            check(find(n -> n.isEditable()) == null, "Numeric draft did not close on cancel");
+            check(original.equals(prefs.getAll()), "Numeric editing changed saved settings");
+            result.putString("stream", "PASS: maximum steps received separate 2 and 0 key events as 20; "
+                + "cursor positions were 1 then 2; draft canceled without saving. No model requests.\n");
+            code = Activity.RESULT_OK;
+        } catch (Throwable failure) {
+            result.putString("stream", "FAIL: " + android.util.Log.getStackTraceString(failure));
+        } finally {
+            if (activity != null) { onMain(activity::finish); test.waitForIdleSync(); }
+            if (!original.equals(prefs.getAll())) {
+                code = Activity.RESULT_CANCELED;
+                result.putString("stream", "FAIL: Saved settings changed during numeric input check\n");
+            }
+        }
+        test.finish(code, result);
+    }
+
     /** Synthetic UI-only menu checks: no model requests, phone-use execution or display probes. */
     private void runMenus() {
         var context = test.getTargetContext();

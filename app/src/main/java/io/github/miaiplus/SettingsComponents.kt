@@ -2,8 +2,9 @@ package io.github.miaiplus
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.TextFieldValue
@@ -137,9 +138,17 @@ internal fun ConfirmDialog(show: Boolean, title: String, summary: String?, confi
 @Composable
 internal fun NumberDialog(show: Boolean, title: String, summary: String?, label: String, value: String,
                           onValueChange: (String) -> Unit, error: String?, onSave: () -> Unit, onDismiss: () -> Unit) {
+    // Keep selection and IME composition above the overlay's delayed content snapshot.
+    // Reopening starts a fresh edit from the caller's saved value.
+    var editingValue by remember(show) { mutableStateOf(TextFieldValue(value, TextRange(value.length))) }
     OverlayDialog(show = show, title = title, summary = summary, onDismissRequest = onDismiss) {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Input(label, value, onValueChange, type = KeyboardType.Number)
+            TextField(value = editingValue, onValueChange = {
+                val textChanged = it.text != editingValue.text
+                editingValue = it
+                if (textChanged) onValueChange(it.text)
+            }, label = label, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, autoCorrectEnabled = false))
             error?.let { Hint(it) }
             DialogButtons("保存", onSave, onDismiss)
         }
