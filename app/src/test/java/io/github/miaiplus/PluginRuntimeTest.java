@@ -79,6 +79,37 @@ public final class PluginRuntimeTest {
         Config.prefs(context).edit().clear().commit();
     }
 
+    @Test public void etaToolsAreAbsentByDefaultAndTheRevisionRecordsThatTheyAreOff() throws Exception {
+        Bundle catalog = PluginRuntime.catalog(context);
+        assertTrue(catalog.getString("revision").endsWith(":eta=off"));
+        assertFalse(catalog.getString("tools").contains(EtaAgent.RUN_TOOL));
+        assertFalse(catalog.getString("tools").contains(EtaAgent.STATUS_TOOL));
+        // Enabled without an installed Eta: still no tools, but the revision records the state change.
+        EtaAgent.setEnabled(context, true);
+        Bundle enabled = PluginRuntime.catalog(context);
+        assertFalse(enabled.getString("tools").contains(EtaAgent.RUN_TOOL));
+        assertTrue(enabled.getString("revision").endsWith(":eta=NOT_INSTALLED-"));
+        assertNotEquals(catalog.getString("revision"), enabled.getString("revision"));
+    }
+
+    @Test public void etaScreenProtocolReplacesTheBuiltinPhoneToolsWithEta() throws Exception {
+        EtaAgentTest.installReadyEta(context);
+        try {
+            Config.prefs(context).edit().putBoolean("enabled", true).putString("planner", "native")
+                .putString("protocol", "phone_use").commit();
+            Bundle phone = PluginRuntime.catalog(context);
+            assertTrue(phone.getString("tools").contains("miaiplus_phone_use"));
+            assertTrue(phone.getString("tools").contains("miaiplus_background_phone_use"));
+            assertFalse(phone.getString("tools").contains(EtaAgent.RUN_TOOL));
+            Config.prefs(context).edit().putString("protocol", EtaAgent.PROTOCOL).commit();
+            Bundle eta = PluginRuntime.catalog(context);
+            assertFalse(eta.getString("tools").contains("miaiplus_phone_use"));
+            assertFalse(eta.getString("tools").contains("miaiplus_background_phone_use"));
+            assertTrue(eta.getString("tools").contains(EtaAgent.RUN_TOOL));
+            assertNotEquals(phone.getString("revision"), eta.getString("revision"));
+        } finally { EtaAgent.signer = EtaAgent.SIGNER_SHA256; }
+    }
+
     @Test public void catalogExposesOnlyToolDefinitionsAndKeepsMcpIndependentOfLegacyPhoneSwitch() throws Exception {
         Bundle remoteOnly = PluginRuntime.catalog(context);
         assertEquals(Set.of("revision", "tools"), remoteOnly.keySet());

@@ -132,4 +132,24 @@ public final class NativeChatRoutingTest {
         assertFalse(NativeChatRouting.forcesAgent(callback));
         assertFalse(NativeChatRouting.forcesAgent(otherCallback));
     }
+
+    @Test public void requestsNamingEtaAsTheActorReachTheToolCapableAgent() {
+        String[] requests = {
+            "让 Eta 统计一下今天哪些应用给我发的通知最多", "交给eta处理：整理本周日程", "请伊塔帮我调研一下这三款手机",
+            "Eta 帮我把下周的会议都加到日历", "用 Eta agent 分析这个安装包", "Ask Eta to summarize my notifications",
+        };
+        for (String request : requests) {
+            NativeChatRouting.Decision decision = NativeChatRouting.decide(request);
+            assertEquals(request, EtaAgent.RUN_TOOL, decision.tool());
+            assertEquals(request, "eta_delegation", decision.rule());
+        }
+    }
+
+    @Test public void mentionsOfEtaThatDelegateNothingKeepTheirNativeRoute() {
+        String[] requests = {
+            "什么是 Eta", "介绍一下 Eta 这个应用", "外卖的 ETA 是多少", "Eta 是哪个希腊字母", "beta 版什么时候发布",
+            "What is ETA for my delivery", "不要让别人知道", "让我看看今天的新闻",
+        };
+        for (String request : requests) assertEquals(request, "", NativeChatRouting.decide(request).tool());
+    }
 }

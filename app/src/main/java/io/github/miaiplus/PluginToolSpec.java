@@ -31,6 +31,10 @@ public record PluginToolSpec(String pluginId, String kind, String name, String s
                 throw new IllegalArgumentException("内置工具身份无效");
         } else if ("mcp".equals(kind)) {
             if (!name.equals(mcpName(pluginId, sourceName))) throw new IllegalArgumentException("MCP 工具名称无效");
+        } else if (EtaAgent.KIND.equals(kind)) {
+            if (!EtaAgent.PLUGIN_ID.equals(pluginId) || !name.equals(sourceName)
+                || (!EtaAgent.RUN_TOOL.equals(name) && !EtaAgent.STATUS_TOOL.equals(name)))
+                throw new IllegalArgumentException("Eta 工具身份无效");
         } else throw new IllegalArgumentException("不支持的插件类型");
         inputSchema = validateSchema(inputSchema);
     }

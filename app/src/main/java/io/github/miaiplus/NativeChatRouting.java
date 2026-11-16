@@ -41,7 +41,12 @@ final class NativeChatRouting {
             + "|(?:打开|启动|进入|点开)[^，。！？；\\n]{1,20}?[，,]?" + IN_APP_ACTION
             + "|\\b(?:open|launch)\\s+.+?\\s+(?:and|then|to)\\s+(?:search|find|tap|click|type|enter|select)\\b"
             + "|\\b(?:search|find|tap|click|type|enter|select)\\b.+?\\b(?:in|on|using)\\s+\\S+");
-
+    private static final String ETA_NAME = "(?<![a-z])(?:eta|伊塔|埃塔|艾塔)(?![a-z])";
+    private static final Pattern ETA_DELEGATION = Pattern.compile(
+        // The user names the other agent as the one to act. "ETA" as an arrival time carries no such verb.
+        "(?:让|叫|请|找|交给|派给|委派给?|委托给?|转给|用|使用|通过)\\s?" + ETA_NAME
+            + "|" + ETA_NAME + "\\s?(?:agent|智能体|助手)?\\s?(?:帮|来|去|替|给我|处理|完成|执行|做)"
+            + "|\\b(?:ask|let|have|use|tell)\\s+eta\\b|\\bdelegate\\b.{0,30}\\beta\\b");
     private NativeChatRouting() { }
 
     static boolean requestsBackgroundTools(String query) {
@@ -79,6 +84,8 @@ final class NativeChatRouting {
         if (background) return new Decision("", "background_without_action");
         if (PHONE_CONTROL.matcher(text).find()) return new Decision(PhoneUseRouting.FOREGROUND_TOOL, "phone_control");
         if (APP_OPERATION.matcher(text).find()) return new Decision(PhoneUseRouting.FOREGROUND_TOOL, "app_operation");
+        // Ordinary chats never reach the tool-capable agent, so a request that names Eta has to be sent there.
+        if (ETA_DELEGATION.matcher(text).find()) return new Decision(EtaAgent.RUN_TOOL, "eta_delegation");
         return new Decision("", "no_match");
     }
 

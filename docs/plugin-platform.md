@@ -91,6 +91,10 @@ MCP 插件不依赖 Phone Use 总开关、无障碍服务、后台 root helper �
 
 内置 Termux 的工具错误（例如命令非零退出、诊断或策略拒绝）经过结果大小检查和凭证清理后交给模型继续判断；桥接失败、配置失效和取消仍走失败路径，模块不会重发命令。手动配置的第三方 HTTP MCP 保持原先的脱敏错误处理。旧版提前结束的实测现象见 [真实会话记录](validation/termux-harness-2026-11-06.md)。
 
+### Eta 外部 Agent
+
+内置工具中的 **Eta Agent**（kind `eta`）把本机 Eta 应用作为外部 Agent 提供给小爱，工具为 `miaiplus_eta_run` 和 `miaiplus_eta_status`。它不同于 MCP 与 Termux：任务在小爱宿主进程内经 Messenger 中转（Eta 只接纳其自身与小爱等助手包的 UID），不经模块进程的远程任务队列。目录仅在开关开启且 Eta 通过包名、官方签名、版本和服务入口校验时出现，默认关闭；Eta 不被修改或打包。工具契约、限制和异常处理见 [Eta 外部 Agent](eta-agent.md)。
+
 ## 已实现的 MCP 范围
 
 本轮明确支持用户显式选择 **`2025-11-25`（默认）** 或 **`2025-06-18`（兼容）**，只实现这两版基于初始化握手的 Streamable HTTP 工具子集，不把它称为当前所有 MCP 规范的完整实现。协议演进与选择依据见 [MCP 调研](plugin-platform-mcp-research.md)。

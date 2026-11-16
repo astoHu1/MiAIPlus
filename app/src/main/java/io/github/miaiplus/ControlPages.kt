@@ -29,14 +29,26 @@ internal fun ControlPage(state: SettingsState, openSettings: (Boolean) -> Unit, 
             summary = "更改后重启小爱", onCheckedChange = { state.setOption("enabled", it) })
     }
     Section("执行") {
+        val eta = state.config.protocol == EtaAgent.PROTOCOL
+        val context = androidx.compose.ui.platform.LocalContext.current
+        val etaAvailability = remember(eta) { EtaAgent.availability(context) }
         OverlayDropdownPreference(title = "规划模型", items = listOf("小爱当前模型", "外部模型"),
-            enabled = !state.config.globalModel,
-            summary = if (state.config.globalModel) "跟随小爱对话的模型" else null,
+            enabled = !state.config.globalModel && !eta,
+            summary = if (eta) "由 Eta 规划和执行" else if (state.config.globalModel) "跟随小爱对话的模型" else null,
             selectedIndex = if (state.config.planner == "external") 1 else 0,
             onSelectedIndexChange = { state.setOption("planner", if (it == 1) "external" else "native") })
-        OverlayDropdownPreference(title = "动作协议", items = listOf("Phone Use", "AutoGLM"),
-            selectedIndex = if (state.config.protocol == "autoglm") 1 else 0,
-            onSelectedIndexChange = { state.setOption("protocol", if (it == 1) "autoglm" else "phone_use") })
+        OverlayDropdownPreference(title = "动作协议", items = listOf("Phone Use", "AutoGLM", "Eta"),
+            selectedIndex = when (state.config.protocol) { "autoglm" -> 1; EtaAgent.PROTOCOL -> 2; else -> 0 },
+            summary = if (!eta) null else when (etaAvailability) {
+                EtaAgent.Availability.READY -> "控屏请求全部交给 Eta 完成"
+                EtaAgent.Availability.NOT_INSTALLED -> "未安装 Eta，控屏不可用"
+                EtaAgent.Availability.UNTRUSTED -> "已安装的 Eta 不是官方发布版，控屏不可用"
+                EtaAgent.Availability.OUTDATED -> "需要 Eta ${EtaAgent.VERIFIED_VERSION} 或更新版本"
+                EtaAgent.Availability.NO_SERVICE -> "此版本 Eta 不受支持，控屏不可用"
+            },
+            onSelectedIndexChange = {
+                state.setOption("protocol", when (it) { 1 -> "autoglm"; 2 -> EtaAgent.PROTOCOL; else -> "phone_use" })
+            })
         ArrowPreference(title = "最大步数", summary = "${state.config.maxSteps} 步",
             onClick = { steps = state.config.maxSteps.toString(); state.error = null; editSteps = true })
         ArrowPreference(title = "虚拟屏", summary = "画布与能力检测", onClick = { nav.open(Route.Virtual) })

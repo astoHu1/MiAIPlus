@@ -41,13 +41,21 @@ class PluginState(private val application: Application, private val scope: Corou
         private set
     var termuxInstalled by mutableStateOf(false)
         private set
+    var etaAvailability by mutableStateOf(EtaAgent.Availability.NOT_INSTALLED)
+        private set
+    var etaEnabled by mutableStateOf(false)
+        private set
+    var etaPrivileged by mutableStateOf(false)
+        private set
 
     val entries: List<PluginSettings.Entry> get() = snapshot?.entries() ?: emptyList()
     val termuxEntry: PluginSettings.Entry? get() = TermuxMcp.find(snapshot)
     val busy: Boolean get() = refreshingId != null || termuxAction != null
     val summary: String get() {
         val current = snapshot ?: return "插件配置不可读"
-        val builtins = current.entries().count { it.kind() == "builtin" } + if (termuxEntry != null) 1 else 0
+        val builtins = current.entries().count { it.kind() == "builtin" } +
+            (if (termuxEntry != null) 1 else 0) +
+            (if (etaEnabled && etaAvailability == EtaAgent.Availability.READY) 1 else 0)
         val remoteTools = current.entries().filter { it.kind() == "mcp" }.sumOf { it.tools().size }
         return "$builtins 个内置工具 · $remoteTools 个 MCP 工具"
     }
@@ -59,6 +67,9 @@ class PluginState(private val application: Application, private val scope: Corou
             snapshot = PluginSettings.load(application)
             termuxAutoStart = PluginSettings.termuxAutoStart(application)
             termuxInstalled = TermuxMcp.installed(application)
+            etaAvailability = EtaAgent.availability(application)
+            etaEnabled = EtaAgent.enabled(application)
+            etaPrivileged = EtaAgent.privilegedTools(application)
         }
         if (!loaded) snapshot = null
         return loaded
@@ -108,6 +119,19 @@ class PluginState(private val application: Application, private val scope: Corou
         check(!busy) { "请先等待当前配置操作结束" }
         PluginSettings.setTermuxAutoStart(application, enabled)
         termuxAutoStart = enabled
+    }
+
+    fun setEtaEnabled(enabled: Boolean): Boolean = attempt {
+        check(!busy) { "请先等待当前配置操作结束" }
+        check(!enabled || EtaAgent.availability(application) == EtaAgent.Availability.READY) { "Eta 当前不可用" }
+        EtaAgent.setEnabled(application, enabled)
+        etaEnabled = enabled
+    }
+
+    fun setEtaPrivileged(enabled: Boolean): Boolean = attempt {
+        check(!busy) { "请先等待当前配置操作结束" }
+        EtaAgent.setPrivilegedTools(application, enabled)
+        etaPrivileged = enabled
     }
 
     fun configureTermux() = runTermuxAction(TermuxAction.Configure, "Termux MCP 已配置") {

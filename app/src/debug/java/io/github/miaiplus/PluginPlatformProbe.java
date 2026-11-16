@@ -45,19 +45,26 @@ public final class PluginPlatformProbe {
                     termuxRequest(context, loader, tool, nonce, expectedUid, !termux);
                     return;
                 }
+                String mode = intent.getStringExtra("mode");
+                boolean eta = "eta".equals(mode) || "eta_route".equals(mode);
+                String arguments = intent.getStringExtra("arguments");
                 try { Hooks.enter(); }
                 catch (IllegalStateException retiring) { return; }
                 Thread worker = new Thread(() -> {
                     String report;
                     try {
-                        report = "PLUGIN_PLATFORM_PASS " + nonce + " " + run(context, loader, tool, phone, nonce);
+                        report = !eta ? "PLUGIN_PLATFORM_PASS " + nonce + " " + run(context, loader, tool, phone, nonce)
+                            : "ETA_PROBE " + ("eta".equals(mode) ? eta(context, loader, tool, arguments)
+                                : etaRoute(context, loader, arguments)).put("nonce", nonce);
                     }
                     catch (Throwable failure) {
                         Hooks.log(failure);
                         report = "PLUGIN_PLATFORM_FAIL " + nonce + " " + failure.getClass().getSimpleName()
                             + ": " + compact(failure.getMessage());
                     }
-                    try { report(context, report); }
+                    // An Eta task outlives any instrumentation run, so scripts read its one-line outcome from logcat.
+                    if (eta) android.util.Log.i("MiAIPlusEtaProbe", report);
+                    try { report(context, eta ? report.substring(0, Math.min(report.length(), 400)) : report); }
                     finally { WORKERS.remove(Thread.currentThread()); Hooks.leave(); }
                 }, "miaiplus-plugin-platform-probe");
                 WORKERS.add(worker);
@@ -196,6 +203,118 @@ public final class PluginPlatformProbe {
             + "native MCP echo=" + nonce + "; no screen task";
         if (phone != null && !phone.isBlank()) evidence += "; " + phone(context, loader, tools, phone);
         return evidence;
+    }
+
+    /** Calls one Eta tool through the proxy the host registry really holds; the task itself comes from the tester. */
+    private static JSONObject eta(Context context, ClassLoader loader, String name, String arguments) throws Exception {
+        if (!List.of(EtaAgent.RUN_TOOL, EtaAgent.STATUS_TOOL).contains(name)) throw new AssertionError("unsupported Eta tool");
+        if (!NativePluginTools.available(context, name))
+            throw new AssertionError("Eta tool is not in the module catalog; enable Eta Agent in the plugin page");
+        Object registry = NativePluginTools.registry(context, loader);
+        if (registry == null) throw new AssertionError("real host ToolRegistry is unavailable");
+        // The host only meets a changed catalog on its next model request; a probe cannot wait for one.
+        NativePluginTools.synchronizeRegistry(registry);
+        if (!(Reflector.getObjectField(registry, "tools") instanceof Map<?, ?> tools) || tools.get(name) == null)
+            throw new AssertionError("Eta tool did not reach the host registry");
+        long started = System.nanoTime();
+        Object result = execute(loader, tools.get(name), new JSONObject(arguments == null ? "{}" : arguments));
+        String text = resultText(loader, result);
+        // One logcat line holds about 4000 bytes; the ending and the first part of Eta's answer are enough.
+        return new JSONObject().put("failure", isFailure(loader, result)).put("ms", (System.nanoTime() - started) / 1_000_000L)
+            .put("policy", NativePluginTools.promptPolicy(context).contains("Eta 委派"))
+            .put("leftovers", EtaBridge.leftoversAcknowledged).put("text", text.substring(0, Math.min(text.length(), 700)));
+    }
+
+    /**
+     * Submits typed text exactly as XiaoAi's input bar does and reports whether its model chose
+     * to delegate to Eta within the window. The model, its answer and any Eta task it starts are all real.
+     */
+    private static JSONObject etaRoute(Context context, ClassLoader loader, String arguments) throws Exception {
+        JSONObject request = new JSONObject(arguments == null ? "{}" : arguments);
+        String query = request.getString("query");
+        long decideMs = request.optLong("decide_seconds", 60) * 1000, finishMs = request.optLong("finish_seconds", 240) * 1000;
+        if (!NativePluginTools.available(context, EtaAgent.RUN_TOOL)) throw new AssertionError("Eta tool is not in the module catalog");
+        if (EtaBridge.busy()) throw new AssertionError("an Eta task is already running");
+        Object sender = NativeChatRoutingHook.voiceSender(context, loader);
+        if (sender == null) throw new AssertionError("native chat sender unavailable; open XiaoAi once first");
+        Map<?, ?> runs = (Map<?, ?>)Reflector.getStaticObjectField(EtaBridge.class, "RUNS");
+        Object lock = Reflector.getStaticObjectField(EtaBridge.class, "LOCK");
+        Set<Object> before;
+        synchronized (lock) { before = new java.util.HashSet<>(runs.keySet()); }
+        // Which MiAIPlus tools the model reached for, in order, and the task it wrote for Eta: the answer to
+        // "why was this not delegated" is usually that it picked a control tool instead.
+        List<String> called = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        java.util.concurrent.atomic.AtomicReference<String> task = new java.util.concurrent.atomic.AtomicReference<>("");
+        io.github.miaiplus.hook.HookCallback.Unhook observer = Hooks.hookMethod(NativePluginTools.class.getDeclaredMethod(
+            "execute", Context.class, ClassLoader.class, String.class, PluginToolSpec.class, Object.class, Object[].class),
+            new io.github.miaiplus.hook.HookCallback() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    String name = ((PluginToolSpec)p.args[3]).name();
+                    if (called.size() < 12) called.add(name);
+                    if (EtaAgent.RUN_TOOL.equals(name) && p.args[5] instanceof Object[] args && args.length > 0 && args[0] != null)
+                        try { task.compareAndSet("", new JSONObject(String.valueOf(args[0])).optString("task")); }
+                        catch (org.json.JSONException ignored) { task.compareAndSet("", String.valueOf(args[0])); }
+                }
+            });
+        // Model rounds of XiaoAi's agent during the window, and whether Eta's tool was among those offered: no
+        // round at all means the request never reached a tool-capable model.
+        java.util.concurrent.atomic.AtomicInteger rounds = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicBoolean offered = new java.util.concurrent.atomic.AtomicBoolean();
+        List<io.github.miaiplus.hook.HookCallback.Unhook> streams = new java.util.ArrayList<>();
+        List<String> trail = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        for (String className : new String[]{"qm.c", "um.h", "qm.i", "qm.j", "qm.b"}) {
+            Class<?> client;
+            try { client = Reflector.findClass(className, loader); }
+            catch (Throwable missing) { continue; }
+            for (java.lang.reflect.Method method : client.getDeclaredMethods()) {
+                if (!"streamCompletion".equals(method.getName()) || method.getParameterCount() != 4) continue;
+                streams.add(Hooks.hookMethod(method, new io.github.miaiplus.hook.HookCallback() {
+                    @Override protected void afterHookedMethod(MethodHookParam p) {
+                        if (p.args[2] == null) return; // Coroutine resume, not a new round.
+                        rounds.incrementAndGet();
+                        // What the previous round ended with (a host tool call and its result), briefly.
+                        if (p.args[0] instanceof List<?> messages && !messages.isEmpty()) {
+                            String last = String.valueOf(messages.get(messages.size() - 1));
+                            String prior = messages.size() > 1 ? String.valueOf(messages.get(messages.size() - 2)) : "";
+                            trail.add(clip(prior, 220) + " || " + clip(last, 220));
+                        }
+                        if (String.valueOf(p.args[1]).contains(EtaAgent.RUN_TOOL)) offered.set(true);
+                    }
+                }));
+            }
+        }
+        long started = System.nanoTime(), decided;
+        boolean delegated = false;
+        try {
+            MainThread.call(() -> Reflector.callMethod(sender, "sendToMiClaw", query, query, null, List.of()));
+            // A control tool chosen first settles the question as surely as a delegation does.
+            while (!delegated && called.isEmpty() && (System.nanoTime() - started) / 1_000_000L < decideMs) {
+                Thread.sleep(250);
+                synchronized (lock) { delegated = !before.containsAll(runs.keySet()); }
+            }
+            decided = (System.nanoTime() - started) / 1_000_000L;
+            // The tool call is seen before the bridge registers its run.
+            for (int i = 0; !delegated && called.contains(EtaAgent.RUN_TOOL) && i < 20; i++) {
+                Thread.sleep(250);
+                synchronized (lock) { delegated = !before.containsAll(runs.keySet()); }
+            }
+            while (delegated && EtaBridge.busy() && (System.nanoTime() - started) / 1_000_000L < decideMs + finishMs) Thread.sleep(500);
+        } finally { observer.unhook(); for (var stream : streams) stream.unhook(); }
+        NativeChatRouting.Decision decision = NativeChatRouting.decide(query);
+        // The submission passes MiAIPlus's own entry hook like typed text does: "forced" says whether that rule
+        // sends it to the agent. Without it XiaoAi decides, and its ordinary chat path has no tools at all.
+        return new JSONObject().put("delegated", delegated).put("decidedMs", decided).put("rule", decision.rule())
+            .put("forced", EtaAgent.RUN_TOOL.equals(decision.tool())).put("tools", new JSONArray(called))
+            .put("modelRounds", rounds.get()).put("etaOffered", offered.get()).put("trail", new JSONArray(trail))
+            .put("etaScreen", NativePluginTools.etaControlsScreen(context))
+            .put("phoneTools", NativePluginTools.available(context, PhoneUseRouting.FOREGROUND_TOOL)
+                || NativePluginTools.available(context, PhoneUseRouting.BACKGROUND_TOOL))
+            .put("task", task.get().substring(0, Math.min(task.get().length(), 300)))
+            .put("etaStillRunning", EtaBridge.busy()).put("ms", (System.nanoTime() - started) / 1_000_000L);
+    }
+
+    private static String clip(String text, int max) {
+        return text.length() <= max ? text : text.substring(0, max) + "…";
     }
 
     private static String termux(Context context, ClassLoader loader, String remoteName, String nonce,

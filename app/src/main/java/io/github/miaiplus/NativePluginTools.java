@@ -87,7 +87,7 @@ final class NativePluginTools {
                     String pluginLabel = value.has("pluginLabel")
                         ? PluginToolSpec.string(value, "pluginLabel") : spec.displayName();
                     if (value.has("pluginLabel")) PluginToolSpec.requireText(pluginLabel, 80, "插件显示名称无效");
-                    if ((!"mcp".equals(spec.kind()) && !PhoneUsePlugin.owns(spec))
+                    if ((!"mcp".equals(spec.kind()) && !PhoneUsePlugin.owns(spec) && !EtaAgent.owns(spec))
                         || ("mcp".equals(spec.kind()) && (PhoneUseRouting.FOREGROUND_TOOL.equals(spec.name())
                         || PhoneUseRouting.BACKGROUND_TOOL.equals(spec.name()))))
                         throw new IllegalArgumentException("Unknown plugin execution kind");
@@ -125,16 +125,39 @@ final class NativePluginTools {
     static boolean availableForRouting(Context context, String name) {
         synchronized (LOCK) {
             if (!refresh(context)) throw new IllegalStateException("Plugin catalog unavailable");
-            return catalog.tools().containsKey(name);
+            if (catalog.tools().containsKey(name)) return true;
+            // A screen request still needs the tool-capable agent when Eta is the screen-control protocol.
+            return (PhoneUseRouting.FOREGROUND_TOOL.equals(name) || PhoneUseRouting.BACKGROUND_TOOL.equals(name))
+                && etaControlsScreen();
+        }
+    }
+
+    /** True when the current catalog hands screen operations to Eta instead of MiAIPlus's own tools. */
+    static boolean etaControlsScreen(Context context) {
+        synchronized (LOCK) { return refresh(context) && etaControlsScreen(); }
+    }
+
+    private static boolean etaControlsScreen() {
+        Entry run = catalog.tools().get(EtaAgent.RUN_TOOL);
+        return run != null && EtaAgent.controlsScreen(run.spec());
+    }
+
+    /** Whether the Eta tool in the current catalog may use Eta's terminal and sensitive tools. */
+    static boolean etaPrivileged(Context context) {
+        synchronized (LOCK) {
+            Entry run = refresh(context) ? catalog.tools().get(EtaAgent.RUN_TOOL) : null;
+            return run != null && EtaAgent.privileged(run.spec());
         }
     }
 
     static String promptPolicy(Context context) {
         refresh(context);
-        return PhoneUsePlugin.promptPolicy(catalog.tools().keySet());
+        Set<String> names = catalog.tools().keySet();
+        return EtaAgent.promptPolicy(names, PhoneUsePlugin.promptPolicy(names), etaControlsScreen());
     }
 
     static boolean canReload(Context context) {
+        if (EtaBridge.busy()) return false;
         try {
             Bundle state = context.getContentResolver().call(BridgeProvider.URI, "plugin_busy", null, null);
             return state != null && !state.getBoolean("active", true);
@@ -189,6 +212,7 @@ final class NativePluginTools {
                     "插件配置已更改或工具已停用，本次调用未执行，不要自动重试");
             if (args == null || args.length < 2 || args[0] == null)
                 return unavailable(loader, spec, "arguments_missing", "插件工具参数不完整");
+            if (EtaAgent.KIND.equals(spec.kind())) return EtaBridge.execute(context, loader, spec, args[0].toString());
             return "builtin".equals(spec.kind())
                 ? PhoneUsePlugin.execute(context, loader, spec, args[0], args[1])
                 : executeRemote(context, loader, revision, spec, args[0].toString());
@@ -382,6 +406,8 @@ final class NativePluginTools {
     }
 
     static void dispose() {
+        // The service connection and reply thread hold this classloader just as the tool proxies do.
+        EtaBridge.dispose();
         synchronized (LOCK) {
             catalog = new Catalog("", Map.of());
             synchronizing.set(true);
