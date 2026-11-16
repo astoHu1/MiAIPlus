@@ -177,6 +177,19 @@ public final class XiaoAiHook extends XposedModule {
                 boolean chat = query.startsWith("模型对话：") || query.startsWith("模型对话:");
                 if (chat) query = query.substring(5).trim();
                 kind = chat ? "chat" : query.startsWith("MIAIPLUS:") ? "continuation" : "start";
+                if (!chat && NativePluginTools.etaControlsScreen(context)) {
+                    // Eta is the screen-control protocol: XiaoAi's own control tool hands the request to Eta too.
+                    stage = "eta"; kind = "eta";
+                    String task = EtaAgent.controlTask(query);
+                    if (task.isEmpty()) {
+                        reason = "eta_protocol_continuation";
+                        param.setResult(error.invoke(null, EtaAgent.CONTROL_CONTINUATION_REFUSED)); return;
+                    }
+                    EtaBridge.Outcome handed = EtaBridge.run(context, new org.json.JSONObject().put("task", task),
+                        NativePluginTools.etaPrivileged(context));
+                    outcome = handed.observation() ? "eta" : "eta_refused";
+                    param.setResult((handed.observation() ? success : error).invoke(null, handed.text())); return;
+                }
                 String id = null;
                 try {
                     stage = "conversation";
@@ -250,7 +263,8 @@ public final class XiaoAiHook extends XposedModule {
                     if (!enabled()) return;
                     String tool = (String)Reflector.getObjectField(param.thisObject, "name");
                     if ("controlApp".equals(tool) || "voiceassist__controlApp".equals(tool))
-                        Reflector.setObjectField(param.thisObject, "description", PhoneUsePlugin.legacyDescription());
+                        Reflector.setObjectField(param.thisObject, "description", NativePluginTools.etaControlsScreen(context)
+                            ? EtaAgent.CONTROL_APP_DESCRIPTION : PhoneUsePlugin.legacyDescription());
                 }
             }));
         }

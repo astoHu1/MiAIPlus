@@ -277,6 +277,7 @@ public final class PluginSettings {
         // manifests may be retained, but enabling them must never break the host catalog.
         // Reserve both first-party definitions even if legacy Phone Use is currently off.
         ArrayList<PluginToolSpec> activeTools = new ArrayList<>(PhoneUsePlugin.specs());
+        activeTools.addAll(EtaAgent.specs(true));
         for (Entry entry : snapshot.entries()) {
             if (entry.enabled() && !"builtin".equals(entry.kind())) activeTools.addAll(entry.tools());
         }

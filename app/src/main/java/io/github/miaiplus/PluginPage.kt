@@ -47,6 +47,8 @@ internal fun PluginPage(state: PluginState, phoneUseEnabled: Boolean, nativePlan
         }
         Spacer(Modifier.height(12.dp))
         TermuxGroup(state) { nav.open(Route.Termux) }
+        Spacer(Modifier.height(12.dp))
+        EtaGroup(state)
         Spacer(Modifier.height(16.dp))
         Row(Modifier.fillMaxWidth().padding(start = 28.dp, end = 16.dp),
             verticalAlignment = Alignment.CenterVertically) {
@@ -91,6 +93,33 @@ private fun TermuxGroup(state: PluginState, openSettings: () -> Unit) {
             modifier = Modifier.testTag("termux-enabled"))
         ArrowPreference(title = "Termux 配置", onClick = openSettings,
             modifier = Modifier.testTag("termux-settings"))
+    }
+}
+
+@Composable
+private fun EtaGroup(state: PluginState) {
+    val ready = state.etaAvailability == EtaAgent.Availability.READY
+    val enabled = state.etaEnabled && ready
+    var confirmPrivileged by remember { mutableStateOf(false) }
+    Group {
+        SwitchPreference(title = "Eta Agent", checked = enabled, enabled = ready && !state.busy,
+            summary = when (state.etaAvailability) {
+                EtaAgent.Availability.READY -> "把复杂的多步任务交给 Eta 完成"
+                EtaAgent.Availability.NOT_INSTALLED -> "未安装 Eta"
+                EtaAgent.Availability.UNTRUSTED -> "已安装的 Eta 不是官方发布版"
+                EtaAgent.Availability.OUTDATED -> "需要 Eta ${EtaAgent.VERIFIED_VERSION} 或更新版本"
+                EtaAgent.Availability.NO_SERVICE -> "此 Eta 版本不受支持"
+            },
+            onCheckedChange = { state.setEtaEnabled(it) }, modifier = Modifier.testTag("eta-enabled"))
+        if (enabled) SwitchPreference(title = "终端和敏感工具", checked = state.etaPrivileged, enabled = !state.busy,
+            summary = "含 shell、短信、联系人和系统设置",
+            onCheckedChange = { if (it) confirmPrivileged = true else state.setEtaPrivileged(false) },
+            modifier = Modifier.testTag("eta-privileged"))
+    }
+    OverlayDialog(show = confirmPrivileged, title = "允许终端和敏感工具？",
+        summary = "Eta 将直接执行这些操作，不会逐次询问。Eta 自身的开关和 Root 授权仍然有效。",
+        onDismissRequest = { confirmPrivileged = false }) {
+        DialogButtons("允许", { state.setEtaPrivileged(true); confirmPrivileged = false }, { confirmPrivileged = false })
     }
 }
 

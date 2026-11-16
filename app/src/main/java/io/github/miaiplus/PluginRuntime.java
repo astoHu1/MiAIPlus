@@ -61,34 +61,48 @@ public final class PluginRuntime {
     private PluginRuntime() { }
 
     public static Bundle catalog(Context context) {
-        Catalog catalog = buildCatalog(PluginSettings.load(context), new Config(context));
+        Catalog catalog = buildCatalog(context);
         Bundle result = new Bundle();
         result.putString("revision", catalog.revision());
         result.putString("tools", catalog.encoded());
         return result;
     }
 
-    private static Catalog buildCatalog(PluginSettings.Snapshot settings, Config config) {
+    private static Catalog buildCatalog(Context context) {
+        return buildCatalog(PluginSettings.load(context), new Config(context), EtaAgent.catalog(context),
+            EtaAgent.revision(context));
+    }
+
+    private static Catalog buildCatalog(PluginSettings.Snapshot settings, Config config, List<PluginToolSpec> eta,
+        String etaRevision) {
         List<PluginToolSpec> tools = new ArrayList<>();
         Map<String, PluginToolSpec> builtin = new LinkedHashMap<>();
         for (PluginToolSpec tool : PhoneUsePlugin.specs()) builtin.put(tool.pluginId(), tool);
         for (PluginSettings.Entry entry : settings.entries()) {
             if (!entry.enabled()) continue;
             if ("builtin".equals(entry.kind())) {
-                if (config.enabled && "native".equals(config.planner)) tools.add(builtin.get(entry.id()));
+                // With Eta as the screen-control protocol, Eta's own Phone Use takes every screen request.
+                if (config.enabled && "native".equals(config.planner) && !EtaAgent.controlsScreen(config))
+                    tools.add(builtin.get(entry.id()));
             } else tools.addAll(entry.tools());
         }
+        // Eta is an external agent, not a stored plugin entry: its switch and identity check decide per catalog.
+        tools.addAll(eta);
         validateCatalogSize(tools);
         JSONArray encoded = new JSONArray();
         for (PluginToolSpec tool : tools) {
-            try { encoded.put(tool.toJson().put("pluginLabel", settings.find(tool.pluginId()).label())); }
+            try {
+                encoded.put(tool.toJson().put("pluginLabel", EtaAgent.KIND.equals(tool.kind()) ? EtaAgent.LABEL
+                    : settings.find(tool.pluginId()).label()));
+            }
             catch (JSONException invalid) { throw new IllegalStateException("插件目录无法编码"); }
         }
         String value = encoded.toString();
         if (value.length() > MAX_CATALOG_CHARS)
             throw new IllegalStateException("启用的插件目录过大，请减少工具或停用部分插件");
         // Legacy Phone Use settings also invalidate host proxies, without exporting model configuration.
-        String revision = settings.revision() + ":" + config.enabled + ":" + "native".equals(config.planner);
+        String revision = settings.revision() + ":" + config.enabled + ":" + "native".equals(config.planner)
+            + ":" + EtaAgent.controlsScreen(config) + ":eta=" + etaRevision;
         return new Catalog(revision, List.copyOf(tools), value);
     }
 
@@ -120,7 +134,7 @@ public final class PluginRuntime {
     static Bundle start(Context context, int owner, Bundle request) {
         try {
             if (request == null) return error("插件调用参数缺失");
-            Catalog catalog = buildCatalog(PluginSettings.load(context), new Config(context));
+            Catalog catalog = buildCatalog(context);
             if (!catalog.revision().equals(request.getString("revision"))) return error("插件配置已更改，请重新规划；本次未执行");
             String pluginId = request.getString("pluginId"), name = request.getString("toolName");
             PluginToolSpec selected = null;
@@ -133,7 +147,8 @@ public final class PluginRuntime {
             PluginToolSpec.validateNesting(encoded, 48);
             JSONObject arguments = PluginToolSpec.parseObject(encoded);
             PluginSettings.Snapshot settings = PluginSettings.load(context);
-            if (!catalog.revision().equals(buildCatalog(settings, new Config(context)).revision()))
+            if (!catalog.revision().equals(buildCatalog(settings, new Config(context), EtaAgent.catalog(context),
+                EtaAgent.revision(context)).revision()))
                 return error("插件配置已更改；本次未执行");
             PluginSettings.Entry entry = settings.find(pluginId);
             Job job = new Job(owner, entry, selected, arguments);

@@ -3,6 +3,7 @@
     <queries>
         <package android:name="com.termux" />
         <package android:name="com.miui.voiceassist" />
+        <package android:name="io.github.mangi.eta" />
         <intent><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent>
     </queries>
     <application android:name=".ModuleApplication" android:label="MiAIPlus" android:theme="@style/Theme.MiAIPlus"
