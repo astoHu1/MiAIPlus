@@ -8,7 +8,7 @@
 
 | 范围 | 已有证据 | 边界与详细记录 |
 | --- | --- | --- |
-| 前台应用启动恢复 | 22 项启动／系统授权 JVM 测试、Debug Lint 零错误、Debug 主包与 AndroidTest 构建通过；独立包复现小米跨应用启动门禁，新增一次性 root launcher 通道与晚到确认恢复 | root 授权后实机回归被安全锁屏挡在启动前，root 绕过门禁尚无功能性 PASS；临时包已移除、原服务和安装元数据已核对恢复，原正式安装未更新。见 [启动修复记录](validation/app-launch-2026-11-17.md) |
+| 前台应用启动恢复 | 22 项启动／系统授权 JVM 测试、Debug Lint 零错误、Debug 主包与 AndroidTest 构建通过；ADB root shell 下新助手两次提交成功、目标稳定前台且重复保留 ActivityRecord；正式包 root 探针正常 | 独立测试 UID 执行 su 被拒（errno 13），完整模块调用链尚无 PASS；临时包已移除、原服务仍启用且安装元数据一致，原正式安装未更新。见 [启动修复记录](validation/app-launch-2026-11-17.md) |
 | Eta 外部 Agent 中继与 Eta 控屏协议 | 727 项 JVM／Robolectric、Debug Lint 零错误、Debug／Preview 构建；真实 Eta 3.4.4 上 DONE／BUSY／RUNNING／取消／遗留结果确认通过；小爱官方模型点名 Eta 时委派，普通请求不委派；动作协议设为 Eta 后计算器、设置搜索交给 Eta 完成，无 MiAIPlus 控屏工具 | 未点名的多网页调研未委派；锁屏、敏感工具、冷绑定、热重载拒绝仅单元测试；Preview 包只核对加载。见 [本轮记录](validation/eta-agent-2026-11-16.md) |
 | 数字对话框输入顺序 | 单个 Compose／Robolectric 回归通过；优化 Preview 与配套测试包构建通过；API 37 单项 `-e numberInput true` 验证最大步数逐键 `2`→`20`、光标位置与取消后配置不变 | 使用独立测试包，原发布签名安装未覆盖；未运行其他设备回归或完整 Lint。见 [输入修复记录](validation/number-input-2026-11-16.md) |
 | models.dev 远端推理能力缓存 | 673 项 JVM／Robolectric、33 项 Python、双变体完整 Lint 零错误及各 APK 构建；API 37 实际下载 236 个 provider／9,135 个模型、Preview 磁盘重载、Chat／Responses 实际宿主新模型 mock 探针通过 | 无新增界面，原配置及设备状态已核对恢复；未调用真实生产模型，新请求协议仍需代码适配。见 [缓存验证](validation/models-dev-2026-11-14.md) |

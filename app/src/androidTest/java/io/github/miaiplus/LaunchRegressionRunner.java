@@ -8,6 +8,10 @@ import android.os.Bundle;
 import android.os.SystemClock;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
+import java.io.File;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import org.json.JSONObject;
 
@@ -15,14 +19,20 @@ import org.json.JSONObject;
 public final class LaunchRegressionRunner extends Instrumentation {
     private static final Pattern INSTANCE = Pattern.compile("MiAIPlus launch fixture, instance (\\d+); touch downs (\\d+)");
     private String homePackage;
+    private boolean rootProbeOnly;
 
     @Override public void onCreate(Bundle arguments) {
         homePackage = arguments == null ? null : arguments.getString("home_package");
+        rootProbeOnly = arguments != null && "true".equals(arguments.getString("root_probe_only"));
         super.onCreate(arguments);
         start();
     }
 
     @Override public void onStart() {
+        if (rootProbeOnly) {
+            rootProbe();
+            return;
+        }
         Bundle report = new Bundle();
         int result = Activity.RESULT_CANCELED;
         RunState run = new RunState("isolated-launch-regression", android.os.Process.myUid());
@@ -55,7 +65,8 @@ public final class LaunchRegressionRunner extends Instrumentation {
             long started = SystemClock.elapsedRealtime();
             service.execute(launch, initial, run);
             long launchMillis = SystemClock.elapsedRealtime() - started;
-            check(launchMillis <= 12_000, "launch did not open or return an observation within its confirmation grace budget: " + launchMillis);
+            // Root READY/reply can add 6s before the 10s observation and 1.5s late-confirmation budgets.
+            check(launchMillis <= 20_000, "launch exceeded its transport and confirmation grace budgets: " + launchMillis);
             ScreenService.Frame current = service.capture(run);
             boolean returnedObservation = !target.equals(current.foreground());
             signal("MIAIPLUS_LAUNCH_CHECK", diagnostic(current, returnedObservation
@@ -98,6 +109,77 @@ public final class LaunchRegressionRunner extends Instrumentation {
                 + getContext().getPackageName() + "; restore the original enabled accessibility services.");
             finish(result, report);
         }
+    }
+
+    private void rootProbe() {
+        Bundle report = new Bundle();
+        report.putString("stream", "ROOT_PROBE_COMPLETE: package=" + getTargetContext().getPackageName()
+            + "; uid=" + android.os.Process.myUid() + "; pipe=" + probeSu(false)
+            + "; devnull=" + probeSu(true) + "\n");
+        finish(Activity.RESULT_OK, report);
+    }
+
+    private static String probeSu(boolean redirectError) {
+        Process process = null;
+        try {
+            ProcessBuilder builder = new ProcessBuilder("su", "-c", "id");
+            if (redirectError) builder.redirectError(new File("/dev/null"));
+            process = builder.start();
+            process.getOutputStream().close();
+            StringBuilder stdout = new StringBuilder();
+            Thread output = drainProbe(process.getInputStream(), stdout);
+            Thread error = drainProbe(process.getErrorStream(), null);
+            if (!process.waitFor(3, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                return "timeout";
+            }
+            output.join(100);
+            error.join(100);
+            String identity;
+            synchronized (stdout) { identity = stdout.toString(); }
+            var uid = Pattern.compile("(?:^|\\s)uid=(\\d+)(?:\\(|\\s|$)").matcher(identity);
+            var gid = Pattern.compile("(?:^|\\s)gid=(\\d+)(?:\\(|\\s|$)").matcher(identity);
+            return "exit=" + process.exitValue() + ",uid=" + (uid.find() ? uid.group(1) : "unavailable")
+                + ",gid=" + (gid.find() ? gid.group(1) : "unavailable");
+        } catch (Exception failure) {
+            StringBuilder description = new StringBuilder();
+            Throwable cause = failure;
+            for (int count = 0; cause != null && count < 4; count++, cause = cause.getCause()) {
+                if (count != 0) description.append('>');
+                description.append(cause.getClass().getSimpleName());
+                String message = cause.getMessage();
+                if (message != null) {
+                    var errno = Pattern.compile("(?:error|errno)\\s*=\\s*(\\d+)").matcher(message);
+                    if (errno.find()) description.append("(errno=").append(errno.group(1)).append(')');
+                }
+            }
+            if (failure instanceof InterruptedException) Thread.currentThread().interrupt();
+            return "failure=" + description;
+        } finally {
+            if (process != null) {
+                if (process.isAlive()) process.destroyForcibly();
+                try { process.getOutputStream().close(); } catch (Exception ignored) { }
+                try { process.getInputStream().close(); } catch (Exception ignored) { }
+                try { process.getErrorStream().close(); } catch (Exception ignored) { }
+            }
+        }
+    }
+
+    private static Thread drainProbe(InputStream stream, StringBuilder output) {
+        Thread thread = new Thread(() -> {
+            try (stream) {
+                byte[] buffer = new byte[1024];
+                for (int count; (count = stream.read(buffer)) >= 0; ) {
+                    if (output != null) synchronized (output) {
+                        if (output.length() < 4096) output.append(new String(buffer, 0,
+                            Math.min(count, 4096 - output.length()), StandardCharsets.UTF_8));
+                    }
+                }
+            } catch (Exception ignored) { }
+        }, "root-probe-drain");
+        thread.setDaemon(true);
+        thread.start();
+        return thread;
     }
 
     private boolean awaitForeground(ScreenService service, String wanted, RunState run, long timeout) throws Exception {
