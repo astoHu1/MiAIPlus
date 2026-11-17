@@ -567,9 +567,11 @@ public final class ScreenService extends AccessibilityService {
     private void launch(String requested, RunState run) throws Exception {
         AppLaunchTarget target = onMain(() -> { unlocked(run); return AppLaunchTarget.resolve(requested, launchTargets()); });
         run.progress = "正在打开：" + TaskProgress.compact(target.label());
+        long startedAt = android.os.SystemClock.elapsedRealtime();
         boolean opened = LaunchVerifier.launch(target.packageName(), new LaunchVerifier.Driver() {
+            private String previousForeground;
             @Override public String foreground() throws Exception {
-                return onMain(() -> {
+                String foreground = onMain(() -> {
                     unlocked(run);
                     AccessibilityNodeInfo root;
                     try { root = currentRoot(); }
@@ -579,14 +581,24 @@ public final class ScreenService extends AccessibilityService {
                     StringBuilder tree = new StringBuilder();
                     dump(root, tree, new int[]{0});
                     if (SystemDialogPolicy.isAppSelection(pkg, tree.toString())
-                        && !"启动应用".equals(launchPromptText(root, "permission_group_title")))
+                        && !LaunchVerifier.isLaunchGroup(launchPromptText(root, "permission_group_title")))
                         return LaunchVerifier.APP_SELECTION;
                     // Security also owns ordinary launcher pages; only permission UI is a blocker.
                     return LaunchVerifier.classifyForeground(pkg, pkg.equals("com.miui.securitycenter")
                         ? launchPromptText(root, "permission_group_title") : "");
                 });
+                if (!foreground.equals(previousForeground)) {
+                    PhoneUseLog.event("launch_state", "foreground", foreground,
+                        "durationMs", now() - startedAt);
+                    previousForeground = foreground;
+                }
+                return foreground;
             }
             @Override public void start() throws Exception {
+                if (ForegroundAppLauncher.launch(ScreenService.this, target, () -> unlocked(run))) {
+                    PhoneUseLog.event("launch_submitted", "backend", "root", "durationMs", now() - startedAt);
+                    return;
+                }
                 onMain(() -> {
                     unlocked(run);
                     Intent intent = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
@@ -600,14 +612,20 @@ public final class ScreenService extends AccessibilityService {
                     } catch (android.content.ActivityNotFoundException missing) {
                         throw new IllegalStateException("应用启动入口已失效，请检查应用是否仍安装并启用");
                     } finally { android.os.Binder.restoreCallingIdentity(identity); }
+                    PhoneUseLog.event("launch_submitted", "backend", "standard", "durationMs", now() - startedAt);
                     return null;
                 });
             }
-            @Override public boolean allowLaunchPrompt() throws Exception { return ScreenService.this.allowLaunchPrompt(target, run); }
+            @Override public boolean allowLaunchPrompt() throws Exception {
+                boolean clicked = ScreenService.this.allowLaunchPrompt(target, run);
+                PhoneUseLog.event("launch_confirmation", "clicked", clicked, "durationMs", now() - startedAt);
+                return clicked;
+            }
             @Override public void check() { unlocked(run); }
             @Override public long now() { return android.os.SystemClock.elapsedRealtime(); }
             @Override public void pause(long millis) throws Exception { run.pause(millis); }
         });
+        PhoneUseLog.event("launch_result", "opened", opened, "durationMs", android.os.SystemClock.elapsedRealtime() - startedAt);
         run.progress = (opened ? "已打开：" : "等待选择或确认打开：") + TaskProgress.compact(target.label());
     }
     public void execute(Action action, Frame frame, RunState run) throws Exception {

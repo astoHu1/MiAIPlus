@@ -9,6 +9,7 @@ public class LaunchVerifierTest {
     private static final String TARGET = "fixture.target";
     private static final class Fake implements LaunchVerifier.Driver {
         long time;
+        long cancelAt = Long.MAX_VALUE;
         int starts;
         boolean cancelled, consent;
         int consentClicks;
@@ -16,7 +17,7 @@ public class LaunchVerifierTest {
         @Override public String foreground() { return windows.apply(time); }
         @Override public void start() { starts++; }
         @Override public boolean allowLaunchPrompt() { consentClicks++; return consent; }
-        @Override public void check() { if (cancelled) throw new CancellationException(); }
+        @Override public void check() { if (cancelled || time >= cancelAt) throw new CancellationException(); }
         @Override public long now() { return time; }
         @Override public void pause(long millis) { time += millis; }
     }
@@ -46,6 +47,20 @@ public class LaunchVerifierTest {
             assertEquals(250, f.time);
         }
     }
+    @Test public void newlyVisibleUntitledSecurityCenterReturnsForObservation() throws Exception {
+        for (long visibleAt : new long[]{250, 10000}) {
+            Fake f = new Fake();
+            f.windows = t -> t >= visibleAt
+                ? LaunchVerifier.classifyForeground("com.miui.securitycenter", "") : "fixture.origin";
+            assertFalse(LaunchVerifier.launch(TARGET, f));
+            assertEquals(1, f.starts); assertEquals(0, f.consentClicks); assertEquals(visibleAt, f.time);
+        }
+    }
+    @Test public void originalSecurityCenterPageReturnsForObservationAtTimeout() throws Exception {
+        Fake f = new Fake(); f.windows = t -> "com.miui.securitycenter";
+        assertFalse(LaunchVerifier.launch(TARGET, f));
+        assertEquals(1, f.starts); assertEquals(0, f.consentClicks); assertEquals(10000, f.time);
+    }
     @Test public void launchConsentIsAllowedOnceThenTargetIsVerified() throws Exception {
         for (String target : new String[]{TARGET, "com.miui.securitycenter"}) {
             for (boolean existingPrompt : new boolean[]{false, true}) {
@@ -63,9 +78,21 @@ public class LaunchVerifierTest {
     @Test public void clickingConsentDoesNotCountAsSuccessfulLaunch() throws Exception {
         Fake f = new Fake(); f.consent = true;
         f.windows = t -> t < 250 ? "fixture.origin" : LaunchVerifier.XIAOMI_CONFIRMATION;
-        assertTrue(assertThrows(IllegalStateException.class, () -> LaunchVerifier.launch(TARGET, f))
-            .getMessage().startsWith("PAUSE："));
-        assertEquals(1, f.starts); assertEquals(1, f.consentClicks); assertEquals(10000, f.time);
+        assertFalse(LaunchVerifier.launch(TARGET, f));
+        assertEquals(1, f.starts); assertEquals(1, f.consentClicks); assertEquals(1750, f.time);
+    }
+    @Test public void lateLaunchConsentAllowsTheTargetToBecomeStableWithinGrace() throws Exception {
+        Fake f = new Fake(); f.consent = true;
+        f.windows = t -> t < 10000 ? "fixture.origin" : t < 10750
+            ? LaunchVerifier.classifyForeground("com.miui.securitycenter", "打开应用") : TARGET;
+        assertTrue(LaunchVerifier.launch(TARGET, f));
+        assertEquals(1, f.starts); assertEquals(1, f.consentClicks); assertEquals(11250, f.time);
+    }
+    @Test public void launchConsentInterruptsTheTargetsStableWindow() throws Exception {
+        Fake f = new Fake(); f.consent = true;
+        f.windows = t -> t < 250 ? "fixture.origin" : t == 500 ? LaunchVerifier.XIAOMI_CONFIRMATION : TARGET;
+        assertTrue(LaunchVerifier.launch(TARGET, f));
+        assertEquals(1, f.starts); assertEquals(1, f.consentClicks); assertEquals(1250, f.time);
     }
     @Test public void existingPermissionPromptsReturnForPlanningBeforeAnotherLaunch() throws Exception {
         for (String blocker : new String[]{"com.lbe.security.miui",
@@ -87,5 +114,13 @@ public class LaunchVerifierTest {
         Fake f = new Fake(); f.cancelled = true;
         try { LaunchVerifier.launch(TARGET, f); fail(); } catch (CancellationException expected) { }
         assertEquals(0, f.starts);
+    }
+    @Test public void cancellationStopsLaunchWaitAndConsentGrace() throws Exception {
+        for (boolean consent : new boolean[]{false, true}) {
+            Fake f = new Fake(); f.cancelAt = 1000; f.consent = consent;
+            f.windows = t -> consent && t >= 250 ? LaunchVerifier.XIAOMI_CONFIRMATION : "fixture.origin";
+            assertThrows(CancellationException.class, () -> LaunchVerifier.launch(TARGET, f));
+            assertEquals(1, f.starts); assertEquals(consent ? 1 : 0, f.consentClicks); assertEquals(1000, f.time);
+        }
     }
 }

@@ -6,7 +6,7 @@ import java.util.List;
 final class LaunchPrompt {
     private LaunchPrompt() {}
     static boolean matches(String owner, String group, String request, List<String> texts, List<String> callers, List<String> targets) {
-        if (!"com.miui.securitycenter".equals(owner) || !"启动应用".equals(group)) return false;
+        if (!"com.miui.securitycenter".equals(owner) || !LaunchVerifier.isLaunchGroup(group)) return false;
         if (!texts.contains("本次允许") || !(texts.contains("拒绝") || texts.contains("取消"))) return false;
         String value = normalize(request);
         for (String caller : callers) for (String target : targets) {

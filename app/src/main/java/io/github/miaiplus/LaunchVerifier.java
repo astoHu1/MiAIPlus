@@ -9,6 +9,7 @@ final class LaunchVerifier {
     static final String APP_SELECTION = "system:app-selection";
     private static final long TIMEOUT_MS = 10_000;
     private static final long STABLE_MS = 500;
+    private static final long PROMPT_SETTLE_MS = 1_500;
     private static final Set<String> AUTHORIZATION_PACKAGES = Set.of(
         "com.android.permissioncontroller", "com.google.android.permissioncontroller",
         "com.android.packageinstaller", "com.google.android.packageinstaller",
@@ -23,14 +24,18 @@ final class LaunchVerifier {
         void pause(long millis) throws Exception;
     }
     private LaunchVerifier() {}
+    static boolean isLaunchGroup(String group) {
+        return "启动应用".equals(group) || "打开应用".equals(group);
+    }
     static String classifyForeground(String owner, String permissionGroup) {
         if (!"com.miui.securitycenter".equals(owner) || permissionGroup.isBlank()) return owner;
-        return "启动应用".equals(permissionGroup) ? XIAOMI_CONFIRMATION : XIAOMI_AUTHORIZATION;
+        return isLaunchGroup(permissionGroup) ? XIAOMI_CONFIRMATION : XIAOMI_AUTHORIZATION;
     }
-    /** False means a readable system prompt needs the model's next step, never that the target opened. */
+    /** False returns system UI for a fresh observation, never claims that the target opened. */
     static boolean launch(String target, Driver driver) throws Exception {
         driver.check();
         String foreground = driver.foreground();
+        boolean originalSecurityPage = "com.miui.securitycenter".equals(foreground);
         boolean allowedPrompt = XIAOMI_CONFIRMATION.equals(foreground)
             && driver.allowLaunchPrompt();
         if (!allowedPrompt && awaitsDecision(target, foreground)) return false;
@@ -40,20 +45,34 @@ final class LaunchVerifier {
             driver.start(); // At most once: a blocked request must not spawn a retry loop.
         }
         long deadline = driver.now() + TIMEOUT_MS;
+        long allowedAt = allowedPrompt ? driver.now() : -1;
         long focusedSince = -1;
         while (true) {
             driver.check();
             foreground = driver.foreground();
+            originalSecurityPage &= "com.miui.securitycenter".equals(foreground);
             if (requested && !allowedPrompt && XIAOMI_CONFIRMATION.equals(foreground)
                 && driver.allowLaunchPrompt()) {
                 allowedPrompt = true;
+                allowedAt = driver.now();
+                focusedSince = -1;
+                // A prompt can arrive at the end of the launch budget. Allow its transition and the
+                // target's stable-window check to finish, with only one bounded grace period.
+                deadline = Math.max(deadline, allowedAt + PROMPT_SETTLE_MS);
                 driver.pause(250);
                 continue;
             }
-            // Give the clicked prompt time to disappear; never click twice.
-            if (!(allowedPrompt && XIAOMI_CONFIRMATION.equals(foreground))
-                && awaitsDecision(target, foreground)) return false;
             long now = driver.now();
+            // Give the clicked prompt time to disappear; never click twice. If it remains, return
+            // the current UI for planning instead of destroying the session on a launch timeout.
+            if (allowedPrompt && XIAOMI_CONFIRMATION.equals(foreground)) {
+                if (now - allowedAt >= PROMPT_SETTLE_MS) return false;
+            } else if (awaitsDecision(target, foreground)
+                // New ROMs may expose Security Center before its title, or use another template.
+                // Observing that window grants nothing. Ordinary Security Center pages remain
+                // launchable targets and do not block submitting a launch from them.
+                || (!target.equals(foreground) && "com.miui.securitycenter".equals(foreground)
+                    && (!originalSecurityPage || now >= deadline))) return false;
             if (target.equals(foreground)) {
                 if (focusedSince < 0) focusedSince = now;
                 if (now - focusedSince >= STABLE_MS) return true;

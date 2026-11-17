@@ -49,6 +49,7 @@ adb logcat -v threadtime 'MiAIPlusPhoneUse:I' '*:S' > phone-use.log
 | `observation` / `capture_complete` | displayId、显示实例摘要、前台组件、屏幕与 JPEG 尺寸、图片摘要、树字符数、采集来源、helper 帧计数和耗时 |
 | `tree_windows` / `window` / `tree_selected` / `tree_empty` | 区分服务缺失、无窗口、根节点缺失／刷新失败、包名不匹配，以及 focused 或包名兜底选择；保留现有选择顺序 |
 | `action_proposed` / `action_begin` / `action_complete` / `action_coordinates` | 动作类型、归一化坐标、输入长度、确认标记；`action_complete` 仅表示执行器返回，不证明业务目标达成 |
+| `launch_state` / `launch_submitted` / `launch_confirmation` / `launch_result` / `launch_transport` | 启动期间变化的前台分类、请求提交、当次确认是否点击、目标是否稳定前台及耗时；`launch_transport` 的 `backend`／`phase` 区分一次性 root helper 与显式 Activity 路径及传输阶段，不输出命令正文 |
 | `input_candidate` / `input_set_text` / `input_readback` / `input_failed` | 定位输入焦点、写入是否被接受、原节点是否存在、回读是否可读／匹配、超时或异常；前台保留原先仅校验写入接受的行为，不额外添加回读 |
 | `helper_request` / `helper_reply` / `helper_error` / `screen_handoff` | helper 命令类型、耗时、错误码，以及原有规则允许的屏幕切换；不输出 RPC 参数或整份响应 |
 | `frame_stored` / `frame_read` / `frame_read_failed` / `frame_expired` / `frame_evicted` | 帧摘要编号、有效期、读取年龄、排队淘汰、过期、UID 不匹配、缺失或已消费 |
@@ -98,10 +99,11 @@ python3 scripts/diagnose_log.py /path/to/phone-use.jsonl
 
 ### 已进入控屏的故障
 
-1. `tree_empty` 时检查 `tree_windows` 和各窗口原因，区分无窗口、过期根节点和筛选失败。`foreground` 为空不等于截图也为空。
-2. `input_set_text.accepted=true` 后仍失败时，查 `input_readback` 的 `nodePresent`、`readable`、`matches` 与最终原因，区分节点重建、不可读及内容不匹配。
-3. 沿 `frame_stored → frame_read → image_read_complete → image_attached` 查图片传递。`missing_or_consumed` 本身不能区分从未存在与已经消费，需要结合该摘要之前的存取记录。
-4. 使用受控外部模型时，将 `observation.imageDigest` 与 `request_image.imageDigest` 对照。工具中附图成功不能单独证明最终请求含有该图。
+1. 打开应用卡住时，对照 `launch_transport`、`launch_submitted` 和 `launch_state`，区分 root 路径不可用、请求已发出、系统确认与目标尚未进入前台。当前前台 root helper 仅启动已解析的同用户 launcher；请求发送前失败可回退显式 Activity 路径，请求一旦开始发送就不重试。等待受取消、锁屏、短期限和 EOF 约束，提交前再次检查，但已经交给 Android 的启动不能撤回。不修改授权数据库或全局策略，也不改变后台 helper 或物理屏回退规则。`launch_confirmation.clicked=true` 仅表示已点击一次匹配的“本次允许”，不能代替目标稳定前台 500 毫秒的 `launch_result.opened=true`。晚到确认有一次 1.5 秒宽限；`opened=false` 可表示返回系统窗口观察，不一定是任务失败。新出现的未知／无标题安全中心会返回观察，原普通安全中心页持续 10 秒不变也返回观察；普通桌面等其他页面的纯超时仍 PAUSE。
+2. `tree_empty` 时检查 `tree_windows` 和各窗口原因，区分无窗口、过期根节点和筛选失败。`foreground` 为空不等于截图也为空。
+3. `input_set_text.accepted=true` 后仍失败时，查 `input_readback` 的 `nodePresent`、`readable`、`matches` 与最终原因，区分节点重建、不可读及内容不匹配。
+4. 沿 `frame_stored → frame_read → image_read_complete → image_attached` 查图片传递。`missing_or_consumed` 本身不能区分从未存在与已经消费，需要结合该摘要之前的存取记录。
+5. 使用受控外部模型时，将 `observation.imageDigest` 与 `request_image.imageDigest` 对照。工具中附图成功不能单独证明最终请求含有该图。
 
 官方模型的私有网络传输不在受控外部适配器中，日志只能确认到宿主图片附加，不能据此证明官方服务已收到图片。请求日志也不能证明模型理解了图片。图片摘要不能证明画面不是黑屏、旧画面或错误页面；这类情况仍需在授权的复现场景单独核对实际后台截图。现有截图／输入／窗口查询不因日志开启而增加重试或物理屏回退。
 
