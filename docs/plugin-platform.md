@@ -1,12 +1,8 @@
 # 小爱 Plugin 注入平台
 
-本文描述 2026-10-28 从 `Pluginify` 引入、2026-10-29 整合到主线的源码实现与扩展方向，不代表已发布版本具有这些能力。检查分为 [首轮本地验证](validation/plugin-platform-2026-10-28.md)、[独立包实机验证](validation/plugin-platform-device-2026-10-28.md) 与 [真实 Termux MCP 验证](validation/termux-mcp-2026-10-28.md)，历史基线见 [验证摘要](validation.md)；MCP 协议取舍见 [MCP 调研](plugin-platform-mcp-research.md)。
+MiAIPlus 用统一插件目录向小爱原生 Agent 注册工具，管理配置、启停、执行路由和重载清理；小爱负责模型、历史和工具循环。支持内置 Phone Use、Termux、Eta 及用户配置的 HTTP MCP。协议依据见 [MCP 调研](plugin-platform-mcp-research.md)，验证见 [摘要](validation.md)。
 
-## 可行性与分层
-
-可以把前台 Phone Use、后台 Phone Use 和用户配置的 MCP 工具放到同一插件层级。现有实现已经有两项基础：向小爱 `ToolRegistry` 注册执行代理，以及向原生模型请求补充 `ToolDefinition`。本轮将这两项能力从 `NativePhoneUseTool` 中提取到统一的 `NativePluginTools`，由同一目录驱动注册、定义注入、启停和重载清理。
-
-小爱继续管理主模型、原生工具选择、对话历史与 Agent 循环。MiAIPlus 管理新增插件的私有配置、工具目录和执行路由；没有另外启动一套主 Agent，也没有将 Phone Use 执行器改成任意远程插件可直接调用的公共接口。
+## 分层
 
 ```mermaid
 flowchart TD
@@ -43,14 +39,6 @@ flowchart TD
 
 底栏为「首页／模型 API／插件」，「插件」是一级入口，首页另保留插件概览快捷入口。原控屏设置通过内置 Phone Use 的「控屏配置」进入，虚拟屏位于其下；这两页均保持「插件」标签选中，返回逐级回到控屏配置、插件页和首页。导航调整与本地检查见 [插件底栏记录](validation/settings-plugins-tab-2026-10-28.md)。
 
-### 主线与独立测试包
-
-主线保持安装包名 `io.github.miaiplus` 和桌面名称「MiAIPlus」，沿用原配置。`Pluginify` 已于 2026-10-29 完成主线整合并删除本地与远端分支，后续开发使用 `main`，见 [主线收尾核对](validation/pluginify-main-cleanup-2026-10-29.md)。历史独立测试包的安装包名为 `io.github.miaiplus.pluginify`，桌面名称为「MiAIPlus Pluginify」，可与主线并装。源码 namespace 与组件类名仍为 `io.github.miaiplus`；历史独立包的设置页组件为 `io.github.miaiplus.pluginify/io.github.miaiplus.MainActivity`。
-
-两个 Provider authority、无障碍任务前检查、返回对话标记、宿主侧话题偏好、广播与通知标识按安装包身份隔离。独立包不会迁移主线配置，也不会清理主线旧 root guard。新增包需单独配置无障碍及 LSPosed 作用域；后台能力仍需该包自身的 root 授权。
-
-并装不等于可以同时向小爱注入两套模块。测试或切换时应只启用其中一个模块的小爱作用域，再重启小爱，避免共同 Hook 原生流程及重复工具名。旧 `scripts/device_test.py` 等设备脚本仍包含主线包名，不能原样用于独立包；独立包阶段的插件实机检查使用独立 runner。
-
 ### 内置 Phone Use
 
 - 「前台控屏」和「后台控屏」放在「内置工具」分组，各自可以启停，默认保持开启。
@@ -73,7 +61,7 @@ flowchart TD
 
 MCP 插件不依赖 Phone Use 总开关、无障碍服务、后台 root helper 或外部模型配置；它们只进入已适配的小爱原生 OSBot 工具链。是否被模型正确选择和使用仍取决于该模型及宿主入口，不代表全部语音云端 NLP 路径都能调用，也没有将其自动加入独立 `ModelClient` 的 Phone Use 规划循环。
 
-目录在模型请求和工具执行前从模块刷新；注册表查询只同步最近快照，不发网络发现请求。停用会移除模块拥有的代理，持有旧代理的调用仍会重验并拒绝执行。为避免误删来自其他 DI 注册表的宿主定义，统一层只按对象身份删除确认由本代创建的 definition，不凭名称或 schema 猜测来源；当前请求中的缓存定义副本可能显示到下一轮请求或注册表查询。目录中仍显示旧副本不等于该工具仍可执行。
+目录在模型请求和工具执行前从模块刷新；注册表查询只同步最近快照，不发网络发现请求。停用会移除模块拥有的代理，持有旧代理的调用仍会重验并拒绝执行。为避免误删来自其他 DI 注册表的宿主定义，统一层只按对象身份删除确认由本代创建的 definition，不凭名称或 schema 猜测来源；当前请求中的缓存定义副本可能显示到下一轮请求或注册表查询。旧副本的执行仍受当前配置校验。
 
 用户无需为了新增 MCP 服务器改代码，但首次安装或升级 Hook 仍需按原要求重启小爱或安全热重载。
 
@@ -85,7 +73,7 @@ MCP 插件不依赖 Phone Use 总开关、无障碍服务、后台 root helper �
 
 2026-10-28 的手动接入验证使用了 `termuxgpt/termux-mcp`，固定上游 commit 为 `48e3e58b3c8c5d66b97e79c0fa6473d126508f46`（`0.15.0`，AGPL-3.0）。内置版继续使用该版本的独立服务和 `2025-06-18` 协议，并从 2026-11-11 增加独立的受管 Bash 执行适配器；`run_digest` 的命令参数名为 `cmd`。
 
-本轮服务仅监听手机 loopback，显式启用全局 Bearer 认证，并用独立 HOME 与配置目录隔离测试状态。模块真实 Provider 验证了 Termux UID／环境、中文文件读写、管道、哈希和失败语义；小爱进程中的当前模块工具代理另行执行固定身份命令，确认实际宿主也能调用同一真实服务。这不是模型自主选择或长期 shell 会话的验收。独立 HOME 只隔离状态，不限制 shell 能力：服务仍可执行 Termux UID 有权执行的命令。Phone Use 的敏感操作确认不会自动覆盖这些远程 shell 命令。
+服务仅监听手机 loopback，使用全局 Bearer 认证及独立 HOME／配置目录。HOME 隔离状态，命令仍具有 Termux UID 的权限；Phone Use 确认不覆盖 shell 命令。接入验证见 [Termux 实机记录](validation/termux-mcp-2026-10-28.md)。
 
 内置 Termux 工具可并行运行独立命令，最多同时执行 4 条；同一批最多 12 条在途（含排队）。调用之间不共享工作目录或 shell 变量；先写后读、读取 `out_ref` 等依赖操作要等上一步返回。新版受管服务把原始 `cmd` 交给 Bash，命令开头的 `cd` 及引号也按 Bash 语义执行；可以显式传入 `cwd`。同步时限可配至 40 秒，后台任务最长 120 秒，配套 `job_status`／`job_cancel`；执行槽位、结果引用和旧服务升级边界见 [执行契约](termux-tools.md)。
 
@@ -97,7 +85,7 @@ MCP 插件不依赖 Phone Use 总开关、无障碍服务、后台 root helper �
 
 ## 已实现的 MCP 范围
 
-本轮明确支持用户显式选择 **`2025-11-25`（默认）** 或 **`2025-06-18`（兼容）**，只实现这两版基于初始化握手的 Streamable HTTP 工具子集，不把它称为当前所有 MCP 规范的完整实现。协议演进与选择依据见 [MCP 调研](plugin-platform-mcp-research.md)。
+支持显式选择 **`2025-11-25`（默认）** 或 **`2025-06-18`（兼容）** 的 Streamable HTTP 工具子集。协议演进与选择依据见 [MCP 调研](plugin-platform-mcp-research.md)。
 
 | 能力 | 当前行为 |
 | --- | --- |
@@ -146,21 +134,12 @@ Phone Use 仍走原来的 `PhoneUseRouting → controlApp → BridgeProvider →
 
 **启用一个 MCP 插件等于允许小爱选择该服务器提供的工具。** Phone Use 的确认机制只约束本地控屏，不会自动审计或批准所有远程工具的业务副作用。远程服务的权限、账户范围和副作用确认仍需由服务本身及其认证配置落实；annotations 或工具说明不能授予模块 root、无障碍或跳过本地确认的能力。
 
-## 后续扩展
+## 扩展与验证
 
-当前共享契约已经覆盖「身份／配置 → 发现目录 → 命名与 schema → 启停 → 调用与取消 → 清理」。继续增加后端时，应在插件适配层实现这些边界，复用统一的宿主注册与模型定义注入，不为每种工具重复 Hook 一套原生注册表。
+新增后端应复用统一目录、注册和定义注入，在适配层实现配置、发现、命名、启停、调用、取消与清理。新 MCP 协议、OAuth、资源、多媒体或本地代码加载需要各自的协议和权限设计。
 
-建议按能力分期：
+- [首轮本地验证](validation/plugin-platform-2026-10-28.md)：目录、协议及设置渲染。
+- [独立包实机验证](validation/plugin-platform-device-2026-10-28.md)：实际宿主注册、合成 MCP HTTP、前后台观察与设置页。
+- [真实 Termux MCP 验证](validation/termux-mcp-2026-10-28.md)：固定上游服务的 Provider／宿主调用及文件管道。
 
-1. 在已有小爱 8.3.30 合成服务／真实宿主探针基础上，继续完成另一受支持版本、真实模型及生产 MCP 服务验收，再决定是否发布这一阶段。
-2. 新 MCP 协议、OAuth、资源和多媒体分别作为明确的新协议／能力适配，不在旧握手失败时盲目猜测或降级。
-3. 增加每工具授权、来源标识、可见调用状态与安全结果展示，再评估更广泛的第三方工具包格式。
-4. 如未来需要本地代码插件、stdio 或动态加载，另行设计进程隔离、安装信任与权限契约；当前 HTTP MCP 实现不构成这些能力的授权或实现。
-
-不同 Harness 的记忆、技能、提示、资源、生命周期 Hook 和多 Agent 调度不全等价于 function tools。它们若要进入小爱，需要逐项映射到宿主实际支持的入口，不能仅靠给工具目录改名就宣称通用兼容。
-
-## 验证边界
-
-独立包阶段 506 项 JVM／Robolectric 测试通过，Debug／Release Lint 零错误，Debug／Release／Preview 与 AndroidTest 构建通过。API 37／小爱 8.3.30 已验证实际宿主三类工具注册／schema、原生 MCP 代理、Android 合成服务 HTTP、前台与空后台屏附图／wait／finish，以及手机插件页。后台测试使用正常管理界面临时授予新包 root，完成后撤销；收尾恢复主线作用域，保留 Pluginify 优化安装包但停用其模块。详细命令、失败尝试、APK 摘要及恢复见 [实机记录](validation/plugin-platform-device-2026-10-28.md)。
-
-后续 Termux 阶段 513 项 JVM／Robolectric 测试通过，双变体 Lint 零错误，各 APK 构建成功；真实上游服务的 Android Provider／小爱宿主代理调用与文件管道验证通过，见 [Termux 实机记录](validation/termux-mcp-2026-10-28.md)。该结论限于所固定服务与命令，不代表任意第三方服务、模型自主工具选择或复杂前后台应用任务通过；另一受支持小爱版本与旧 Android 设备未复测。桌面 loopback、本地深浅色渲染和首轮 499 项测试另见 [首轮记录](validation/plugin-platform-2026-10-28.md)。不能把历史 Phone Use 或单项探针结果扩展为本分支全部能力验收。
+这些记录未覆盖另一受支持小爱版本、旧 Android、任意生产 MCP 服务或复杂模型任务。

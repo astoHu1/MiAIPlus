@@ -16,6 +16,7 @@ public final class NativeSession {
     // A cancelled session can be detached before its helper has finished shutting down. Keep probe/start
     // ownership visible throughout that asynchronous cleanup without making IPC wait on this class monitor.
     private static volatile boolean closing;
+    private static final int MAX_COORDINATE_CORRECTIONS = 2;
     private static final class State {
         final String id = UUID.randomUUID().toString();
         final String goal;
@@ -29,9 +30,10 @@ public final class NativeSession {
         boolean background;
         final boolean initialBackground;
         final BackgroundActions.LaunchPolicy launchPolicy = new BackgroundActions.LaunchPolicy();
-        int steps, repeats;
+        int steps, repeats, coordinateErrors;
         String previous = "";
         ScreenService.Frame frame;
+        NodeTargets targets;
         BackgroundDisplay display;
         ScheduledFuture<?> timeout;
         long watchdogGeneration;
@@ -95,7 +97,7 @@ public final class NativeSession {
                 }
                 s.run.pause(800);
                 availableApps = "可启动应用（launch 使用包名）：\n" + screen.apps();
-            } else {
+            } else step: {
                 JSONObject request = new JSONObject(query.substring(9));
                 verifyContinuation(s, request, owner, sourceTool);
                 PhoneUseLog.bind(s.id, s.steps + 1);
@@ -116,9 +118,32 @@ public final class NativeSession {
                     throw new IllegalStateException("达到最大步数，任务未确认完成；本轮控屏已结束。不要重试或重新发起任务，请向用户说明未完成部分");
                 // Use the encoded JPEG's real size, not a recomputed one: both backends downscale slightly
                 // differently, and an image_pixels coordinate must match the picture the model actually saw.
-                Action action = ending ? new Action(actionData)
-                    : new Action(Coordinates.normalize(request.getJSONObject("action"), request.optString("coordinate_space", "normalized"),
-                        s.frame.width(), s.frame.height(), s.frame.imageWidth(), s.frame.imageHeight()));
+                Action action;
+                try {
+                    if (!ending && s.targets == null) s.targets = NodeTargets.capture(s.frame);
+                    action = ending ? new Action(actionData)
+                        : new Action(s.targets.normalize(request, s.frame));
+                } catch (Coordinates.Invalid | NodeTargets.InvalidTarget invalid) {
+                    String reason = invalid instanceof Coordinates.Invalid coordinate ? coordinate.reason
+                        : ((NodeTargets.InvalidTarget) invalid).code;
+                    String space = invalid instanceof Coordinates.Invalid coordinate ? coordinate.space : "target";
+                    String field = invalid instanceof Coordinates.Invalid coordinate ? coordinate.field : "target";
+                    int errors = ++s.coordinateErrors;
+                    PhoneUseLog.event("action_validation", "reason", reason, "field", field,
+                        "requested", space, "consecutive", errors, "recoverable", errors <= MAX_COORDINATE_CORRECTIONS);
+                    if (errors > MAX_COORDINATE_CORRECTIONS)
+                        throw new IllegalStateException("连续动作参数错误，任务已停止；本步未执行，请向用户说明未完成部分", invalid);
+                    s.permissionReview.clear(); s.reviewChallenge = null;
+                    lastAction = actionName.isEmpty() ? "none" : actionName;
+                    executionStatus = "validation_error";
+                    skipped = "本步未执行，也未消耗动作预算：" + invalid.getMessage() + "。声明坐标空间=" + space
+                        + "。请依据本次新观察纠正参数，在同一会话继续；不要重新开始任务。本轮连续参数错误="
+                        + errors + "；第" + (MAX_COORDINATE_CORRECTIONS + 1) + "次连续参数错误将停止任务。";
+                    s.run.progress = "动作参数无效，等待重新规划";
+                    extendBudget(s);
+                    break step;
+                }
+                s.coordinateErrors = 0;
                 lastAction = action.name;
                 String intent = TaskProgress.intent(action);
                 PhoneUseLog.event("action_coordinate_space", "requested", request.optString("coordinate_space", "normalized"));
@@ -240,13 +265,14 @@ public final class NativeSession {
             }
             s.frame = observe(s);
             if (handoffPackage != null) BackgroundActions.verifyHandoffFrame(s.frame, handoffPackage);
+            s.targets = NodeTargets.capture(s.frame);
             String frameToken = FrameStore.put(s.frame, owner);
             PhoneUseLog.event("step_continue", "background", s.background, "stepsUsed", s.steps,
                 "skipped", !skipped.isEmpty(), "awaitingReview", awaitingReview);
             String scaleHint = "附图JPEG=" + s.frame.imageWidth() + "x" + s.frame.imageHeight()
                 + "；树坐标为屏幕像素，不能混用。\n";
             // Only the model view is compacted; execution and permission checks retain the original Frame.
-            String observation = ModelObservation.nativeTree(s.frame);
+            String observation = s.targets.tree();
             return "CONTINUE：控屏尚未完成。由你（小爱当前主模型）根据新截图/无障碍树选择下一步，不需要外部模型。\n"
                 + ModelObservation.provenance(s.frame)
                 + "上步动作=" + lastAction + "；执行状态=" + executionStatus + "\n"
@@ -257,13 +283,14 @@ public final class NativeSession {
                 + "；剩余动作步数=" + (s.maxSteps - s.steps) + "\n"
                 + (s.steps >= s.maxSteps
                     ? "动作预算已耗尽，本次为最后观察；下一次只允许finish、take_over或ask_user。只有本次观察确认目标完成才finish，否则说明未完成部分并交还用户；禁止继续操作或自动重启任务。\n"
-                    : "每个操作（包括未执行的重新规划步骤）消耗一个动作步数；预算不足以完成时请take_over或ask_user说明未完成部分，不要自动重启任务。\n")
+                    : "每个操作（包括页面变化而未执行的重新规划步骤）消耗一个动作步数；坐标或目标引用校验拒绝不消耗动作步数，但连续纠错次数有限。预算不足以完成时请take_over或ask_user说明未完成部分，不要自动重启任务。\n")
                 + "执行屏幕=" + (s.background ? "background" : "foreground") + "；会话工具=" + (s.sourceTool.isEmpty() ? "voiceassist__controlApp" : s.sourceTool) + "\n"
                 + (handoffPackage == null ? "" : "执行器已切换到前台控屏模式，本步未执行旧动作；旧后台截图和坐标已作废，只能根据本次新观察规划下一步。\n")
                 + (s.background
                     ? "本任务在独立的手机后台屏幕上执行，截图与树都只来自该后台屏；用户在其他屏幕上的操作与你无关，不要尝试操作主屏，也不要因为看不到主屏内容而改用主屏。\n"
                     : "")
                 + PhoneUsePlugin.continuationHint(s.id, s.sourceTool)
+                + "tap/double_tap/long_press优先原样提交本次树节点的target代替element；不能与坐标同时提交，target无需coordinate_space。每次新观察使旧target失效；没有target时再用坐标。"
                 + "每次仅一个动作；结构化控屏工具默认按附图真实JPEG像素输入element/start/end，coordinate_space=image_pixels；也可选screen_pixels对应树的实际屏幕像素，或normalized对应0..1000。旧controlApp默认归一化0..1000。输入先点击聚焦，type替换内容。"
                 + "控屏会话内打开应用统一使用action=launch及app包名，不要另调app start、打开应用工具或自行拼接Intent；只有新观察确认目标前台才算已打开。可读取系统弹窗，按用户目标自主选择打开哪个应用；尚待选择时继续同一会话，不要误报启动成功。"
                 + availableApps + "\n"

@@ -48,9 +48,17 @@ python3 scripts/package_release.py  # After release build; source archive and ch
 
 - Preserve Android 13+, LSPosed API 102, and exact XiaoAI version checks. Keep API dependencies `compileOnly` and service dependencies packaged. Release hooks, callbacks, clients, and host references before reload; reject reload while busy.
 - Leave default API endpoint/key/model empty. Never commit credentials, signing material, personal device data, or decompiled content. Preserve IPC identity checks, lock-screen/secure-window/password/CAPTCHA restrictions, cancellation, confirmation, and timeouts.
-- Background display is implemented. The compatibility/default-screen preference is off by default; native foreground/background tools select their own screen. Preserve session/tool ownership, task-bound consent, cancellation, and original-conversation return. Design/acceptance: `docs/virtual-display-implementation-spec.md`; device evidence/limits: `docs/background-display.md`. Partial probe success does not prove full capability. Background failures must stop the task, never silently fall back to the physical screen. Only the documented explicit app-conflict handoff may switch modes; invalidate old observations/coordinates and enforce its consent rules.
+- Background display is implemented. The compatibility/default-screen preference is off by default; native foreground/background tools select their own screen. Preserve session/tool ownership, task-bound consent, cancellation, and original-conversation return. Behavior and device evidence: `docs/background-display.md`. Background failures must stop the task, never silently fall back to the physical screen. Only the documented explicit app-conflict handoff may switch modes; invalidate old observations/coordinates and enforce its consent rules.
 - Treat working-tree features separately from committed/published capabilities. Consult current source and dated validation records; older sections may describe superseded behavior.
 - Update relevant behavior docs; distinguish mock, real-model, device, and untested results. Maintain dependency notices. Follow `docs/releasing.md` and distribute only reviewed artifacts.
+
+## Documentation
+
+- Keep documentation concise. Update the existing page that owns the behavior; link to it instead of repeating explanations across README, architecture, and validation docs.
+- Document user-visible behavior, maintenance decisions, and useful verification evidence. Do not record every edit, command, agent handoff, temporary failure, or environment-restoration step.
+- Routine fixes and documentation cleanup do not need new dated reports. Add a separate record only for a release, substantial experiment, or investigation whose evidence will be reused; keep test counts and detailed results there, with a short index entry.
+- Remove stale instructions and repeated caveats when editing a page. State concrete constraints and known failures once; avoid generic disclaimers and exhaustive lists of things not tested.
+- Preserve meaningful distinctions between mock, device, real-model, and released-build evidence. Keep historical release facts separate from current behavior.
 
 ## Commits and PRs
 

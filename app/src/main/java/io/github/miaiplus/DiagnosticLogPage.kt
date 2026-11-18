@@ -6,7 +6,6 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -18,6 +17,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -152,8 +152,10 @@ internal fun DiagnosticLogPage(settings: SettingsState, follow: Boolean) {
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
             itemsIndexed(filtered.take(500)) { _, entry ->
                 var expanded by remember(entry.raw) { mutableStateOf(false) }
-                Card(Modifier.fillMaxWidth().semantics { stateDescription = if (expanded) "已展开" else "已折叠" }
-                    .clickable(role = Role.Button) { expanded = !expanded }) {
+                Card(Modifier.fillMaxWidth().semantics {
+                    role = Role.Button
+                    stateDescription = if (expanded) "已展开" else "已折叠"
+                }, showIndication = true, onClick = { expanded = !expanded }) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp)) {

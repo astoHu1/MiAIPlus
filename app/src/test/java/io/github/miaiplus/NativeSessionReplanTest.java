@@ -76,6 +76,137 @@ public final class NativeSessionReplanTest {
         assertArrayEquals(new double[]{500, 200}, ScreenShadow.lastPoint, 0);
     }
 
+    @Test public void invalidCoordinatesReturnFreshObservationWithoutInputAndCorrectionKeepsTheSession() throws Exception {
+        ScreenShadow.current = frame(BUTTON.replace("提交", "刷新后的提交"));
+        String result = step(1001, 200);
+        assertContinuing(result);
+        assertTrue(result, result.contains("执行状态=validation_error"));
+        assertTrue(result, result.contains("本步未执行，也未消耗动作预算"));
+        assertTrue(result, result.contains("element坐标超出声明的观察范围"));
+        assertTrue(result, result.contains("刷新后的提交"));
+        assertEquals(0, ScreenShadow.attempts);
+        assertEquals(0, ScreenShadow.confirmations);
+        assertEquals(0, field(session.getClass(), "steps").getInt(session));
+        assertSame(ScreenShadow.current, field(session.getClass(), "frame").get(session));
+        assertExecuted(step(200, 200));
+        assertEquals(1, ScreenShadow.executions);
+        assertEquals(1, field(session.getClass(), "steps").getInt(session));
+    }
+
+    @Test public void missingRequiredPointReturnsFreshObservationAndCanBeCorrectedInSession() throws Exception {
+        JSONObject missingElement = new JSONObject().put("action", "tap");
+        String result = step(missingElement);
+        assertContinuing(result);
+        assertTrue(result, result.contains("执行状态=validation_error"));
+        assertTrue(result, result.contains("缺少element坐标"));
+        assertEquals(0, ScreenShadow.attempts);
+        assertEquals(0, ScreenShadow.executions);
+        assertEquals(0, field(session.getClass(), "steps").getInt(session));
+        assertExecuted(step(200, 200));
+        assertEquals(1, ScreenShadow.executions);
+        assertEquals(1, field(session.getClass(), "steps").getInt(session));
+    }
+
+    @Test public void thirdConsecutiveCoordinateErrorStopsWithoutInputOrBudgetConsumption() throws Exception {
+        for (int attempt = 0; attempt < 2; attempt++) assertContinuing(step(-1, 200));
+        try {
+            step(-1, 200);
+            fail("Expected correction limit");
+        } catch (IllegalStateException stopped) {
+            assertTrue(stopped.getMessage(), stopped.getMessage().startsWith("连续动作参数错误，任务已停止"));
+        }
+        assertEquals(0, ScreenShadow.attempts);
+        assertEquals(0, ScreenShadow.confirmations);
+        assertEquals(0, field(session.getClass(), "steps").getInt(session));
+        assertClosed();
+    }
+
+    @Test public void successfulCorrectionResetsConsecutiveCoordinateErrorLimit() throws Exception {
+        for (int attempt = 0; attempt < 2; attempt++) assertContinuing(step(-1, 200));
+        assertExecuted(step(200, 200));
+        for (int attempt = 0; attempt < 2; attempt++) assertContinuing(step(-1, 200));
+        assertEquals(1, ScreenShadow.executions);
+        assertEquals(1, field(session.getClass(), "steps").getInt(session));
+    }
+
+    @Test public void observationTargetExecutesOnceAndOldReferenceThenReturnsFreshObservation() throws Exception {
+        String target = currentTarget();
+        assertExecuted(step(targetAction(target)));
+        assertArrayEquals(new double[]{200, 200}, ScreenShadow.lastPoint, 0.0001);
+        String result = step(targetAction(target));
+        assertContinuing(result);
+        assertTrue(result, result.contains("执行状态=validation_error"));
+        assertTrue(result, result.contains("目标引用无效或已过期"));
+        assertEquals(1, ScreenShadow.executions);
+        assertEquals(1, field(session.getClass(), "steps").getInt(session));
+        assertNotEquals(target, targetFrom(result));
+        assertExecuted(step(targetAction(currentTarget())));
+        assertEquals(2, ScreenShadow.executions);
+    }
+
+    @Test public void changedPageStillRejectsResolvedNodeTargetBeforeInjection() throws Exception {
+        String target = currentTarget();
+        ScreenShadow.current = frame(BUTTON.replace("提交", "另一个操作"));
+        assertSkipped(step(targetAction(target)));
+        assertEquals(0, ScreenShadow.attempts);
+        assertEquals(1, field(session.getClass(), "steps").getInt(session));
+    }
+
+    @Test public void nodeReferenceAndCoordinateErrorsShareOneFiniteCorrectionBudget() throws Exception {
+        assertContinuing(step(targetAction("unknown")));
+        assertContinuing(step(-1, 200));
+        try {
+            step(targetAction("unknown"));
+            fail("Expected shared correction limit");
+        } catch (IllegalStateException stopped) {
+            assertTrue(stopped.getMessage(), stopped.getMessage().startsWith("连续动作参数错误，任务已停止"));
+        }
+        assertEquals(0, ScreenShadow.attempts);
+        assertEquals(0, field(session.getClass(), "steps").getInt(session));
+        assertClosed();
+    }
+
+    @Test public void nodeTargetAutoReviewReplaysNormalizedChallengeAndKeepsItsSafetyMetadata() throws Exception {
+        field(session.getClass(), "permissionMode").set(session, "auto");
+        JSONObject action = targetAction(currentTarget()).put("requires_confirmation", true).put("message", "提交当前表单");
+        assertContinuing(step(action));
+        JSONObject challenge = (JSONObject) field(session.getClass(), "reviewChallenge").get(session);
+        JSONObject reviewed = new JSONObject(challenge.getJSONObject("action").toString());
+        assertFalse(reviewed.has("target"));
+        assertTrue(reviewed.getBoolean("requires_confirmation"));
+        assertEquals("提交当前表单", reviewed.getString("message"));
+        reviewed.put("permission_review", new JSONObject().put("token", challenge.getString("token"))
+            .put("decision", "allow").put("reason", "用户目标授权本次提交"));
+        assertExecuted(step(reviewed));
+        assertEquals(0, ScreenShadow.confirmations);
+        assertEquals(1, ScreenShadow.executions);
+        assertArrayEquals(new double[]{200, 200}, ScreenShadow.lastPoint, 0.0001);
+    }
+
+    @Test public void coordinateCorrectionInvalidatesPendingPermissionReview() throws Exception {
+        field(session.getClass(), "permissionMode").set(session, "auto");
+        assertContinuing(step(sensitiveAction()));
+        assertNotNull(field(session.getClass(), "reviewChallenge").get(session));
+        assertContinuing(step(sensitiveAction().put("element", new JSONArray("[1001,200]"))));
+        assertNull(field(session.getClass(), "reviewChallenge").get(session));
+        assertContinuing(step(sensitiveAction()));
+        assertTrue(((ActionPermissionReview) field(session.getClass(), "permissionReview").get(session)).pending());
+        assertEquals(0, ScreenShadow.attempts);
+        assertEquals(0, ScreenShadow.confirmations);
+    }
+
+    @Test public void observationFailureDuringCoordinateCorrectionStillStopsTheSession() throws Exception {
+        ScreenShadow.captureFailure = new IllegalStateException("观察失败");
+        try {
+            step(1001, 200);
+            fail("Expected observation failure");
+        } catch (IllegalStateException stopped) {
+            assertEquals("观察失败", stopped.getMessage());
+        }
+        assertEquals(0, ScreenShadow.attempts);
+        assertClosed();
+    }
+
     @Test public void initialObservationDoesNotReportAnExecutedAction() throws Exception {
         ScreenService previous = ScreenService.instance;
         ScreenService.instance = (ScreenService) field(session.getClass(), "screen").get(session);
@@ -88,6 +219,7 @@ public final class NativeSessionReplanTest {
             assertTrue(result, result.contains("系统观察：前台应用包名=example.app"));
             assertTrue(result, result.indexOf("系统观察：前台应用包名=example.app") < result.indexOf("上步动作="));
             assertTrue(result, result.contains("上步动作=none；执行状态=initial\n"));
+            assertTrue(result, result.contains("clickable target="));
             assertFalse(result, result.contains("执行状态=executed"));
             assertEquals(0, ScreenShadow.attempts);
         } finally {
@@ -401,6 +533,23 @@ public final class NativeSessionReplanTest {
         JSONObject action = new JSONObject().put("action", "tap").put("element", new JSONArray().put(x).put(y));
         return step(action);
     }
+    private String currentTarget() throws Exception {
+        Field targetsField = field(session.getClass(), "targets");
+        NodeTargets targets = (NodeTargets) targetsField.get(session);
+        if (targets == null) {
+            targets = NodeTargets.capture((ScreenService.Frame) field(session.getClass(), "frame").get(session));
+            targetsField.set(session, targets);
+        }
+        return targetFrom(targets.tree());
+    }
+    private static String targetFrom(String tree) {
+        var match = java.util.regex.Pattern.compile(" target=([^ \n]+)").matcher(tree);
+        assertTrue(match.find());
+        return match.group(1);
+    }
+    private static JSONObject targetAction(String reference) throws Exception {
+        return new JSONObject().put("action", "tap").put("target", reference);
+    }
     private String step(JSONObject action) throws Exception {
         String query = "MIAIPLUS:" + new JSONObject().put("session", sessionRun.id)
             .put("coordinate_space", "normalized").put("action", action);
@@ -451,15 +600,20 @@ public final class NativeSessionReplanTest {
         static boolean rejectInjection, lastApproved;
         static ScreenService.Frame afterConfirmation;
         static Exception failure;
+        static RuntimeException captureFailure;
         static int attempts, executions, confirmations;
         static double[] lastPoint;
         static void reset() {
-            current = afterConfirmation = null; rejectInjection = lastApproved = false; failure = null;
+            current = afterConfirmation = null; rejectInjection = lastApproved = false; failure = null; captureFailure = null;
             attempts = executions = confirmations = 0; lastPoint = null;
         }
         @Implementation protected static boolean isHealthy() { return true; }
         @Implementation protected String apps() { return "示例 = example.app\n"; }
-        @Implementation protected ScreenService.Frame capture(RunState run) { run.check(); return current; }
+        @Implementation protected ScreenService.Frame capture(RunState run) {
+            run.check();
+            if (captureFailure != null) throw captureFailure;
+            return current;
+        }
         @Implementation protected boolean confirm(String message, RunState run) {
             run.check(); confirmations++;
             if (afterConfirmation != null) current = afterConfirmation;

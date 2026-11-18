@@ -1,10 +1,10 @@
 # API 102 与控屏交互
 
-MiAIPlus 0.3.0 使用 [libxposed/api](https://github.com/libxposed/api) 102.0.0 和 [libxposed/service](https://github.com/libxposed/service) 102.0.0。发布包通过 `META-INF/xposed/module.prop` 声明 `minApiVersion=102`、`targetApiVersion=102`、`autoHotReload=true`，入口是 `io.github.miaiplus.XiaoAiHook`，作用域只有 `com.miui.voiceassist`。旧的 `xposed_init` 和 `de.robv.android.xposed` 元数据不再使用。
+MiAIPlus 使用 [libxposed/api](https://github.com/libxposed/api) 102.0.0 和 [libxposed/service](https://github.com/libxposed/service) 102.0.0。发布包通过 `META-INF/xposed/module.prop` 声明 `minApiVersion=102`、`targetApiVersion=102`、`autoHotReload=true`，入口是 `io.github.miaiplus.XiaoAiHook`，作用域只有 `com.miui.voiceassist`。旧的 `xposed_init` 和 `de.robv.android.xposed` 元数据不再使用。
 
 ## 首次升级
 
-安装 0.3.0 后，在 LSPosed 中确认超级小爱仍在模块作用域，首次从旧入口迁移需要重启一次超级小爱。之后安装同签名的新 APK，`autoHotReload=true` 允许框架自动加载新代；设置页的“安装更新后热重载模块”也可查找 API 102 的运行目标并请求 `XposedService.hotReloadModule`。框架返回目标已是当前版本时不会重复操作。
+首次从旧入口升级后，在 LSPosed 中确认超级小爱仍在模块作用域，并重启一次超级小爱。之后安装同签名的新 APK，`autoHotReload=true` 允许框架自动加载新代；设置页的“安装更新后热重载模块”也可查找 API 102 的运行目标并请求 `XposedService.hotReloadModule`。框架返回目标已是当前版本时不会重复操作。
 
 热重载前模块会撤销旧 Hook、移除小爱 ToolRegistry 中的代理、关闭自有网络客户端、清理推理 UI、广播接收器和 Activity 生命周期回调。正在控屏、模型流、诊断广播或其他外部工作时会拒绝热重载；请求失败应等待任务结束后重试，若框架报告不支持则重启小爱。热重载回调不会自动重放旧的 package-ready 回调，模块会显式重新安装精确版本 Hook。
 
@@ -29,11 +29,11 @@ MiAIPlus 0.3.0 使用 [libxposed/api](https://github.com/libxposed/api) 102.0.0 
 
 使用 JDK 17+、Android SDK platform 37、build-tools 37.0.0、Gradle 9.6.0 和 AGP 9.4.1；targetSdk 仍为 35。API 与 service 依赖分别为 `compileOnly` 和 `implementation`；API 运行时由 LSPosed 提供，service/interface 随模块 APK 打包。依赖许可与版本化来源记录在 `third_party/libxposed/`。
 
-已验证：API 102 源码接口适配、43 项 JUnit、debug/release Lint、debug/release/AndroidTest 构建，以及 Xiaomi 15 Ultra / Android 17 / LSPosed 2.2.1 上的真实 Hook、Chat/Responses 传输和控屏探针。专项探针检查操作提示、同一个全屏 Activity 恢复、快捷键系统浮窗被隐藏且不拦截触摸、完成通知岛及其点击入口。已保存该设备实际通知岛截图核对展开样式；其他 ROM 的最终样式仍由其 SystemUI 决定。实机安装更新前后小爱 PID 不变，API 102 服务重载返回 SUCCEEDED；重载后继续验证 Hook。完整自然语言任务成功率不由这些通路测试保证。
+API 102 迁移时通过 43 项 JUnit、双变体 Lint 及 Debug／Release／AndroidTest 构建；Xiaomi 15 Ultra／Android 17／LSPosed 2.2.1 验证了真实 Hook、Chat／Responses、焦点通知、全屏恢复与浮窗隐藏。安装更新前后小爱 PID 不变，服务重载返回 `SUCCEEDED`，重载后 Hook 可用。后续结果见 [验证状态](validation.md)。
 
 ## 上游依据
 
-迁移按 Maven Central 的 **102.0.0 已发布源码**逐项核对，避免把开发分支 API 当作发布接口：
+迁移依据 Maven Central 的 **102.0.0 发布源码**：
 
 - [API 102.0.0 sources](https://repo.maven.apache.org/maven2/io/github/libxposed/api/102.0.0/api-102.0.0-sources.jar)：`XposedModuleInterface` 的 `onPackageReady`、`onHotReloading`、`onHotReloaded`，以及 `XposedInterface` 的 HookBuilder / Chain / Invoker。
 - [service 102.0.0 sources](https://repo.maven.apache.org/maven2/io/github/libxposed/service/102.0.0/service-102.0.0-sources.jar)：`XposedServiceHelper`、`getRunningTargets`、`hotReloadModule` 与 `HotReloadResult`。

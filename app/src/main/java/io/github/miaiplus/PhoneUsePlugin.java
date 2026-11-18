@@ -12,7 +12,7 @@ final class PhoneUsePlugin {
         + "在这种明确的应用操作请求中，『这张图』『这个视频』『屏幕上的』可以指用户手机当前前台显示的内容，不要求聊天消息附带图片。首次以goal开始所选控屏会话就会返回该执行屏幕的截图和观察；应先开始并查看观察，不能仅因本轮没有图片附件而声称看不到或要求重发/上传。观察后确实没有必要线索或仍不清楚所指内容时，再用ask_user询问。"
         + "普通识图问答或单独提到图片/视频不等于授权读取屏幕或操作应用，不因此发起控屏。已有专用能力优先，仍遵守安全限制。"
         + "MiAIPlus 的前台和后台控屏由本模块执行，不受小爱原生控屏的简体中文语言限制；系统语言不是简体中文时仍可选择这些已启用工具，不得沿用原生语言不支持的拒绝。此规则只适用于 MiAIPlus 控屏工具，不改变其他原生技能的支持范围或安全限制。";
-    private static final String DESCRIPTION = "本机手机控屏。start时传goal取得session和观察；然后每次传session及一个action对象，按新观察继续调用直到finish。剩余动作预算为0时只能finish/take_over/ask_user。STOP、PAUSE或错误表示本轮结束，不得重试或重新提交goal；向用户如实说明未完成和原因。无需额外API，由你逐步规划。默认使用截图JPEG像素坐标(image_pixels)，不是0..1000；也可显式选screen_pixels或normalized，必须匹配观察尺寸。不要复述CONTINUE或用自然语言替代action。系统专用工具优先。" + EXECUTION_POLICY + ScreenGrounding.POLICY;
+    private static final String DESCRIPTION = "本机手机控屏。start时传goal取得session和观察；然后每次传session及一个action对象，按新观察继续调用直到finish。剩余动作预算为0时只能finish/take_over/ask_user。STOP、PAUSE或错误表示本轮结束，不得重试或重新提交goal；向用户如实说明未完成和原因。无需额外API，由你逐步规划。点击当前观察中标有target的节点时，优先原样提交target代替element坐标；引用仅对本次观察有效。没有target时默认使用截图JPEG像素坐标(image_pixels)，不是0..1000；也可显式选screen_pixels或normalized，必须匹配观察尺寸。不要复述CONTINUE或用自然语言替代action。系统专用工具优先。" + EXECUTION_POLICY + ScreenGrounding.POLICY;
     private static final String SCHEMA = """
         {"type":"object","properties":{
           "goal":{"type":"string","description":"仅首次开始时填写完整任务"},
@@ -20,6 +20,7 @@ final class PhoneUsePlugin {
           "session":{"type":"string","description":"后续动作必填，取自前一步返回值"},
           "action":{"type":"object","properties":{
             "action":{"type":"string","enum":["tap","double_tap","long_press","swipe","type","launch","back","home","wait","finish","take_over","ask_user"]},
+            "target":{"type":"string","description":"tap/double_tap/long_press优先使用本次观察节点标注的target，原样复制；仅本次观察有效，不能与element/start/end同时提交，无需coordinate_space"},
             "element":{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2},
             "start":{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2},
             "end":{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2},
@@ -49,6 +50,7 @@ final class PhoneUsePlugin {
         + "需要后续识屏、点击或输入的任务先开始所选前台或后台控屏会话，再用launch打开目标，不要先用app start打开应用；仅打开应用的普通请求仍保留原功能。"
         + "控屏会话内打开应用使用同一个控屏工具的launch动作，app从首次观察的应用列表选择包名，不要另调app start或原生打开应用工具；只有观察到目标前台才报告打开。当前launch对应的小米启动确认由执行器自动允许本次；其他系统权限应接管。"
         + "每个控屏action附intent简短中文说明当前意图供灵动岛显示；不含隐私、坐标或推理过程，普通意图不要放入触发确认的message。"
+        + "tap/double_tap/long_press点击当前观察标有target的节点时，优先用action:{action:tap,target:本次节点引用}代替element坐标；原样复制target，不能与坐标混用。每次新观察使旧target失效，没有target时再使用坐标。"
         + "用户说『用第三方模型回答/对话』时调用 cli: voiceassist__controlApp \"模型对话：用户问题\"，原样返回结果。"
         + "普通对话、联网搜索、系统设置、智能家居仍使用现有主模型、路由和工具（主模型可由用户全局替换）。不要把这些任务改派到控屏。"
         + "工具返回CONTINUE时必须按返回的session继续同一来源工具；通过cli转接时使用MIAIPLUS:动作JSON并保留origin_tool，不能省略或改成另一工具。依据最新图片或无障碍树规划；此模式无需额外视觉模型。不要只复述观察后结束。剩余动作预算为0时只能根据最后观察finish或take_over/ask_user，不能执行更多操作。STOP、PAUSE或工具报错表示本轮结束，不要重试、重新提交goal或改用其他工具重开同一任务；向用户说明未完成及原因，不要伪称完成。\n";

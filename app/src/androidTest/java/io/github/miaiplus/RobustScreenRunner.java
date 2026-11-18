@@ -2,7 +2,6 @@ package io.github.miaiplus;
 
 import android.app.Activity;
 import android.app.Instrumentation;
-import android.content.Intent;
 import android.os.Bundle;
 import android.os.SystemClock;
 import java.nio.charset.StandardCharsets;
@@ -24,8 +23,9 @@ final class RobustScreenRunner {
             prefs.edit().putBoolean("enabled", true).putBoolean("globalModel", false)
                 .putBoolean("backgroundDisplay", false).putString("planner", "native")
                 .putInt("maxSteps", 24).remove("hook_report").commit();
-            test.runOnMainSync(() -> test.getTargetContext().startActivity(
-                new Intent(test.getTargetContext(), RobustFixtureActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)));
+            // Android 15+ may reject Activity launches from this background instrumentation
+            // process. Start the self-owned fixture through the already authorized root shell.
+            shell("am start -W -n io.github.miaiplus/.RobustFixtureActivity");
             long fixtureDeadline = SystemClock.elapsedRealtime() + 10_000;
             while (RobustFixtureActivity.current == null && SystemClock.elapsedRealtime() < fixtureDeadline) Thread.sleep(100);
             check(RobustFixtureActivity.current != null, "owned robustness fixture failed to start");

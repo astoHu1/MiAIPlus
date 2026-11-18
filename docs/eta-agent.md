@@ -1,10 +1,6 @@
 # Eta 外部 Agent
 
-2026-11-16 工作树实现。MiAIPlus 把本机已安装的第三方应用 Eta（`io.github.mangi.eta`，设备端 AI Agent）作为外部 Agent 暴露给小爱模型，提供 `miaiplus_eta_run` 和 `miaiplus_eta_status` 两个原生工具。此文描述源码行为；设备与模型验证见文末「验证状态」，不等同于已分发能力。
-
-## 边界
-
-Eta **不被修改、不被打包**：模块不含 Eta 代码，不 Hook Eta 进程，不向 Eta 发送凭证。模块只在小爱进程中按 Eta 已发布的 Agent Runtime 服务接口发送任务，由 Eta 用它自己保存的模型、提示词和工具开关执行，并取回最终文字结果。
+MiAIPlus 将本机 Eta（`io.github.mangi.eta`）通过 `miaiplus_eta_run` 和 `miaiplus_eta_status` 提供给小爱。模块在小爱进程中调用 Eta 的 Agent Runtime 服务，取回文字结果；任务使用 Eta 自己的模型、提示词和工具配置。模块不包含或修改 Eta，不向其发送模型凭证。
 
 ## 前置条件
 
@@ -79,7 +75,7 @@ Eta 的这套 Messenger 协议属内部、无版本承诺，当前只对照 3.4.
 
 ## 控屏协议：Eta
 
-此节描述源码行为；2026-11-16 设备验证见验证记录。控屏页「执行 → 动作协议」有 Phone Use、AutoGLM 和 Eta 三项，选 Eta 时偏好 `protocol` 保存为 `eta`。「启用控屏工具」开启且动作协议为 Eta 时：
+控屏页「执行 → 动作协议」有 Phone Use、AutoGLM 和 Eta 三项，选 Eta 时偏好 `protocol` 保存为 `eta`。「启用控屏工具」开启且动作协议为 Eta 时：
 
 - 小爱不再加载 MiAIPlus 自己的控屏工具 `miaiplus_phone_use` 和 `miaiplus_background_phone_use`。目录改为提供 Eta 的 `miaiplus_eta_run`／`miaiplus_eta_status`，工具说明使用控屏措辞。即使插件页「Eta Agent」开关关闭，这两个工具也会出现。「终端和敏感工具」只在「Eta Agent」开关本身开启时才会申请。
 - MiAIPlus 路由规则判定为控屏（前台或后台）的请求仍送入小爱带工具的 Agent。提示词策略要求模型把所有手机界面操作整理成自包含的 `task` 交给 Eta。
@@ -87,18 +83,15 @@ Eta 的这套 Messenger 协议属内部、无版本承诺，当前只对照 3.4.
 - 小爱自带 `controlApp` 工具的说明换成 Eta 措辞，调用转为 Eta 任务。MiAIPlus 逐步控屏的会话续接（`MIAIPLUS:`）被拒绝；`MIAIPLUS_START:` 取出其中的目标作为任务；`模型对话：` 仍走对话路径。
 - 「规划模型」下拉禁用，摘要为「由 Eta 规划和执行」。「动作协议」摘要显示 Eta 可用性：校验通过时为「控屏请求全部交给 Eta 完成」，否则按原因显示未安装、不是官方发布版、版本过旧（需要 3.4.4 或更新）或此版本不受支持。
 
-上文的限制同样适用：同时只能有一个 Eta 任务，有任务时返回 BUSY；锁屏时拒绝发起；Eta 的界面工具需要开启 Eta 自己的无障碍服务。MiAIPlus 不对 Eta 的步骤做确认，见下节。
+Eta 的界面工具需要开启它自己的无障碍服务。
 
 ## 已知限制
 
-- 协议为 Eta 内部接口且无版本承诺，只核对过 3.4.4；更新版本可能不兼容，表现为静默丢弃或 STOP，需重新核对。
 - Eta 在此入口没有确认提示，也没有向用户追问的工具，约束只能写在 `task` 里；模块不能替用户审计 Eta 的步骤。
 - 动作协议为 Eta 时，MiAIPlus 的「操作确认」预设（手动确认、智能判断、自动执行）不作用于 Eta，MiAIPlus 侧不会在 Eta 执行中逐步确认；敏感操作是否确认只取决于 Eta 自身。
 - Eta 的前台界面工具可能被小爱自身面板遮挡，中转器不会关闭它（请求中 `handoff_dismiss_entry_surface_on_foreground_operation` 为 false）。
-- 小爱重启后任务记录丢失，结果只在 Eta 应用中；遗留的未确认结果在下一次委派建立连接时清理。
 - Eta 运行期间会显示它自己的状态胶囊（如「思考中」），这是 Eta 的界面，模块不控制。
-- 不转发图片，不同次委派之间没有对话连续性。
-- 模块不能保证 Eta 使用的模型与第三方服务的计费、隐私行为，这些由 Eta 自身配置决定。
+- 模型服务的计费与隐私配置由 Eta 管理。
 
 ## 验证状态
 

@@ -30,4 +30,61 @@ public class CoordinatesTest {
         try { Coordinates.normalize(new JSONObject(),"guess",1440,3200,576,1280); fail(); }
         catch (IllegalArgumentException expected) { }
     }
+    @Test public void recoverableErrorsIdentifyTheFieldAndDeclaredUnits() throws Exception {
+        for (Object value : new Object[]{"not-an-array", new JSONArray("[20]"),
+            new JSONArray("[20,30,40]"), new JSONArray("[null,20]"),
+            new JSONArray("[\"20\",30]")}) {
+            try {
+                Coordinates.normalize(new JSONObject().put("start", value), "image_pixels", 1440, 3200, 576, 1280);
+                fail("Expected invalid point: " + value);
+            } catch (Coordinates.Invalid invalid) {
+                assertEquals("invalid_point", invalid.reason);
+                assertEquals("start", invalid.field);
+                assertEquals("image_pixels", invalid.space);
+            }
+        }
+        try {
+            Coordinates.normalize(new JSONObject().put("end", new JSONArray("[577,10]")),
+                "image_pixels", 1440, 3200, 576, 1280);
+            fail("Expected out of range");
+        } catch (Coordinates.Invalid invalid) {
+            assertEquals("out_of_range", invalid.reason);
+            assertEquals("end", invalid.field);
+            assertEquals("image_pixels", invalid.space);
+        }
+        try {
+            Coordinates.normalize(new JSONObject(), "guess", 1440, 3200, 576, 1280);
+            fail("Expected unknown units");
+        } catch (Coordinates.Invalid invalid) {
+            assertEquals("unknown_space", invalid.reason);
+            assertEquals("unknown", invalid.space);
+        }
+    }
+    @Test public void missingRequiredActionPointsAreRecoverableCoordinateErrors() throws Exception {
+        JSONObject[] actions = {
+            new JSONObject().put("action", "tap"),
+            new JSONObject().put("action", "swipe").put("start", new JSONArray("[1,2]")),
+            new JSONObject().put("action", "swipe").put("end", new JSONArray("[3,4]"))
+        };
+        String[] fields = {"element", "end", "start"};
+        for (int i = 0; i < actions.length; i++) {
+            try {
+                Coordinates.normalize(actions[i], "normalized", 1440, 3200, 576, 1280);
+                fail("Expected missing point " + fields[i]);
+            } catch (Coordinates.Invalid invalid) {
+                assertEquals("missing_point", invalid.reason);
+                assertEquals(fields[i], invalid.field);
+                assertEquals("normalized", invalid.space);
+            }
+        }
+    }
+    @Test public void invalidObservationDimensionsAreNotAModelCorrection() throws Exception {
+        try {
+            Coordinates.normalize(new JSONObject().put("element", new JSONArray("[1,1]")),
+                "image_pixels", 1440, 3200, 0, 1280);
+            fail("Expected invalid observation dimensions");
+        } catch (IllegalArgumentException invalid) {
+            assertFalse(invalid instanceof Coordinates.Invalid);
+        }
+    }
 }
