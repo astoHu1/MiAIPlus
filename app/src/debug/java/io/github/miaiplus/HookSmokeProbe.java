@@ -66,14 +66,6 @@ public final class HookSmokeProbe {
         if (!android.app.Application.getProcessName().equals("com.miui.voiceassist")) return;
         receiver = new BroadcastReceiver() {
             @Override public void onReceive(Context ignored, Intent intent) {
-                if ("MIAIPLUS_CONVERSATION_REPLY_READY".equals(intent.getStringExtra("frame"))) {
-                    ConversationLifecycleReplyProbe.signal(intent.getStringExtra("nonce"));
-                    return;
-                }
-                if ("MIAIPLUS_CONVERSATION_REPLY_CANCEL".equals(intent.getStringExtra("frame"))) {
-                    ConversationLifecycleReplyProbe.cancel();
-                    return;
-                }
                 if ("MIAIPLUS_NATIVE_FOREGROUND_CANCEL".equals(intent.getStringExtra("frame"))) {
                     NativeForegroundModelProbe.signalCancel(); return;
                 }
@@ -145,14 +137,12 @@ public final class HookSmokeProbe {
                         report = "MIAIPLUS_LAUNCH_UI".equals(token) ? launchUi(context, loader)
                             : "MIAIPLUS_SPEECH_POLICY".equals(token) ? SpeechPolicyProbe.run(context, loader)
                             : "MIAIPLUS_FOCUS_UI".equals(token) ? focusUi(context, loader)
-                            : "MIAIPLUS_FOCUS_POPUP_UI".equals(token) ? ConversationContinuityProbe.focusPopupUi(context, loader)
                             : "MIAIPLUS_DUAL_TOOLS".equals(token) ? dualTools(context, loader)
                             : "MIAIPLUS_ACTION_CONFIRMATION".equals(token) ? ActionConfirmationProbe.run(context, loader)
                             : "MIAIPLUS_ROBUST_SCREEN".equals(token) ? RobustScreenProbe.run(context, loader)
                             : "MIAIPLUS_PHONE_USE_TERMINAL".equals(token) ? PhoneUseTerminalProbe.run(context, loader)
+                            : "MIAIPLUS_CONVERSATION_LIMITS".equals(token) ? "PROBE PASS: " + NativeConversationLimitsProbe.run(context, loader)
                             : "MIAIPLUS_CONVERSATION_RETURN".equals(token) ? ConversationReturnProbe.run(context, loader)
-                            : "MIAIPLUS_CONVERSATION_CONTINUITY".equals(token) ? ConversationContinuityProbe.run(context, loader)
-                            : "MIAIPLUS_CONVERSATION_REPLIES".equals(token) ? ConversationLifecycleReplyProbe.run(context, loader)
                             : "MIAIPLUS_NATIVE_FOREGROUND_MODEL".equals(token) ? NativeForegroundModelProbe.run(context, loader)
                             : "MIAIPLUS_NATIVE_FOREGROUND_VOICE".equals(token) ? NativeForegroundModelProbe.run(context, loader, true)
                             : "MIAIPLUS_NATIVE_FOREGROUND_VIDEO".equals(token) ? NativeForegroundModelProbe.run(context, loader, true, true)
@@ -323,7 +313,7 @@ public final class HookSmokeProbe {
         }
         return text;
     }
-    static String focusUi(Context context, ClassLoader loader) throws Exception {
+    private static String focusUi(Context context, ClassLoader loader) throws Exception {
         if (context.getSystemService(android.app.KeyguardManager.class).isKeyguardLocked()) throw new AssertionError("unlock device for focus UI test");
         android.app.Activity origin = MainThread.call(HookSmokeProbe::resumedActivity);
         Object manager = MainThread.call(() -> invoke(Reflector.callStaticMethod(Reflector.findClass("com.xiaomi.voiceassistant.UiManager", loader), "getInstance", context), "getFloatManager"));

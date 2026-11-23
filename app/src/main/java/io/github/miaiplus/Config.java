@@ -12,8 +12,6 @@ public final class Config {
     public static final String PHONE_USE_PERMISSION_AUTO = "auto";
     public static final String PHONE_USE_PERMISSION_YOLO = "yolo";
     public static final int MAX_PHONE_USE_STEPS = 200;
-    public static final int DEFAULT_CONVERSATION_TIMEOUT_MINUTES = 15;
-    public static final int MAX_CONVERSATION_TIMEOUT_MINUTES = 1440;
     public static final int MIN_DISPLAY_SIZE = 320;
     public static final int MAX_DISPLAY_SIZE = 4096;
     public static final int MIN_DISPLAY_DENSITY = 80;
@@ -39,7 +37,6 @@ public final class Config {
     public final String phoneUsePermissionMode;
     public final String speechReplyPolicy;
     public final int maxSteps;
-    public final int conversationTimeoutMinutes;
     public final int displayWidth, displayHeight, displayDensity;
     public Config(Context context) {
         this(prefs(context));
@@ -66,10 +63,6 @@ public final class Config {
         protocol = "computer".equals(storedProtocol) ? "phone_use" : storedProtocol;
         globalModel = Boolean.TRUE.equals(p.get("globalModel"));
         planner = globalModel ? "native" : string(p, "planner", "native");
-        Object conversationTimeout = p.get("conversationTimeoutMinutes");
-        conversationTimeoutMinutes = conversationTimeout instanceof Number
-            ? Math.max(0, Math.min(MAX_CONVERSATION_TIMEOUT_MINUTES, ((Number) conversationTimeout).intValue()))
-            : DEFAULT_CONVERSATION_TIMEOUT_MINUTES;
         displayWidth = boundedInt(p, "displayWidth", DEFAULT_DISPLAY_WIDTH, MIN_DISPLAY_SIZE, MAX_DISPLAY_SIZE);
         displayHeight = boundedInt(p, "displayHeight", DEFAULT_DISPLAY_HEIGHT, MIN_DISPLAY_SIZE, MAX_DISPLAY_SIZE);
         displayDensity = boundedInt(p, "displayDensity", DEFAULT_DISPLAY_DENSITY,

@@ -47,7 +47,7 @@ final class NativeForegroundModelRunner {
             }
         };
         try {
-            Bundle busy = context.getContentResolver().call(BridgeProvider.URI, "conversation_settings", null, null);
+            Bundle busy = context.getContentResolver().call(BridgeProvider.URI, "screen_busy", null, null);
             int hostUid = context.getPackageManager().getApplicationInfo("com.miui.voiceassist", 0).uid;
             check(busy != null && !busy.getBoolean("screenBusy") && !PluginRuntime.busy(hostUid).getBoolean("active")
                 && !PluginRuntime.busy(android.os.Process.myUid()).getBoolean("active"), "another screen/plugin task is active");

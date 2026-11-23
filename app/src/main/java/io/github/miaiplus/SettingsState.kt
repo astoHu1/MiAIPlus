@@ -304,15 +304,6 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
         return saved
     }
 
-    fun setConversationTimeoutMinutes(minutes: Int): Boolean = attempt {
-        require(minutes in 0..Config.MAX_CONVERSATION_TIMEOUT_MINUTES) {
-            "时长需在 0–${Config.MAX_CONVERSATION_TIMEOUT_MINUTES} 分钟之间，0 表示关闭"
-        }
-        check(prefs.edit().putInt("conversationTimeoutMinutes", minutes).commit()) { "保存失败，请重试" }
-        config = Config(context)
-        notice = "已保存"
-    }
-
     fun currentDisplayGeometry(): DisplayGeometry {
         val display = context.getSystemService(DisplayManager::class.java)
             ?.getDisplay(android.view.Display.DEFAULT_DISPLAY)

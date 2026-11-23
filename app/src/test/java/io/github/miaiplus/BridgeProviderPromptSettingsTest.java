@@ -26,8 +26,6 @@ public final class BridgeProviderPromptSettingsTest {
     private static final int HOST = 20211;
     private static final int STRANGER = 20212;
     private static final Set<String> PROMPT_KEYS = Set.of("mode", "text", "routeText", "applyVoice", "applyStandalone");
-    private static final Set<String> CONVERSATION_KEYS = Set.of("conversationTimeoutMinutes", "screenBusy",
-        SpeechReplyPolicy.KEY);
 
     private final Map<Field, Object> savedState = new LinkedHashMap<>();
     private Context context;
@@ -102,7 +100,7 @@ public final class BridgeProviderPromptSettingsTest {
         assertEquals("off", prompt().getString("mode"));
     }
 
-    @Test public void foreignUidIsRejectedAndNeitherBundleCarriesCredentialsOrScreenState() throws Exception {
+    @Test public void foreignUidIsRejectedAndSettingsBundlesDoNotCarryCredentialsOrScreenState() throws Exception {
         prefs.edit().putString("apiKey", "fixture-secret").putString("endpoint", "https://example.invalid/v1")
             .putString("model", "fixture-model").putString(Config.CUSTOM_PROMPT_TEXT_KEY, "私有提示词")
             .putString(Config.CUSTOM_PROMPT_MODE_KEY, "replace").commit();
@@ -112,10 +110,10 @@ public final class BridgeProviderPromptSettingsTest {
         assertThrows(SecurityException.class, () -> provider.call("prompt_settings", null, null));
         ShadowBinder.setCallingUid(HOST);
         Bundle prompt = prompt();
-        Bundle conversation = provider.call("conversation_settings", null, null);
-        assertEquals(CONVERSATION_KEYS, conversation.keySet());
-        assertFalse(conversation.keySet().toString(), conversation.keySet().stream().anyMatch(PROMPT_KEYS::contains));
-        String exported = values(prompt) + values(conversation);
+        Bundle speech = provider.call("speech_settings", null, null);
+        assertEquals(Set.of(SpeechReplyPolicy.KEY), speech.keySet());
+        assertFalse(speech.keySet().toString(), speech.keySet().stream().anyMatch(PROMPT_KEYS::contains));
+        String exported = values(prompt) + values(speech);
         for (String secret : new String[]{"fixture-secret", "https://example.invalid/v1", "fixture-model",
             "private-task-id", "private screen contents"}) {
             assertFalse(secret, exported.contains(secret));

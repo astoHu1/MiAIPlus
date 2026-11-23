@@ -32,11 +32,7 @@ flowchart TD
 
 新版主聊天页为 `MainNavigatorActivity`，普通 `onNewIntent` 不再直接消费旧会话 extra。模块生成的返回 Intent 显式标记自己的导航请求，在页面初始化后调用原生 `navigateToDetail`；无话题入口调用原生主对话导航。任务运行及静默窗口内不导航，完成通知通过本任务 token 解除静默。导航数据在宿主异步消费 Intent 前捕获，页面回调由 `InteractionUi` 跟踪，重载时一并清理；首次对话定位、独立 PendingIntent 和跨工具步绑定保持不变。
 
-Phone Use 的 `maxSteps` 可设置范围为 1–200，默认 30。对话空闲时长由独立 `conversationTimeoutMinutes` 配置管理，默认 15 分钟，范围 1–1440，0 关闭；不依赖控屏开关或模型 API 配置。宿主通过经 UID 校验的 `conversation_settings` 读取时长及控屏忙状态，不接收模型凭证或屏幕内容。全屏与浮窗共用计时，每次有效打开先按上次时间判断续用或新建，再从本次打开重新计时，即使没有输入也会续期；真实用户操作继续更新时间。回复及工具结果不延长时间。超时只在下次打开时新建，不在用户停留或任务执行期间主动换话题。
-
-`NativeConversationHook` 在真实语音／启动器唤醒入口判断空闲；语音在宿主完成界面重置、开始识别或提交之前选择话题，桌面图标／原生快捷方式在聊天 Activity 完成恢复后应用，避免旧 PAGE 覆盖新话题。只保存原生话题身份和计时，不复制聊天正文。原生空话题复用保护阻止超时新建时，调用其完整的新会话初始化路径；全屏导航随后回放同一话题时仅同步已补齐的原生身份，不再次清理卡片管理器或重建模型会话，避免旧占位数据取消刚开始的请求并丢失回复。仅当宿主 Activity 的原生 Lifecycle 确为 `RESUMED` 时同步全屏 Navigator，防止退到后台后过渡滞后的屏幕标志将浮窗唤醒改回全屏。
-
-浮窗沿用原生系统窗口，由 `NativeConversationRouting` 同步独立的浮窗卡片控制器、实际话题管理器与结果 View，并设置首次懒初始化读取的主页面导航数据；不能将全屏控制器的身份变化视为浮窗已切换。该同步只绑定浮窗话题与监听，不另建模型执行会话。真实触摸、按键、文字提交及最终识别结果更新计时，显式历史／通知返回优先于自动选择。控屏忙碌、配置关闭／不可读或过期时丢弃待处理导航，重载释放回调；删除所选话题会清除保存身份。2026-10-19 修复的验证范围及旧浮窗探针结论更正见 [会话生命周期记录](validation/conversation-lifecycle-2026-10-19.md)。
+Phone Use 的 `maxSteps` 可设置范围为 1–200，默认 30。
 
 `NativeConversationLimitsHook` 对 `osbot.main`／`osbot.chat`／`osbot.overlayassistant` 移除原生 `IterationGuard` 的计数停止及 `beginIteration` 的普通 60／复杂 1000 轮硬门槛。原始轮次、事件和会话 ID 保持真实；超过原门槛时保留事件 channel 的挂起、失败和取消语义。实际强制禁用工具、工具 Failure、取消、时限与上下文压缩继续生效，其他专项 Agent 保留原限制。侧栏创建第 101 个历史话题的检查独立移除，不修改 DAO 计数、分页或删除记录；历史话题数量与单次请求执行轮数是两项不同限制。
 
@@ -213,6 +209,6 @@ Eta 外部 Agent（`EtaAgent`／`EtaBridge`，kind `eta`）是统一目录里唯
 
 `NativeSpeechPolicyHook` 在两版精确适配宿主的语音／文字请求入口给 `RequestInfo` 绑定输入来源；手势识屏使用实际的 `com.miui.voiceassist.query&&screen_recognition` 或 `screen_recog_nlp_with_ref` 来源，而不按长按／双击手势名称猜测。识屏页的麦克风来源 `screen_recognition_query_origin` 仍是语音输入。模块将最终 ASR 转交原生 MiClaw 时用同步作用域保留语音身份，避免 `sendToMiClaw` 内部固定写入 `QueryEditBar` 导致误判。对于 `need_nlp=false` 且 `need_tts=false` 的纯识别请求，不为了允许语音回复而开启 TTS，以保留宿主 `startAsr` 初始化分支；后续真正提交回复请求时再应用语音策略。
 
-配置的三态为 `text_only`、默认的 `follow_input`、关闭覆盖的 `host_default`。`conversation_settings` 仅追加脱敏策略字段；新请求及播放判断实时读取，不依赖控屏开关，不写宿主持久化 TTS 偏好。请求级覆盖同步到 `need_tts` 与最终 `Execution.RequestControl`：静音时合并 `TTS`、`TTS_STREAM`、`LLM_TTS_AUDIO` 三种音频限制，保留原有禁用项；允许语音时只移除这三项。保留 NLP 等其他限制、环境字段和原 context header，避免小爱待机模式或全局 TTS 模式覆盖识屏的静音要求。
+配置的三态为 `text_only`、默认的 `follow_input`、关闭覆盖的 `host_default`。`speech_settings` 仅返回语音回复策略；新请求及播放判断实时读取，不依赖控屏开关，不写宿主持久化 TTS 偏好。请求级覆盖同步到 `need_tts` 与最终 `Execution.RequestControl`：静音时合并 `TTS`、`TTS_STREAM`、`LLM_TTS_AUDIO` 三种音频限制，保留原有禁用项；允许语音时只移除这三项。保留 NLP 等其他限制、环境字段和原 context header，避免小爱待机模式或全局 TTS 模式覆盖识屏的静音要求。
 
 MiClaw 有独立流式语音判断，不能仅修改 `RequestInfo.needTts`。模块在真实 engine `startSpeech`／`startSpeechWithoutVoice` 同步初始化会话时，通过 `markMiClawResult` 记录有界的 `dialogId → 输入来源`，再覆盖 `StreamSynthesizeConfig.isEnabled(dialogId)`；不同请求和后来的文字／语音输入不会污染此前会话。未知或已清理的会话保留宿主判断。动作朗读的终端入口对已归属会话的静音策略同样生效，包括原先跳过全局 `needTts` 的 linking 分支。热重载及安装失败回滚清理请求弱引用、会话映射和同步作用域。关闭覆盖时各个入口保持原逻辑。

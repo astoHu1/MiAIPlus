@@ -7,8 +7,8 @@ import java.util.Map;
 /** Configure the mock briefly, ask host to trigger the in-process debug smoke, then restore. */
 public class HookProbeRunner extends Instrumentation {
     private String api = "chat";
-    private boolean reasoning, remoteReasoning, focus, launch, conversation;
-    @Override public void onCreate(Bundle b) { super.onCreate(b); api = b.getString("api", "chat"); remoteReasoning = "true".equals(b.getString("remote_reasoning")); reasoning = remoteReasoning || "true".equals(b.getString("reasoning")); focus = "true".equals(b.getString("focus")); launch = "true".equals(b.getString("launch")); conversation = "true".equals(b.getString("conversation_return")); start(); }
+    private boolean reasoning, remoteReasoning, focus, launch, conversation, conversationLimits;
+    @Override public void onCreate(Bundle b) { super.onCreate(b); api = b.getString("api", "chat"); remoteReasoning = "true".equals(b.getString("remote_reasoning")); reasoning = remoteReasoning || "true".equals(b.getString("reasoning")); focus = "true".equals(b.getString("focus")); launch = "true".equals(b.getString("launch")); conversation = "true".equals(b.getString("conversation_return")); conversationLimits = "true".equals(b.getString("conversation_limits")); start(); }
     private String probe(String token) throws Exception {
         Config.prefs(getTargetContext()).edit().remove("hook_report").commit();
         Bundle status = new Bundle(); status.putString("stream", "MIAIPLUS_RESTART_XIAOAI " + token + "\n"); sendStatus(1, status);
@@ -79,6 +79,11 @@ public class HookProbeRunner extends Instrumentation {
         Bundle report = new Bundle(); int code = Activity.RESULT_CANCELED;
         ModelsDevCatalog previousCatalog = null; boolean restoreCatalog = false;
         try {
+            if (conversationLimits) {
+                report.putString("stream", probe("MIAIPLUS_CONVERSATION_LIMITS") + "\n");
+                code = Activity.RESULT_OK;
+                return;
+            }
             if (focus || launch || conversation) {
                 // These probes are about the physical screen: the launch probe asserts the Security page is the
                 // foreground it observes, which cannot hold if the device is configured for the background display.

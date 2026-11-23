@@ -146,7 +146,6 @@ final class DiagnosticEnvironment {
             .put("globalModel", config.globalModel).put("backgroundDisplay", config.backgroundDisplay)
             .put("permissionMode", config.phoneUsePermissionMode).put("maxSteps", config.maxSteps)
             .put("protocol", choice(config.protocol, "phone_use", "autoglm")).put("api", choice(config.api, "chat", "responses"))
-            .put("conversationTimeoutMinutes", config.conversationTimeoutMinutes)
             .put("displayWidth", config.displayWidth).put("displayHeight", config.displayHeight)
             .put("displayDensity", config.displayDensity)
             .put("endpointConfigured", !config.endpoint.isEmpty()).put("modelConfigured", !config.model.isEmpty())

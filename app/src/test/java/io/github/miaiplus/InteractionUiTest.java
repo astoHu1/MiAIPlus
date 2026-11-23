@@ -153,9 +153,6 @@ public final class InteractionUiTest {
         assertEquals(BuildConfig.APPLICATION_ID + ".CONVERSATION_RETURN", ConversationReturn.RETURN_ROUTE);
         assertTrue(ConversationReturn.isModuleReturn(new Intent().putExtra(ConversationReturn.RETURN_ROUTE, true)));
         assertFalse(ConversationReturn.isModuleReturn(new Intent().putExtra("io.github.miaiplus.CONVERSATION_RETURN", true)));
-        var preferences = NativeConversationHook.class.getDeclaredField("PREFS");
-        preferences.setAccessible(true);
-        assertEquals(BuildConfig.APPLICATION_ID + ".conversation", preferences.get(null));
         var channel = InteractionUi.class.getDeclaredField("CHANNEL");
         channel.setAccessible(true);
         assertEquals(BuildConfig.APPLICATION_ID + ".computer", channel.get(null));

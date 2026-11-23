@@ -15,7 +15,7 @@ final class SpeechPolicyProbe {
     private SpeechPolicyProbe() { }
 
     static String run(Context context, ClassLoader loader) throws Exception {
-        var settings = context.getContentResolver().call(BridgeProvider.URI, "conversation_settings", null, null);
+        var settings = context.getContentResolver().call(BridgeProvider.URI, "speech_settings", null, null);
         check(settings != null, "speech configuration unavailable");
         String selected = settings.getString(SpeechReplyPolicy.KEY);
         check(selected != null, "speech policy missing from provider");

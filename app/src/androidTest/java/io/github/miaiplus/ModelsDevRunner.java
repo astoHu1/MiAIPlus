@@ -35,7 +35,7 @@ final class ModelsDevRunner {
         boolean changed = false;
         try {
             Bundle activity = instrumentation.getTargetContext().getContentResolver().call(
-                BridgeProvider.URI, "conversation_settings", null, null);
+                BridgeProvider.URI, "screen_busy", null, null);
             check(activity != null && !activity.getBoolean("screenBusy"), "Active phone-use task");
             if (remote) awaitRemoteCache();
             previous = ModelsDevCatalog.current();

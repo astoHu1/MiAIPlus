@@ -2,7 +2,7 @@ package io.github.miaiplus
 
 import android.text.format.DateUtils
 import androidx.compose.foundation.layout.*
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -14,8 +14,6 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 @Composable
 internal fun HomePage(state: SettingsState, nav: Navigation) {
-    var editTimeout by remember { mutableStateOf(false) }
-    var timeout by remember { mutableStateOf("") }
     StatusHero(state)
     Spacer(Modifier.height(12.dp))
     Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).padding(horizontal = 12.dp),
@@ -37,28 +35,12 @@ internal fun HomePage(state: SettingsState, nav: Navigation) {
                 else -> "不更改小爱的回复策略"
             },
             onSelectedIndexChange = { state.setOption(SpeechReplyPolicy.KEY, speechPolicies[it]) })
-        ArrowPreference(title = "自动新建对话", summary = if (state.config.conversationTimeoutMinutes == 0)
-            "已关闭" else "闲置 ${state.config.conversationTimeoutMinutes} 分钟后",
-            onClick = {
-                timeout = state.config.conversationTimeoutMinutes.toString()
-                state.error = null
-                editTimeout = true
-            })
         ArrowPreference(title = "系统提示词", summary = promptSummary(state), onClick = { nav.open(Route.Prompt) })
     }
     Section("诊断") {
         ArrowPreference(title = "运行状态", summary = "连接、权限与直接测试", onClick = { nav.open(Route.Status) })
         ArrowPreference(title = "日志", onClick = { nav.open(Route.Logs) })
     }
-    NumberDialog(show = editTimeout, title = "自动新建对话",
-        summary = "闲置超时后，下次打开小爱会新建对话。填 0 关闭。",
-        label = "时长（分钟）", value = timeout, onValueChange = { timeout = it }, error = state.error,
-        onSave = {
-            val value = timeout.toIntOrNull()
-            if (value == null) state.error = "请输入 0–${Config.MAX_CONVERSATION_TIMEOUT_MINUTES} 之间的整数"
-            else if (state.setConversationTimeoutMinutes(value)) editTimeout = false
-        },
-        onDismiss = { editTimeout = false; state.error = null })
 }
 
 /** Reads the saved snapshot, never the in-progress draft. */

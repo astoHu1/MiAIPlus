@@ -43,9 +43,8 @@ API 102 迁移时通过 43 项 JUnit、双变体 Lint 及 Debug／Release／Andr
 
 ```sh
 python3 scripts/device_test.py --hook --focus
-python3 scripts/device_test.py --hook --focus --popup
 adb shell am instrument --user 0 -w -e reload true io.github.miaiplus.test/io.github.miaiplus.DeviceTestRunner
 python3 scripts/device_test.py --hook --focus --no-restart
 ```
 
-前两项会重启小爱并临时使用观察探针，结束恢复配置。`--no-restart` 保留现有小爱进程，用于验证热重载后同一 PID 中的新 Hook。快捷键测试通过 VoiceService 的原生唤醒动作打开实际系统悬浮窗口，而不是直接启动会自动退出的 FloatActivity。重载探针只检查框架及请求重载，不读取模型配置。
+不带 `--no-restart` 的焦点探针会重启小爱，结束恢复配置。`--no-restart` 保留现有小爱进程，用于验证热重载后同一 PID 中的新 Hook。重载探针只检查框架及请求重载，不读取模型配置。

@@ -34,16 +34,6 @@ public class ConfigTest {
         }
     }
 
-    @Test public void conversationTimeoutKeepsDefaultAndNormalizesPersistedMinutes() {
-        assertEquals("missing timeout", 15, new Config(Map.of()).conversationTimeoutMinutes);
-        for (Object[] timeout : new Object[][]{
-            {0, 0}, {1, 1}, {1440, 1440}, {-1, 0}, {1441, 1440}, {"invalid", 15}
-        }) {
-            assertEquals("conversationTimeoutMinutes=" + timeout[0], (int) timeout[1],
-                new Config(Map.of("conversationTimeoutMinutes", timeout[0])).conversationTimeoutMinutes);
-        }
-    }
-
     @Test public void displayGeometryKeepsDefaultsAndNormalizesPersistedCanvas() {
         assertGeometry("missing geometry", new Config(Map.of()), 1080, 1920, 320);
         assertGeometry("custom geometry", new Config(Map.of(

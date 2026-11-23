@@ -169,7 +169,7 @@ final class NativeSpeechPolicyHook {
     }
 
     private static String policy(Context context) {
-        Bundle settings = context.getContentResolver().call(BridgeProvider.URI, "conversation_settings", null, null);
+        Bundle settings = context.getContentResolver().call(BridgeProvider.URI, "speech_settings", null, null);
         return settings == null ? SpeechReplyPolicy.HOST_DEFAULT
             : SpeechReplyPolicy.normalize(settings.getString(SpeechReplyPolicy.KEY, SpeechReplyPolicy.HOST_DEFAULT));
     }

@@ -187,7 +187,7 @@ final class ConversationReturnProbe {
         boolean[] state = new boolean[4];
         do {
             boolean matched = MainThread.call(() -> {
-                Object page = currentPage(context, loader);
+                Object page = currentPage();
                 Object info = page == null ? null : Reflector.callMethod(page, "getTopicGroupInfo");
                 Object ui = Reflector.callStaticMethod(Reflector.findClass("com.xiaomi.voiceassistant.UiManager", loader), "getInstance", context);
                 Object manager = Reflector.callMethod(ui, "getFloatManager");
@@ -203,13 +203,58 @@ final class ConversationReturnProbe {
         throw new AssertionError("host did not display the requested owned conversation: page/info/chat/topic="
             + java.util.Arrays.toString(state));
     }
-    private static Object currentPage(Context context, ClassLoader loader) {
+    static void awaitOriginalRoute(Context context, ClassLoader loader, Intent route) throws Exception {
+        Object expectedPage = route.getParcelableExtra("page_navigation_data");
+        Object expectedInfo = expectedPage == null ? null : Reflector.callMethod(expectedPage, "getTopicGroupInfo");
+        long deadline = SystemClock.elapsedRealtime() + 10_000;
+        do {
+            boolean matched = MainThread.call(() -> {
+                if (HostCompatibility.modern() && expectedInfo == null) {
+                    Activity host = resumedHost();
+                    if (host == null || host.isFinishing() || host.isDestroyed()
+                        || !host.getWindow().getDecorView().isShown()) return false;
+                    Object navigation = Reflector.callMethod(Reflector.callMethod(
+                        Reflector.callMethod(host, "w2"), "getUiState"), "getValue");
+                    Object main = Reflector.getStaticObjectField(Reflector.findClass("pm1.q$f", loader), "a");
+                    Object selection = Reflector.callMethod(navigation, "getListSelection");
+                    Object mainType = Reflector.getStaticObjectField(Reflector.findClass("pm1.r0", loader),
+                        "MAIN_CONVERSATION");
+                    Object ui = Reflector.callStaticMethod(Reflector.findClass("com.xiaomi.voiceassistant.UiManager", loader),
+                        "getInstance", context);
+                    Object full = Reflector.callMethod(ui, "getFullScreenManager");
+                    // Native MAIN_CONVERSATION deliberately clears PageNavigationData (V=null).
+                    // Require its exact route, selection, visible host and main-card mode instead.
+                    return main.equals(Reflector.callMethod(navigation, "getDetailRoute"))
+                        && selection != null && mainType.equals(Reflector.callMethod(selection, "getType"))
+                        && Reflector.callMethod(host, "getPageNavigationData") == null
+                        && full != null && !Boolean.TRUE.equals(Reflector.callMethod(full, "isTopicDialogPageExcludeAgent"));
+                }
+                Object page = currentPage();
+                if (page == null) return false;
+                Object info = Reflector.callMethod(page, "getTopicGroupInfo");
+                if (expectedInfo == null || info == null) return expectedInfo == info;
+                return java.util.Objects.equals(Reflector.callMethod(expectedInfo, "getTopicId"),
+                    Reflector.callMethod(info, "getTopicId"))
+                    && java.util.Objects.equals(Reflector.callMethod(expectedInfo, "getChatId"),
+                        Reflector.callMethod(info, "getChatId"));
+            });
+            if (matched) return;
+            Thread.sleep(100);
+        } while (SystemClock.elapsedRealtime() < deadline);
+        throw new AssertionError("original native conversation route did not restore");
+    }
+
+    private static Object currentPage() {
+        Activity host = resumedHost();
+        return host == null ? null : Reflector.callMethod(host, "getPageNavigationData");
+    }
+    private static Activity resumedHost() {
         Object thread = Reflector.callStaticMethod(Reflector.findClass("android.app.ActivityThread", null), "currentActivityThread");
         for (Object record : ((Map<?, ?>)Reflector.getObjectField(thread, "mActivities")).values()) {
             Activity activity = (Activity)Reflector.getObjectField(record, "activity");
             if (!Boolean.TRUE.equals(Reflector.getObjectField(record, "paused"))
                 && activity.getClass().getName().equals(HostCompatibility.chatActivity()))
-                return Reflector.callMethod(activity, "getPageNavigationData");
+                return activity;
         }
         return null;
     }

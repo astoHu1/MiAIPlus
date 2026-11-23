@@ -46,7 +46,7 @@ final class NativeBackgroundModelProbe {
         check(!context.getSystemService(android.app.KeyguardManager.class).isKeyguardLocked(), "unlock device first");
         Bundle config = NativeModelHook.requestConfig(context);
         check(!config.getBoolean("globalModel"), "official model required");
-        Bundle busy = context.getContentResolver().call(BridgeProvider.URI, "conversation_settings", null, null);
+        Bundle busy = context.getContentResolver().call(BridgeProvider.URI, "screen_busy", null, null);
         Bundle pluginBusy = context.getContentResolver().call(BridgeProvider.URI, "plugin_busy", null, null);
         check(busy != null && !busy.getBoolean("screenBusy") && pluginBusy != null && !pluginBusy.getBoolean("active"),
             "another screen/plugin task is active");
@@ -145,7 +145,7 @@ final class NativeBackgroundModelProbe {
             finally { screenshotReady = null; screenshotNonce = null; }
             try {
                 helper("open", context, original);
-                helper(ConversationContinuityProbe.class, "awaitOriginalRoute", context, loader, original);
+                ConversationReturnProbe.awaitOriginalRoute(context, loader, original);
             } catch (Exception | Error error) { cleanup = append(cleanup, error); }
             try { suspend(loader, continuation -> Reflector.callMethod(local, "deleteConversationGroup", topic, continuation)); }
             catch (Exception | Error error) { cleanup = append(cleanup, error); }
@@ -491,11 +491,8 @@ final class NativeBackgroundModelProbe {
             : value instanceof Boolean ? "boolean" : value instanceof Number ? "number" : "other";
     }
     private static Object helper(String name, Object... args) throws Exception {
-        return helper(ReplyActionsProbe.class, name, args);
-    }
-    private static Object helper(Class<?> owner, String name, Object... args) throws Exception {
         // Share the existing pinned local-topic navigation/cancellation helpers without altering model routing.
-        for (var method : owner.getDeclaredMethods()) {
+        for (var method : ReplyActionsProbe.class.getDeclaredMethods()) {
             if (!method.getName().equals(name) || method.getParameterCount() != args.length) continue;
             method.setAccessible(true);
             try { return method.invoke(null, args); }

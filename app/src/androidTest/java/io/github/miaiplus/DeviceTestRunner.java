@@ -39,13 +39,12 @@ public final class DeviceTestRunner extends HookProbeRunner {
     }
     private boolean hookMode, liveMode, reloadMode, guardMode, guardPreflightMode, profilesMode, backgroundMode, focusMode, launchMode, scrollMode, dualToolsMode, foregroundConsentMode, conversationMode, robustScreenMode;
     private String transportApi;
-    private boolean replyActionsMode, replyActionsCurrentConfig, actionConfirmationMode, realPageGuardMode, phoneUseTerminalMode, conversationContinuityMode, conversationRepliesMode;
+    private boolean replyActionsMode, replyActionsCurrentConfig, actionConfirmationMode, realPageGuardMode, phoneUseTerminalMode, conversationLimitsMode;
     private String replyActionsApi;
     private Bundle arguments;
     @Override public void onCreate(Bundle arguments) {
         this.arguments = arguments;
-        conversationContinuityMode = "true".equals(arguments.getString("conversation_continuity"));
-        conversationRepliesMode = "true".equals(arguments.getString("conversation_replies"));
+        conversationLimitsMode = "true".equals(arguments.getString("conversation_limits"));
         phoneUseTerminalMode = "true".equals(arguments.getString("phone_use_terminal"));
         realPageGuardMode = "true".equals(arguments.getString("real_page_guard"));
         actionConfirmationMode = "true".equals(arguments.getString("action_confirmation"));
@@ -120,8 +119,6 @@ public final class DeviceTestRunner extends HookProbeRunner {
             check(prefs.edit().putBoolean(Config.PHONE_USE_LOG_KEY,
                 "true".equals(arguments.getString("detailed_log"))).commit(), "Could not set detailed log fixture");
         }
-        if (conversationContinuityMode) { ConversationContinuityRunner.run(this); return; }
-        if (conversationRepliesMode) { ConversationLifecycleReplyRunner.run(this); return; }
         if (phoneUseTerminalMode) { PhoneUseTerminalRunner.run(this); return; }
         if (realPageGuardMode) { RealPageGuardRunner.run(this); return; }
         if (actionConfirmationMode) { ActionConfirmationRunner.run(this); return; }
@@ -137,7 +134,7 @@ public final class DeviceTestRunner extends HookProbeRunner {
         if (reloadMode) { ReloadProbeRunner.run(this, true); return; }
         // The focus and launch probes live in the parent runner; without this dispatch they fell through to the
         // default mock-model case and failed on a connection the probe never needed.
-        if (focusMode || launchMode || conversationMode || hookMode || liveMode) {
+        if (focusMode || launchMode || conversationMode || conversationLimitsMode || hookMode || liveMode) {
             if (liveMode) runLive(); else super.onStart();
             return;
         }

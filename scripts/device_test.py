@@ -3,7 +3,6 @@
 import subprocess
 import sys
 import re
-import tempfile
 import time
 import os
 import shutil
@@ -61,8 +60,7 @@ process = subprocess.Popen(['adb', 'shell', 'am', 'instrument', '--user', '0', '
     '-e', 'native_background_voice', str('--native-background-voice' in sys.argv).lower(),
     '-e', 'action_confirmation', str('--action-confirmation' in sys.argv).lower(),
     '-e', 'conversation_return', str('--conversation-return' in sys.argv).lower(),
-    '-e', 'conversation_continuity', str('--conversation-continuity' in sys.argv).lower(),
-    '-e', 'conversation_replies', str('--conversation-replies' in sys.argv).lower(),
+    '-e', 'conversation_limits', str('--conversation-limits' in sys.argv).lower(),
     '-e', 'dual_tools', str('--dual-tools' in sys.argv).lower(),
     '-e', 'foreground_consent', str('--foreground-consent' in sys.argv).lower(),
     'io.github.miaiplus.test/io.github.miaiplus.DeviceTestRunner'], stdout=subprocess.PIPE,
@@ -96,8 +94,6 @@ try:
                 adb('shell', 'am', 'start', '-W', '-a', 'android.intent.action.MAIN',
                     '-c', 'android.intent.category.DEFAULT', '-p', 'com.miui.securitycenter')
             probe_token = line.strip().split()[-1]
-            if '--popup' in sys.argv and probe_token == 'MIAIPLUS_FOCUS_UI':
-                probe_token = 'MIAIPLUS_FOCUS_POPUP_UI'
             adb('shell', 'am', 'broadcast', '-a', 'io.github.miaiplus.DEBUG_PROBE', '-p', 'com.miui.voiceassist', '--es', 'frame', probe_token)
         if 'MIAIPLUS_LAUNCH_FIXTURE' in line:
             adb('shell', 'am', 'start', '-W', '-n', 'io.github.miaiplus/.FixtureActivity')
@@ -182,31 +178,6 @@ try:
             print('NATIVE_FOREGROUND_OWNED_CHAT_ARTIFACT ' + str(screenshot.resolve()), flush=True)
             adb('shell', 'am', 'broadcast', '-a', 'io.github.miaiplus.DEBUG_PROBE', '-p', 'com.miui.voiceassist',
                 '--es', 'frame', 'MIAIPLUS_NATIVE_FOREGROUND_SCREENSHOT', '--es', 'nonce', nonce)
-        if '--conversation-replies' in sys.argv and line.startswith('CONVERSATION_REPLY_SCREENSHOT '):
-            fields = line.strip().split()
-            if len(fields) != 3 or not re.fullmatch(r'[a-f0-9-]{36}', fields[2]):
-                raise ValueError('invalid owned reply screenshot handshake')
-            stage, nonce = fields[1:]
-            expected = 'miaiplus-ok-' + nonce[:8]
-            # Some host cards draw text without exposing it to accessibility. Check actual pixels;
-            # never acknowledge a reply merely because native streaming ended.
-            with tempfile.TemporaryDirectory(prefix='miaiplus-owned-reply-') as directory:
-                screenshot = Path(directory) / 'reply.png'
-                for attempt in range(8):
-                    screenshot.write_bytes(subprocess.check_output(['adb', 'exec-out', 'screencap', '-p'], timeout=10))
-                    proof = subprocess.run(['swift', str(Path(__file__).with_name('verify_reply_screenshot.swift')),
-                                            str(screenshot), expected], capture_output=True, timeout=20)
-                    if proof.returncode == 0:
-                        adb('shell', 'am', 'broadcast', '-a', 'io.github.miaiplus.CONVERSATION_SCREENSHOT_VERIFIED',
-                            '-p', 'io.github.miaiplus', '--es', 'nonce', nonce)
-                        print('CONVERSATION_REPLY_PIXELS ' + stage + ': unique reply verified', flush=True)
-                        break
-                    if proof.returncode != 1:
-                        raise RuntimeError('owned reply screenshot verifier unavailable')
-                    time.sleep(0.3)
-                else:
-                    print('FAIL: owned reply was not recognized in screen pixels: ' + stage, flush=True)
-                    failed = True
         if '--action-confirmation' in sys.argv and 'MIAIPLUS_CONFIRMATION_SCREENSHOT' in line:
             # Issued only while the owned fixture and fixed harmless confirmation are visible.
             image_path = Path('work/action-confirmation-island.png')

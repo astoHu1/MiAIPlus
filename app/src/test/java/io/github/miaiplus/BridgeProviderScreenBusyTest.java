@@ -22,7 +22,7 @@ import org.robolectric.RuntimeEnvironment;
 
 @RunWith(RobolectricTestRunner.class)
 @org.robolectric.annotation.Config(sdk = 33, application = Application.class)
-public final class BridgeProviderConversationSettingsTest {
+public final class BridgeProviderScreenBusyTest {
     private final Map<Field, Object> savedState = new LinkedHashMap<>();
     private BridgeProvider provider;
     private SharedPreferences prefs;
@@ -65,14 +65,6 @@ public final class BridgeProviderConversationSettingsTest {
         editor.commit();
     }
 
-    @Test public void readsDefaultThenUpdatedAndDisabledTimeoutWithoutProviderRestart() {
-        assertEquals(Config.DEFAULT_CONVERSATION_TIMEOUT_MINUTES, settings().getInt("conversationTimeoutMinutes"));
-        assertFalse(settings().getBoolean("screenBusy"));
-        prefs.edit().putInt("conversationTimeoutMinutes", 5).commit();
-        assertEquals(5, settings().getInt("conversationTimeoutMinutes"));
-        prefs.edit().putInt("conversationTimeoutMinutes", 0).commit();
-        assertEquals(0, settings().getInt("conversationTimeoutMinutes"));
-    }
     @Test public void diagnosticsSettingsExposeOnlyLiveOptInWithoutCredentials() {
         assertFalse(provider.call("phone_use_log_settings", null, null).getBoolean("enabled"));
         prefs.edit().putBoolean(Config.PHONE_USE_LOG_KEY, true).putString("apiKey", "fixture-secret").commit();
@@ -101,26 +93,26 @@ public final class BridgeProviderConversationSettingsTest {
         store.clear();
     }
 
-    @Test public void wakeSettingsDoNotExportModelCredentialsOrScreenContents() throws Exception {
+    @Test public void screenBusyDoesNotExportModelCredentialsOrScreenContents() throws Exception {
         prefs.edit().putBoolean("globalModel", true).putString("endpoint", "https://example.invalid/v1")
             .putString("apiKey", "fixture-secret").putString("model", "fixture-model").commit();
         field(BridgeProvider.class, "screenTaskId").set(null, "private-task-id");
         field(BridgeProvider.class, "screenResult").set(null, "private screen contents");
-        Bundle result = settings();
-        assertEquals(Set.of("conversationTimeoutMinutes", "screenBusy", SpeechReplyPolicy.KEY), result.keySet());
+        Bundle result = screenBusy();
+        assertEquals(Set.of("screenBusy"), result.keySet());
         assertFalse(result.getBoolean("screenBusy"));
     }
 
     @Test public void nativeSessionBetweenStepsStaysBusyUntilActualFinish() throws Exception {
         Object session = activateNativeSession();
         assertFalse(field(BridgeProvider.class, "screenTaskActive").getBoolean(null));
-        assertTrue("native session is busy even without a notification task", settings().getBoolean("screenBusy"));
+        assertTrue("native session is busy even without a notification task", screenBusy().getBoolean("screenBusy"));
         field(BridgeProvider.class, "screenTaskId").set(null, "native-task");
         field(BridgeProvider.class, "screenTaskActive").setBoolean(null, true);
         field(BridgeProvider.class, "screenResult").set(null, "CONTINUE：等待模型下一步");
         assertNull(field(BridgeProvider.class, "active").get(null));
         assertTrue(NativeSession.hasActiveSession());
-        assertTrue(settings().getBoolean("screenBusy"));
+        assertTrue(screenBusy().getBoolean("screenBusy"));
 
         JSONObject finish = new JSONObject().put("session", field(session.getClass(), "id").get(session))
             .put("action", new JSONObject().put("action", "finish").put("message", "fixture done"));
@@ -128,7 +120,7 @@ public final class BridgeProviderConversationSettingsTest {
             .startsWith("模型报告任务完成"));
 
         assertFalse(NativeSession.hasPendingOperation());
-        assertFalse(settings().getBoolean("screenBusy"));
+        assertFalse(screenBusy().getBoolean("screenBusy"));
         assertFalse(field(BridgeProvider.class, "screenTaskActive").getBoolean(null));
     }
 
@@ -139,20 +131,20 @@ public final class BridgeProviderConversationSettingsTest {
         field(BridgeProvider.class, "active").set(null, run);
         field(BridgeProvider.class, "screenTaskActive").setBoolean(null, true);
         assertFalse(NativeSession.hasPendingOperation());
-        assertTrue(settings().getBoolean("screenBusy"));
+        assertTrue(screenBusy().getBoolean("screenBusy"));
         run.cancel();
-        assertTrue(settings().getBoolean("screenBusy"));
+        assertTrue(screenBusy().getBoolean("screenBusy"));
         field(BridgeProvider.class, "active").set(null, null);
-        assertFalse(settings().getBoolean("screenBusy"));
+        assertFalse(screenBusy().getBoolean("screenBusy"));
     }
 
-    @Test public void nativeExecutionAndCleanupBothPreventWakeRolloverWithoutLiveSession() throws Exception {
+    @Test public void nativeExecutionAndCleanupBothReportBusyWithoutLiveSession() throws Exception {
         for (String phase : new String[]{"executing", "closing"}) {
             field(NativeSession.class, phase).setBoolean(null, true);
             assertFalse(NativeSession.hasActiveSession());
-            assertTrue(settings().getBoolean("screenBusy"));
+            assertTrue(screenBusy().getBoolean("screenBusy"));
             field(NativeSession.class, phase).setBoolean(null, false);
-            assertFalse(settings().getBoolean("screenBusy"));
+            assertFalse(screenBusy().getBoolean("screenBusy"));
         }
     }
 
@@ -189,12 +181,12 @@ public final class BridgeProviderConversationSettingsTest {
         field(BridgeProvider.class, "active").set(null, chat);
         field(BridgeProvider.class, "screenTaskId").set(null, "completed-screen");
         field(BridgeProvider.class, "screenTaskActive").setBoolean(null, true);
-        assertFalse(settings().getBoolean("screenBusy"));
+        assertFalse(screenBusy().getBoolean("screenBusy"));
         assertSame(chat, field(BridgeProvider.class, "active").get(null));
         assertFalse(chat.cancelled.get());
     }
 
-    private Bundle settings() { return provider.call("conversation_settings", null, null); }
+    private Bundle screenBusy() { return provider.call("screen_busy", null, null); }
 
     private Object activateNativeSession() throws Exception {
         Class<?> type = Class.forName(NativeSession.class.getName() + "$State");

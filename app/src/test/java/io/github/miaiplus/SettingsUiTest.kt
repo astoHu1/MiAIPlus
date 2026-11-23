@@ -360,39 +360,6 @@ class SettingsUiTest {
         compose.runOnIdle { assertEquals(0, state.plugins.entries.count { it.kind() == "mcp" }) }
     }
 
-    @Test fun conversationTimeoutSavesMinutesRejectsInvalidValuesAndCanBeDisabled() {
-        val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
-        compose.onNodeWithText("闲置 15 分钟后").assertExists()
-        compose.onNodeWithText("自动新建对话").performScrollTo().performClick()
-        compose.onNodeWithText("时长（分钟）").performTextReplacement("1441")
-        compose.onNodeWithText("保存", useUnmergedTree = true).performClick()
-        compose.runOnIdle { assertEquals(15, state.config.conversationTimeoutMinutes) }
-        compose.onAllNodesWithText("时长需在 0–1440 分钟之间，0 表示关闭").assertAny(
-            hasText("时长需在 0–1440 分钟之间，0 表示关闭"))
-        compose.onNodeWithText("时长（分钟）").performTextReplacement("1440")
-        compose.onNodeWithText("保存", useUnmergedTree = true).performClick()
-        compose.onNodeWithText("闲置 1440 分钟后").assertExists()
-        compose.activityRule.scenario.recreate()
-        val recreatedState = ViewModelProvider(compose.activity)[SettingsState::class.java]
-        compose.onNodeWithText("闲置 1440 分钟后").assertExists()
-        compose.runOnIdle {
-            assertEquals(1440, io.github.miaiplus.Config(
-                recreatedState.getApplication<Application>()).conversationTimeoutMinutes)
-        }
-        compose.onNodeWithText("自动新建对话").performScrollTo().performClick()
-        compose.onNodeWithText("时长（分钟）").performTextReplacement("0")
-        compose.onNodeWithText("保存", useUnmergedTree = true).performClick()
-        compose.runOnIdle {
-            assertEquals(0, recreatedState.config.conversationTimeoutMinutes)
-            assertEquals(0, io.github.miaiplus.Config(
-                recreatedState.getApplication<Application>()).conversationTimeoutMinutes)
-            assertEquals(false, recreatedState.setConversationTimeoutMinutes(-1))
-            assertEquals(0, recreatedState.config.conversationTimeoutMinutes)
-            assertEquals(true, recreatedState.setConversationTimeoutMinutes(1))
-            assertEquals(1, recreatedState.config.conversationTimeoutMinutes)
-        }
-    }
-
     @Test fun profileDraftRequiresExplicitSaveAndCanBeDiscarded() {
         compose.onNodeWithTag("tab-Model").performClick()
         capture("model-light")

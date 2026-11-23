@@ -35,7 +35,7 @@ public final class BridgeProvider extends ContentProvider {
     private static volatile int lastHostPid;
     private static volatile String lastHostMethod = "";
     private static final java.util.Set<String> HOST_METHODS = java.util.Set.of("flags", "start", "poll", "cancel",
-        "screen_ready", "screen_state", "stop_screen", "model_config", "set_reasoning", "conversation_settings",
+        "screen_ready", "screen_state", "screen_busy", "stop_screen", "model_config", "set_reasoning", "speech_settings",
         "prompt_settings", "hook_report", "hook_status", "model_exhausted", "model_finished", "foreground_consent", "action_confirmation",
         "phone_use_log_settings", "phone_use_log_append", "plugin_catalog", "plugin_start", "plugin_poll",
         "plugin_cancel", "plugin_busy");
@@ -291,9 +291,11 @@ public final class BridgeProvider extends ContentProvider {
             b.putBoolean("accessibility", ScreenService.isHealthy());
             return b;
         }
-        if (method.equals("conversation_settings")) {
-            b.putInt("conversationTimeoutMinutes", config.conversationTimeoutMinutes);
+        if (method.equals("speech_settings")) {
             b.putString(SpeechReplyPolicy.KEY, config.speechReplyPolicy);
+            return b;
+        }
+        if (method.equals("screen_busy")) {
             synchronized (JOBS) {
                 refreshScreenTask();
                 b.putBoolean("screenBusy", screenTaskActive || NativeSession.hasPendingOperation()
@@ -302,7 +304,6 @@ public final class BridgeProvider extends ContentProvider {
             return b;
         }
         if (method.equals("prompt_settings")) {
-            // A separate bundle from conversation_settings, whose key set is asserted exactly by tests.
             b.putString("mode", config.customPromptMode);
             b.putString("text", config.customPromptText);
             b.putBoolean("routeText", config.promptRouteTextChat);
