@@ -22,14 +22,6 @@ public class CoordinatesTest {
         assertEquals(750,normalized.getJSONArray("end").getDouble(1),0.0001);
         assertEquals(normalized.toString(),Coordinates.normalize(normalized,"normalized",1440,3200,288,1280).toString());
     }
-    @Test public void rejectsMismatchedUnitsAndInvalidCoordinates() throws Exception {
-        for (String input : new String[]{"[577,200]","[-1,20]","[30,1281]","[20]"}) {
-            try { Coordinates.normalize(new JSONObject().put("action","tap").put("element",new JSONArray(input)),"image_pixels",1440,3200,576,1280); fail(); }
-            catch (IllegalArgumentException expected) { }
-        }
-        try { Coordinates.normalize(new JSONObject(),"guess",1440,3200,576,1280); fail(); }
-        catch (IllegalArgumentException expected) { }
-    }
     @Test public void recoverableErrorsIdentifyTheFieldAndDeclaredUnits() throws Exception {
         for (Object value : new Object[]{"not-an-array", new JSONArray("[20]"),
             new JSONArray("[20,30,40]"), new JSONArray("[null,20]"),
@@ -43,14 +35,16 @@ public class CoordinatesTest {
                 assertEquals("image_pixels", invalid.space);
             }
         }
-        try {
-            Coordinates.normalize(new JSONObject().put("end", new JSONArray("[577,10]")),
-                "image_pixels", 1440, 3200, 576, 1280);
-            fail("Expected out of range");
-        } catch (Coordinates.Invalid invalid) {
-            assertEquals("out_of_range", invalid.reason);
-            assertEquals("end", invalid.field);
-            assertEquals("image_pixels", invalid.space);
+        for (String input : new String[]{"[577,10]", "[-1,20]", "[30,1281]"}) {
+            try {
+                Coordinates.normalize(new JSONObject().put("end", new JSONArray(input)),
+                    "image_pixels", 1440, 3200, 576, 1280);
+                fail("Expected out of range: " + input);
+            } catch (Coordinates.Invalid invalid) {
+                assertEquals("out_of_range", invalid.reason);
+                assertEquals("end", invalid.field);
+                assertEquals("image_pixels", invalid.space);
+            }
         }
         try {
             Coordinates.normalize(new JSONObject(), "guess", 1440, 3200, 576, 1280);

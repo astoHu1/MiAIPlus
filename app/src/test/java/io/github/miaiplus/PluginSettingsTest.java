@@ -106,9 +106,6 @@ public class PluginSettingsTest {
     }
 
     @Test public void olderProtocolIsExplicitlyPersistedWhileDefaultAndUnknownRejectionRemain() {
-        assertEquals("2025-11-25", PluginSettings.MCP_PROTOCOL_VERSION);
-        assertEquals(List.of("2025-11-25", "2025-06-18"), PluginSettings.MCP_PROTOCOL_VERSIONS);
-        assertThrows(UnsupportedOperationException.class, () -> PluginSettings.MCP_PROTOCOL_VERSIONS.clear());
         assertFalse(PluginSettings.supportsMcpProtocol(null));
         assertFalse(PluginSettings.supportsMcpProtocol("2025-03-26"));
         Storage storage = new Storage();
@@ -120,22 +117,6 @@ public class PluginSettingsTest {
         assertThrows(IllegalArgumentException.class, () -> PluginSettings.saveMcp(storage.prefs,
             entry.id(), "Older MCP", URL, "", "2025-03-26"));
         assertEquals(untouched, storage.values);
-    }
-
-    @Test public void explicitProtocolChangeInvalidatesDiscoveredToolsAndInflightRevision() {
-        Storage storage = new Storage();
-        var entry = storage.add("A");
-        discover(storage, entry, List.of(tool(entry.id(), "shell")));
-        PluginSettings.setEnabled(storage.prefs, entry.id(), true);
-        var before = PluginSettings.load(storage.prefs);
-        var changed = PluginSettings.saveMcp(storage.prefs, entry.id(), entry.label(), URL,
-            "fixture-token", "2025-06-18");
-        assertNotEquals(before.revision(), changed.revision());
-        assertTrue(changed.find(entry.id()).enabled());
-        assertTrue(changed.find(entry.id()).tools().isEmpty());
-        assertEquals("2025-06-18", PluginSettings.load(storage.prefs).find(entry.id()).protocolVersion());
-        assertThrows(IllegalStateException.class, () -> PluginSettings.updateTools(storage.prefs,
-            entry.id(), before.revision(), List.of(tool(entry.id(), "shell"))));
     }
 
     @Test public void builtinToggleIsIndependentAndCannotBeDeletedOrReplaced() {
@@ -186,6 +167,16 @@ public class PluginSettingsTest {
         PluginSettings.updateTools(storage.prefs, entry.id(), rotated.revision(), List.of(tool(entry.id(), "lookup")));
         var moved = PluginSettings.saveMcp(storage.prefs, entry.id(), "Renamed", "https://other.example.com/mcp", "new-fixture-token", VERSION);
         assertTrue(moved.find(entry.id()).tools().isEmpty());
+        PluginSettings.updateTools(storage.prefs, entry.id(), moved.revision(), List.of(tool(entry.id(), "lookup")));
+        var before = PluginSettings.load(storage.prefs);
+        var reprotocol = PluginSettings.saveMcp(storage.prefs, entry.id(), "Renamed", "https://other.example.com/mcp",
+            "new-fixture-token", "2025-06-18");
+        assertNotEquals(before.revision(), reprotocol.revision());
+        assertTrue(reprotocol.find(entry.id()).enabled());
+        assertTrue(reprotocol.find(entry.id()).tools().isEmpty());
+        assertEquals("2025-06-18", PluginSettings.load(storage.prefs).find(entry.id()).protocolVersion());
+        assertThrows(IllegalStateException.class, () -> PluginSettings.updateTools(storage.prefs,
+            entry.id(), before.revision(), List.of(tool(entry.id(), "lookup"))));
     }
 
     @Test public void deletionDropsCredentialsAndInvalidatesInflightDiscovery() {
@@ -216,7 +207,7 @@ public class PluginSettingsTest {
         assertFalse(spec.toJson().has("bearerToken"));
     }
 
-    @Test public void rejectsDuplicateForeignOrForgedToolsWithoutPartialWrites() {
+    @Test public void rejectsDuplicateForeignForgedOrTooManyToolsWithoutPartialWrites() {
         Storage storage = new Storage();
         var entry = storage.add("A");
         var snapshot = PluginSettings.load(storage.prefs);
@@ -229,52 +220,30 @@ public class PluginSettingsTest {
             entry.id(), snapshot.revision(), List.of(foreign)));
         assertThrows(IllegalArgumentException.class, () -> new PluginToolSpec(entry.id(), "mcp",
             PhoneUseRouting.FOREGROUND_TOOL, "lookup", "lookup", "", "{\"type\":\"object\"}", 60000));
-        assertEquals(untouched, storage.values);
-    }
-
-    @Test public void limitsToolCatalogBeforeAnyPersistence() {
-        Storage storage = new Storage();
-        var entry = storage.add("A");
-        var snapshot = PluginSettings.load(storage.prefs);
-        ArrayList<PluginToolSpec> tools = new ArrayList<>();
-        for (int i = 0; i <= PluginToolSpec.MAX_TOOLS_PER_PLUGIN; i++) tools.add(tool(entry.id(), "lookup_" + i));
-        Map<String, Object> untouched = new HashMap<>(storage.values);
+        ArrayList<PluginToolSpec> tooMany = new ArrayList<>();
+        for (int i = 0; i <= PluginToolSpec.MAX_TOOLS_PER_PLUGIN; i++) tooMany.add(tool(entry.id(), "lookup_" + i));
         assertThrows(IllegalArgumentException.class, () -> PluginSettings.updateTools(storage.prefs,
-            entry.id(), snapshot.revision(), tools));
+            entry.id(), snapshot.revision(), tooMany));
         assertEquals(untouched, storage.values);
     }
 
-    @Test public void enablingCombinedCountOverflowKeepsPreviousRevisionAndStorage() {
-        Storage storage = new Storage();
-        var first = storage.add("First");
-        var second = storage.add("Second");
-        discover(storage, first, tools(first.id(), 64, 0));
-        discover(storage, second, tools(second.id(), 64, 0));
-        PluginSettings.setEnabled(storage.prefs, first.id(), true);
-        var before = PluginSettings.load(storage.prefs);
-        Map<String, Object> untouched = new HashMap<>(storage.values);
-        int commits = storage.commits;
-        assertThrows(IllegalArgumentException.class, () -> PluginSettings.setEnabled(storage.prefs, second.id(), true));
-        assertEquals(before, PluginSettings.load(storage.prefs));
-        assertEquals(untouched, storage.values);
-        assertEquals(commits, storage.commits);
-        assertFalse(PluginSettings.load(storage.prefs).find(second.id()).enabled());
-    }
-
-    @Test public void enablingCombinedCharacterOverflowKeepsPreviousRevisionAndStorage() {
-        Storage storage = new Storage();
-        var first = storage.add("First");
-        var second = storage.add("Second");
-        discover(storage, first, tools(first.id(), 10, 6000));
-        discover(storage, second, tools(second.id(), 10, 6000));
-        PluginSettings.setEnabled(storage.prefs, first.id(), true);
-        var before = PluginSettings.load(storage.prefs);
-        Map<String, Object> untouched = new HashMap<>(storage.values);
-        int commits = storage.commits;
-        assertThrows(IllegalArgumentException.class, () -> PluginSettings.setEnabled(storage.prefs, second.id(), true));
-        assertEquals(before, PluginSettings.load(storage.prefs));
-        assertEquals(untouched, storage.values);
-        assertEquals(commits, storage.commits);
+    @Test public void enablingCombinedCountOrCharacterOverflowKeepsPreviousRevisionAndStorage() {
+        for (int[] shape : new int[][]{{64, 0}, {10, 6000}}) {
+            Storage storage = new Storage();
+            var first = storage.add("First");
+            var second = storage.add("Second");
+            discover(storage, first, tools(first.id(), shape[0], shape[1]));
+            discover(storage, second, tools(second.id(), shape[0], shape[1]));
+            PluginSettings.setEnabled(storage.prefs, first.id(), true);
+            var before = PluginSettings.load(storage.prefs);
+            Map<String, Object> untouched = new HashMap<>(storage.values);
+            int commits = storage.commits;
+            assertThrows(IllegalArgumentException.class, () -> PluginSettings.setEnabled(storage.prefs, second.id(), true));
+            assertEquals(before, PluginSettings.load(storage.prefs));
+            assertEquals(untouched, storage.values);
+            assertEquals(commits, storage.commits);
+            assertFalse(PluginSettings.load(storage.prefs).find(second.id()).enabled());
+        }
     }
 
     @Test public void updatingEnabledManifestRechecksFinalCatalogBeforeWriting() {

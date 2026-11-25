@@ -6,16 +6,15 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class ModelProtocolTest {
-    @Test public void selectsResponsesForGpt6AndPreservesExplicitChoice() {
+    @Test public void resolvesProtocolSelectionAndNormalizesAnthropicMessagesUrl() {
         assertEquals("responses", ModelProtocol.resolve("auto", "gpt-6.1-sol"));
+        assertEquals("responses", ModelProtocol.resolve("auto", "openai/gpt-6.1-sol"));
         assertEquals("chat", ModelProtocol.resolve("auto", "fixture-model"));
+        assertEquals("chat", ModelProtocol.resolve("auto", "claude-sonnet"));
         assertEquals("responses", ModelProtocol.resolve("responses", "provider-alias"));
+        assertEquals("anthropic", ModelProtocol.resolve("anthropic", "provider-alias"));
         assertEquals("chat", ModelProtocol.resolve("chat", "gpt-6.1-sol"));
         assertEquals("/responses", ModelProtocol.path("responses"));
-    }
-    @Test public void anthropicIsExplicitAndNormalizesTheMessagesUrl() {
-        assertEquals("anthropic", ModelProtocol.resolve("anthropic", "provider-alias"));
-        assertEquals("chat", ModelProtocol.resolve("auto", "claude-sonnet"));
         for (String prefix : new String[]{"https://api.anthropic.com", "https://proxy.example/anthropic"}) {
             for (String suffix : new String[]{"", "/v1", "/v1/messages", "/v1/messages/"}) {
                 assertEquals(prefix + "/v1/messages",

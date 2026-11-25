@@ -16,12 +16,16 @@ public final class SpeechReplyPolicyTest {
         }
     }
 
-    @Test public void speechThenScreenThenTextThenSpeechCannotInheritPreviousDecision() {
+    @Test public void followInputDecidesPerRequestWhileHostDefaultAndTextOnlyIgnoreInput() {
         assertEquals(Boolean.TRUE, SpeechReplyPolicy.override(SpeechReplyPolicy.FOLLOW_INPUT, SpeechReplyPolicy.Input.VOICE));
         assertEquals(Boolean.FALSE, SpeechReplyPolicy.override(SpeechReplyPolicy.FOLLOW_INPUT, SpeechReplyPolicy.Input.SCREEN));
         assertEquals(Boolean.FALSE, SpeechReplyPolicy.override(SpeechReplyPolicy.FOLLOW_INPUT, SpeechReplyPolicy.Input.TEXT));
         assertEquals(Boolean.TRUE, SpeechReplyPolicy.override(SpeechReplyPolicy.FOLLOW_INPUT, SpeechReplyPolicy.Input.VOICE));
         assertNull(SpeechReplyPolicy.override(SpeechReplyPolicy.FOLLOW_INPUT, SpeechReplyPolicy.Input.UNKNOWN));
+        for (SpeechReplyPolicy.Input input : SpeechReplyPolicy.Input.values()) {
+            assertNull(SpeechReplyPolicy.override(SpeechReplyPolicy.HOST_DEFAULT, input));
+            assertEquals(Boolean.FALSE, SpeechReplyPolicy.override(SpeechReplyPolicy.TEXT_ONLY, input));
+        }
     }
 
     @Test public void actualScreenRequestIsQuietWhileScreenPageMicrophoneAndGesturePttRemainVoice() {
@@ -49,12 +53,5 @@ public final class SpeechReplyPolicyTest {
         assertEquals(SpeechReplyPolicy.Input.UNKNOWN, dialogs.input("screen"));
         dialogs.clear();
         assertEquals(SpeechReplyPolicy.Input.UNKNOWN, dialogs.input("first-voice"));
-    }
-
-    @Test public void disabledPolicyLeavesEveryInputUntouchedAndTextOnlyDisablesEveryInput() {
-        for (SpeechReplyPolicy.Input input : SpeechReplyPolicy.Input.values()) {
-            assertNull(SpeechReplyPolicy.override(SpeechReplyPolicy.HOST_DEFAULT, input));
-            assertEquals(Boolean.FALSE, SpeechReplyPolicy.override(SpeechReplyPolicy.TEXT_ONLY, input));
-        }
     }
 }

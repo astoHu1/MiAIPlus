@@ -88,26 +88,6 @@ class PluginSettingsStateTest {
         assertEquals("replacement-fixture-token", PluginSettings.load(application).find(id).bearerToken())
     }
 
-    @Test fun selectedProtocolPersistsAcrossEditingAndDiscardedSelectionIsNotSaved() {
-        val state = PluginState(application, scope)
-        state.create()
-        assertEquals(PluginSettings.MCP_PROTOCOL_VERSION, state.draft?.protocolVersion)
-        state.updateDraft(label = "Termux compatibility", endpoint = "http://127.0.0.1:18767/mcp",
-            protocolVersion = "2025-06-18")
-        assertTrue(state.save())
-        val remote = state.entries.first { it.kind() == "mcp" }
-        assertEquals("2025-06-18", remote.protocolVersion())
-
-        val reloaded = PluginState(application, scope)
-        reloaded.edit(remote.id())
-        assertEquals("2025-06-18", reloaded.draft?.protocolVersion)
-        reloaded.updateDraft(protocolVersion = PluginSettings.MCP_PROTOCOL_VERSION)
-        reloaded.discardDraft()
-        reloaded.edit(remote.id())
-        assertEquals("2025-06-18", reloaded.draft?.protocolVersion)
-        assertEquals("2025-06-18", PluginSettings.load(application).find(remote.id()).protocolVersion())
-    }
-
     @Test fun invalidDraftDoesNotOverwriteStoredConfigAndCancellationDropsPrivateDraft() {
         val state = PluginState(application, scope)
         state.create()

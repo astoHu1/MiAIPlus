@@ -92,7 +92,9 @@ class SettingsPromptStateTest {
         state.updatePersona(text = "")
         assertTrue(state.savePersona())
         assertEquals("", Config(application).customPromptText)
+        assertEquals("append", Config(application).customPromptMode)
         assertFalse(Config(application).hasEffectivePrompt())
+        assertFalse(state.promptDirty)
     }
 
     @Test fun deletingAPersonaDropsItsDraftAndSelectsTheRemainingSavedText() {

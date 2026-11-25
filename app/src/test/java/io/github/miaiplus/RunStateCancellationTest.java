@@ -45,14 +45,12 @@ public final class RunStateCancellationTest {
             assertEquals("user_stop", run.cancelSource());
             assertEquals(1, cleanup.get());
         }
-    }
-
-    @Test public void aLaterNamedStopDoesNotInventACauseForAnEarlierUnnamedStop() {
-        RunState run = new RunState("cancel-source", 1000);
-        run.cancel();
-        run.cancel("step_watchdog");
-        assertTrue(run.cancelled.get());
-        assertEquals("", run.cancelSource());
+        // A later named stop must not invent a cause for an earlier unnamed one.
+        RunState unnamed = new RunState("cancel-source", 1000);
+        unnamed.cancel();
+        unnamed.cancel("step_watchdog");
+        assertTrue(unnamed.cancelled.get());
+        assertEquals("", unnamed.cancelSource());
     }
 
     @Test public void cancelledOldIpcCannotStopTheNextStepOrReplacement() {

@@ -38,7 +38,7 @@ public class PersonaProfilesTest {
         return new PersonaProfiles.Profile(id, name, text);
     }
 
-    @Test public void freshStoreKeepsASingleEmptyDefaultPersonaAndLeavesTheFlatSnapshotEmpty() {
+    @Test public void freshStoreKeepsAnEmptyDefaultPersonaAndMissingStoreMigratesTheFlatPromptText() {
         Storage storage = new Storage();
         PersonaProfiles profiles = new PersonaProfiles(storage.prefs);
         assertEquals(1, profiles.profiles.size());
@@ -47,23 +47,20 @@ public class PersonaProfilesTest {
         storage.save(profiles.active(), false);
         assertEquals("", storage.values.get(Config.CUSTOM_PROMPT_TEXT_KEY));
         assertEquals(profiles.active().encode(), new PersonaProfiles(storage.prefs).active().encode());
-    }
-
-    @Test public void missingStoreMigratesTheFlatPromptTextIntoTheDefaultPersona() {
-        Storage storage = new Storage();
-        storage.values.put(Config.CUSTOM_PROMPT_TEXT_KEY, "已保存的提示词");
-        PersonaProfiles profiles = new PersonaProfiles(storage.prefs);
-        assertEquals("默认人设", profiles.active().name);
-        assertEquals("已保存的提示词", profiles.active().text);
+        Storage migrated = new Storage();
+        migrated.values.put(Config.CUSTOM_PROMPT_TEXT_KEY, "已保存的提示词");
+        PersonaProfiles fromFlat = new PersonaProfiles(migrated.prefs);
+        assertEquals("默认人设", fromFlat.active().name);
+        assertEquals("已保存的提示词", fromFlat.active().text);
     }
 
     @Test public void blankAndOverlongNamesFailValidationAndDuplicatesLeaveStorageUntouched() {
         for (String name : new String[]{"", "   ", "一二三四五六七八九十一二三四五六七八九十一"}) {
             try { persona("b", name, "新内容").validated(); fail("Accepted: " + name); }
-            catch (IllegalArgumentException expected) { }
+            catch (IllegalArgumentException expected) {
+                if (name.isBlank()) assertEquals("请填写人设名称", expected.getMessage());
+            }
         }
-        try { persona("b", "", "新内容").validated(); fail("Blank name accepted"); }
-        catch (IllegalArgumentException expected) { assertEquals("请填写人设名称", expected.getMessage()); }
         Storage storage = new Storage();
         storage.save(persona("a", "人设甲", "原文"), true);
         Map<String, String> before = new HashMap<>(storage.values);

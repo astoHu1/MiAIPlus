@@ -1,6 +1,7 @@
 package io.github.miaiplus;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.After;
 import org.junit.Test;
@@ -15,10 +16,16 @@ public class ModelHeadersTest {
         assertEquals(session, ModelHeaders.sessionForMessages(List.of("first-user", "assistant", "second-user")));
         assertEquals(session, ModelHeaders.sessionForMessages(List.of("second-user", "tool-call")));
         assertNotEquals(session, ModelHeaders.sessionForMessages(List.of("other-chat-user")));
+        assertNotEquals(ModelHeaders.sessionForMessages(List.of()), ModelHeaders.sessionForMessages(List.of()));
     }
 
-    @Test public void emptyHistoriesNeverShareAnApplicationWideSession() {
-        assertNotEquals(ModelHeaders.sessionForMessages(List.of()), ModelHeaders.sessionForMessages(List.of()));
+    @Test public void anthropicAuthenticationSupportsApiKeysAndExplicitBearerTokens() {
+        assertEquals(Map.of("anthropic-version", "2023-06-01", "x-api-key", "fixture-key"),
+            ModelHeaders.provider("anthropic", "fixture-key"));
+        assertEquals(Map.of("anthropic-version", "2023-06-01", "Authorization", "Bearer fixture-token"),
+            ModelHeaders.provider("anthropic", "Bearer fixture-token"));
+        assertEquals(Map.of("anthropic-version", "2023-06-01"), ModelHeaders.provider("anthropic", ""));
+        assertEquals(Map.of("Authorization", "Bearer fixture-key"), ModelHeaders.provider("chat", "fixture-key"));
     }
 
     @Test public void nativeSessionsUseMessageIdentityRatherThanPromptContent() {

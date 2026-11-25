@@ -63,29 +63,6 @@ public class McpClientTest {
         assertEquals(3, script.connections.size()); // close must not open a DELETE or other request.
     }
 
-    @Test public void paginatedDiscoveryRetainsSourceNamesAndCursorOrder() throws Exception {
-        Script script = new Script(); script.initialize(null);
-        script.result(new JSONObject().put("tools", new JSONArray().put(tool("one"))).put("nextCursor", "opaque-1"));
-        script.result(new JSONObject().put("tools", new JSONArray().put(tool("two"))));
-        try (McpClient client = client(script)) {
-            assertEquals(List.of("one", "two"), client.listTools().stream().map(PluginToolSpec::sourceName).toList());
-            assertEquals("opaque-1", script.connections.get(3).request.getJSONObject("params").getString("cursor"));
-        }
-    }
-
-    @Test public void toolCallPreservesTextAndStructuredData() throws Exception {
-        Script script = new Script(); script.initialize(null);
-        script.result(new JSONObject().put("content", new JSONArray().put(text("answer")))
-            .put("structuredContent", new JSONObject().put("count", 2)));
-        try (McpClient client = client(script)) {
-            String response = client.callTool("echo", new JSONObject().put("value", "fixture"));
-            assertEquals("answer\n{\"count\":2}", response);
-            JSONObject params = script.connections.get(2).request.getJSONObject("params");
-            assertEquals("echo", params.getString("name"));
-            assertEquals("fixture", params.getJSONObject("arguments").getString("value"));
-        }
-    }
-
     @Test public void toolExecutionErrorIsNotReportedAsSuccessOrEchoed() throws Exception {
         Script script = new Script(); script.initialize(null);
         script.result(new JSONObject().put("isError", true).put("content", new JSONArray().put(text(TOKEN))));
@@ -107,27 +84,16 @@ public class McpClientTest {
         }
     }
 
-    @Test public void rejectedProtocolVersionNeverSendsInitializedOrTool() throws Exception {
-        Script script = new Script();
-        script.result(new JSONObject().put("protocolVersion", "2026-07-28").put("capabilities", new JSONObject().put("tools", new JSONObject())));
-        try (McpClient client = client(script)) {
-            assertThrows(McpClient.McpException.class, () -> client.callTool("echo", new JSONObject()));
-            assertEquals(1, script.connections.size());
-        }
-    }
-
-    @Test public void explicitlySelectedOlderProtocolUsesItsHandshakeAndSubsequentHeaders() throws Exception {
-        Script script = new Script();
-        script.initialize("older-session", "2025-06-18");
-        script.result(new JSONObject().put("content", new JSONArray().put(text("older-text")))
-            .put("structuredContent", new JSONObject().put("exit_code", 0)));
-        try (McpClient client = client(script, "2025-06-18")) {
-            assertEquals("older-text\n{\"exit_code\":0}", client.callTool("shell", new JSONObject().put("command", "printf fixture")));
-            assertEquals(3, script.connections.size());
-            assertEquals("2025-06-18", script.connections.get(0).request.getJSONObject("params").getString("protocolVersion"));
-            for (FakeConnection connection : script.connections.subList(1, 3)) {
-                assertEquals("2025-06-18", connection.getRequestProperty("MCP-Protocol-Version"));
-                assertEquals("older-session", connection.getRequestProperty("MCP-Session-Id"));
+    @Test public void invalidInitializeResultNeverSendsInitializedOrTool() throws Exception {
+        JSONObject unknownVersion = initializeResult().put("protocolVersion", "2026-07-28");
+        JSONObject noTools = initializeResult().put("capabilities", new JSONObject());
+        JSONObject noIdentity = initializeResult(); noIdentity.remove("serverInfo");
+        for (JSONObject result : List.of(unknownVersion, noTools, noIdentity)) {
+            Script script = new Script();
+            script.result(result);
+            try (McpClient client = client(script)) {
+                assertThrows(McpClient.McpException.class, () -> client.callTool("echo", new JSONObject()));
+                assertEquals(1, script.connections.size());
             }
         }
     }
@@ -142,15 +108,6 @@ public class McpClientTest {
                 assertTrue(error.getMessage().contains(selected));
                 assertEquals(1, script.connections.size());
             }
-        }
-    }
-
-    @Test public void missingToolsCapabilityDoesNotInvokeTool() throws Exception {
-        Script script = new Script();
-        script.result(new JSONObject().put("protocolVersion", "2025-11-25").put("capabilities", new JSONObject()));
-        try (McpClient client = client(script)) {
-            assertThrows(McpClient.McpException.class, client::listTools);
-            assertEquals(1, script.connections.size());
         }
     }
 
@@ -189,25 +146,19 @@ public class McpClientTest {
         }
     }
 
-    @Test public void sseCarriageReturnResultDoesNotWaitForMoreBytesOrEof() throws Exception {
-        assertSseCompletedWithoutEof("\r");
-    }
-
-    @Test public void sseCrLfResultDoesNotWaitForMoreBytesOrEof() throws Exception {
-        assertSseCompletedWithoutEof("\r\n");
-    }
-
-    private static void assertSseCompletedWithoutEof(String separator) throws Exception {
-        Script script = new Script(); script.initialize(null);
-        script.openEventStream(request -> {
-            String response = reply(request.opt("id"), new JSONObject().put("content", new JSONArray().put(text("complete"))));
-            return ": keepalive" + separator
-                + "data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{}}" + separator + separator
-                + "data: " + response + separator + separator;
-        });
-        try (McpClient client = client(script)) {
-            assertEquals("complete", client.callTool("echo", new JSONObject()));
-            assertEquals(3, script.connections.size());
+    @Test public void sseResultDoesNotWaitForMoreBytesOrEofWithCrOrCrLfSeparators() throws Exception {
+        for (String separator : List.of("\r", "\r\n")) {
+            Script script = new Script(); script.initialize(null);
+            script.openEventStream(request -> {
+                String response = reply(request.opt("id"), new JSONObject().put("content", new JSONArray().put(text("complete"))));
+                return ": keepalive" + separator
+                    + "data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{}}" + separator + separator
+                    + "data: " + response + separator + separator;
+            });
+            try (McpClient client = client(script)) {
+                assertEquals("complete", client.callTool("echo", new JSONObject()));
+                assertEquals(3, script.connections.size());
+            }
         }
     }
 
@@ -231,26 +182,31 @@ public class McpClientTest {
         }
     }
 
-    @Test public void duplicateNamesAndMoreThan64ToolsRejectWholeCatalog() throws Exception {
-        for (boolean overflow : new boolean[]{false, true}) {
+    @Test public void duplicateNamesMoreThan64ToolsOrNonObjectSchemaRejectWholeCatalog() throws Exception {
+        for (int variant = 0; variant < 3; variant++) {
             Script script = new Script(); script.initialize(null);
             JSONArray tools = new JSONArray();
-            for (int i = 0; i < (overflow ? 65 : 2); i++) tools.put(tool(overflow ? "tool" + i : "same"));
+            if (variant == 2) tools.put(tool("echo").put("inputSchema", new JSONObject().put("type", "array")));
+            else for (int i = 0; i < (variant == 1 ? 65 : 2); i++) tools.put(tool(variant == 1 ? "tool" + i : "same"));
             script.result(new JSONObject().put("tools", tools));
             try (McpClient client = client(script)) {
                 assertThrows(McpClient.McpException.class, client::listTools);
+                assertEquals(3, script.connections.size());
             }
         }
     }
 
-    @Test public void responseByteLimitAndNestingLimitRejectUntrustedInput() throws Exception {
-        for (String payload : List.of("x".repeat(McpClient.MAX_RESPONSE_BYTES + 1),
-            "{\"value\":".repeat(66) + "{}" + "}".repeat(66))) {
-            Script script = new Script();
-            script.add(200, "application/json", Map.of(), request -> payload);
-            try (McpClient client = client(script)) {
-                assertThrows(McpClient.McpException.class, client::listTools);
-                assertEquals(1, script.connections.size());
+    @Test public void oversizedDeepTrailingOrNonObjectEnvelopesAreRejected() throws Exception {
+        for (boolean wrapped : new boolean[]{false, true}) {
+            for (String part : wrapped ? List.of(" trailing", "{}", "[]")
+                : List.of("x".repeat(McpClient.MAX_RESPONSE_BYTES + 1), "{\"value\":".repeat(66) + "{}" + "}".repeat(66), "[]")) {
+                Script script = new Script();
+                script.add(200, "application/json", Map.of(), request -> wrapped
+                    ? reply(request.opt("id"), initializeResult()) + part : part);
+                try (McpClient client = client(script)) {
+                    assertThrows(McpClient.McpException.class, client::listTools);
+                    assertEquals(1, script.connections.size());
+                }
             }
         }
     }
@@ -373,39 +329,6 @@ public class McpClientTest {
         try (McpClient client = client(script)) {
             assertThrows(McpClient.McpException.class, client::listTools);
             assertEquals(2, script.connections.size());
-        }
-    }
-
-    @Test public void trailingJsonAndNonObjectEnvelopesAreRejected() throws Exception {
-        for (String suffix : List.of(" trailing", "{}", "[]")) {
-            Script script = new Script();
-            script.add(200, "application/json", Map.of(), request -> reply(request.opt("id"), initializeResult()) + suffix);
-            try (McpClient client = client(script)) {
-                assertThrows(McpClient.McpException.class, client::listTools);
-                assertEquals(1, script.connections.size());
-            }
-        }
-        Script array = new Script();
-        array.add(200, "application/json", Map.of(), request -> "[]");
-        try (McpClient client = client(array)) {
-            assertThrows(McpClient.McpException.class, client::listTools);
-        }
-    }
-
-    @Test public void missingServerIdentityAndNonObjectSchemaAreRejected() throws Exception {
-        Script identity = new Script();
-        JSONObject result = initializeResult(); result.remove("serverInfo");
-        identity.result(result);
-        try (McpClient client = client(identity)) {
-            assertThrows(McpClient.McpException.class, client::listTools);
-            assertEquals(1, identity.connections.size());
-        }
-        Script schema = new Script(); schema.initialize(null);
-        schema.result(new JSONObject().put("tools", new JSONArray().put(tool("echo")
-            .put("inputSchema", new JSONObject().put("type", "array")))));
-        try (McpClient client = client(schema)) {
-            assertThrows(McpClient.McpException.class, client::listTools);
-            assertEquals(3, schema.connections.size());
         }
     }
 

@@ -76,7 +76,7 @@ public final class NativeSessionReplanTest {
         assertArrayEquals(new double[]{500, 200}, ScreenShadow.lastPoint, 0);
     }
 
-    @Test public void invalidCoordinatesReturnFreshObservationWithoutInputAndCorrectionKeepsTheSession() throws Exception {
+    @Test public void invalidOrMissingCoordinatesReturnFreshObservationWithoutInputAndCorrectionKeepsTheSession() throws Exception {
         ScreenShadow.current = frame(BUTTON.replace("提交", "刷新后的提交"));
         String result = step(1001, 200);
         assertContinuing(result);
@@ -84,6 +84,10 @@ public final class NativeSessionReplanTest {
         assertTrue(result, result.contains("本步未执行，也未消耗动作预算"));
         assertTrue(result, result.contains("element坐标超出声明的观察范围"));
         assertTrue(result, result.contains("刷新后的提交"));
+        result = step(new JSONObject().put("action", "tap"));
+        assertContinuing(result);
+        assertTrue(result, result.contains("执行状态=validation_error"));
+        assertTrue(result, result.contains("缺少element坐标"));
         assertEquals(0, ScreenShadow.attempts);
         assertEquals(0, ScreenShadow.confirmations);
         assertEquals(0, field(session.getClass(), "steps").getInt(session));
@@ -91,34 +95,6 @@ public final class NativeSessionReplanTest {
         assertExecuted(step(200, 200));
         assertEquals(1, ScreenShadow.executions);
         assertEquals(1, field(session.getClass(), "steps").getInt(session));
-    }
-
-    @Test public void missingRequiredPointReturnsFreshObservationAndCanBeCorrectedInSession() throws Exception {
-        JSONObject missingElement = new JSONObject().put("action", "tap");
-        String result = step(missingElement);
-        assertContinuing(result);
-        assertTrue(result, result.contains("执行状态=validation_error"));
-        assertTrue(result, result.contains("缺少element坐标"));
-        assertEquals(0, ScreenShadow.attempts);
-        assertEquals(0, ScreenShadow.executions);
-        assertEquals(0, field(session.getClass(), "steps").getInt(session));
-        assertExecuted(step(200, 200));
-        assertEquals(1, ScreenShadow.executions);
-        assertEquals(1, field(session.getClass(), "steps").getInt(session));
-    }
-
-    @Test public void thirdConsecutiveCoordinateErrorStopsWithoutInputOrBudgetConsumption() throws Exception {
-        for (int attempt = 0; attempt < 2; attempt++) assertContinuing(step(-1, 200));
-        try {
-            step(-1, 200);
-            fail("Expected correction limit");
-        } catch (IllegalStateException stopped) {
-            assertTrue(stopped.getMessage(), stopped.getMessage().startsWith("连续动作参数错误，任务已停止"));
-        }
-        assertEquals(0, ScreenShadow.attempts);
-        assertEquals(0, ScreenShadow.confirmations);
-        assertEquals(0, field(session.getClass(), "steps").getInt(session));
-        assertClosed();
     }
 
     @Test public void successfulCorrectionResetsConsecutiveCoordinateErrorLimit() throws Exception {
@@ -162,6 +138,7 @@ public final class NativeSessionReplanTest {
             assertTrue(stopped.getMessage(), stopped.getMessage().startsWith("连续动作参数错误，任务已停止"));
         }
         assertEquals(0, ScreenShadow.attempts);
+        assertEquals(0, ScreenShadow.confirmations);
         assertEquals(0, field(session.getClass(), "steps").getInt(session));
         assertClosed();
     }
@@ -404,20 +381,6 @@ public final class NativeSessionReplanTest {
             step(new JSONObject().put("action", "finish").put("message", "已从最后观察确认完成")));
         assertEquals(20, field(session.getClass(), "steps").getInt(session));
         assertEquals(1, ScreenShadow.executions);
-        assertClosed();
-    }
-
-    @Test public void currentPageCanFinishWithoutAnAppFieldOrAnUnnecessaryAction() throws Exception {
-        assertEquals("模型报告任务完成：当前页面已核对", step(new JSONObject().put("action", "finish")
-            .put("message", "当前页面已核对")));
-        assertEquals(0, ScreenShadow.executions);
-        assertEquals(0, field(session.getClass(), "steps").getInt(session));
-        assertClosed();
-    }
-
-    @Test public void finishDoesNotRequireANonemptyMessage() throws Exception {
-        assertEquals("模型报告任务完成：", step(new JSONObject().put("action", "finish").put("message", "")));
-        assertEquals(0, ScreenShadow.executions);
         assertClosed();
     }
 

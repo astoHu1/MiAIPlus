@@ -47,13 +47,16 @@ public class ModelsDevCatalogTest {
         assertEquals(List.of("default"), catalog.find("https://gateway.test/openai/v1", "qwen-future", "chat").choices());
         assertEquals(List.of("default"), catalog.find("https://gateway.test/anthropic/v1", "qwen-future", "chat").choices());
     }
-    @Test public void unsupportedProviderAndUnknownShapeOverrideOldBuiltins() throws Exception {
+    @Test public void unsupportedProviderShapeOrModelTypeOverridesOldBuiltinsWithDefault() throws Exception {
         ModelsDevCatalog catalog = catalog(new JSONObject()
             .put("openrouter", provider("https://openrouter.ai/api/v1", "@openrouter/ai-sdk-provider", "gpt-5.1", model("high")))
             .put("unknown", provider("https://unknown.test/v1", "@ai-sdk/openai-compatible", "gpt-5.1",
-                model("high").put("provider", new JSONObject().put("shape", "future-protocol")))));
+                model("high").put("provider", new JSONObject().put("shape", "future-protocol"))))
+            .put("openai", provider("https://api.openai.com/v1", "@ai-sdk/openai",
+                "future-audio", model("high").put("type", "realtime"))));
         assertEquals(List.of("default"), catalog.find("https://openrouter.ai/api/v1", "gpt-5.1", "chat").choices());
         assertEquals(List.of("default"), catalog.find("https://unknown.test/v1", "gpt-5.1", "chat").choices());
+        assertEquals(List.of("default"), catalog.find("https://api.openai.com/v1", "future-audio", "responses").choices());
     }
     @Test public void explicitShapeOnlyAppliesToSelectedProtocol() throws Exception {
         ModelsDevCatalog catalog = catalog(new JSONObject().put("gateway", provider("https://gateway.test/v1", "@ai-sdk/openai",
@@ -100,11 +103,6 @@ public class ModelsDevCatalogTest {
         assertEquals(List.of("default"), catalog.find("https://shared.test/custom", "future", "chat").choices());
         assertNull(catalog.find("https://shared.test/v1", "future", "chat"));
         assertNull(catalog.find("http://shared.test/custom/v1", "future", "chat"));
-    }
-    @Test public void nonChatModelCannotExposeChatEfforts() throws Exception {
-        ModelsDevCatalog catalog = catalog(new JSONObject().put("openai", provider("https://api.openai.com/v1", "@ai-sdk/openai",
-            "future-audio", model("high").put("type", "realtime"))));
-        assertEquals(List.of("default"), catalog.find("https://api.openai.com/v1", "future-audio", "responses").choices());
     }
     @Test public void optionalLiveCatalogParsesEveryProviderAndModel() throws Exception {
         String fixture = System.getProperty("MIAIPLUS_MODELS_DEV_FIXTURE");

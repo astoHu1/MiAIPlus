@@ -121,29 +121,19 @@ public final class DiagnosticFailureTest {
         assertEquals(3, inspections.get());
     }
 
-    @Test public void emittedRecordsCarryVersionAndIncreasingPerProcessSequence() throws Exception {
-        preferences.edit().putBoolean(Config.PHONE_USE_LOG_KEY, true).commit();
-        PhoneUseLog.event("first_diagnostic");
-        PhoneUseLog.event("second_diagnostic");
-
-        var logs = ShadowLog.getLogsForTag(PhoneUseLog.TAG);
-        assertEquals(2, logs.size());
-        JSONObject first = new JSONObject(logs.get(0).msg), second = new JSONObject(logs.get(1).msg);
-        assertEquals(BuildConfig.VERSION_CODE, first.getInt("ver"));
-        assertEquals(BuildConfig.VERSION_CODE, second.getInt("ver"));
-        assertTrue(first.getLong("seq") > 0);
-        assertTrue(second.getLong("seq") > first.getLong("seq"));
-        assertEquals(first.getInt("pid"), second.getInt("pid"));
-        assertEquals(first.getString("writer"), second.getString("writer"));
-        assertEquals(java.util.UUID.fromString(first.getString("writer")).toString(), first.getString("writer"));
-    }
-
-    @Test public void eventPayloadCannotOverwriteProcessIdentityOrOrderingFields() throws Exception {
+    @Test public void recordsCarryProcessIdentityAndIncreasingSequenceThatPayloadCannotOverwrite() throws Exception {
         preferences.edit().putBoolean(Config.PHONE_USE_LOG_KEY, true).commit();
         PhoneUseLog.event("capture_complete", "source", "accessibility", "event", "wrong",
             "time", -1, "elapsedMs", -1, "pid", -1, "seq", -1, "writer", "wrong", "ver", -1,
             "captureSource", "accessibility");
-        JSONObject record = new JSONObject(ShadowLog.getLogsForTag(PhoneUseLog.TAG).get(0).msg);
+        PhoneUseLog.event("second_diagnostic");
+        var logs = ShadowLog.getLogsForTag(PhoneUseLog.TAG);
+        assertEquals(2, logs.size());
+        JSONObject record = new JSONObject(logs.get(0).msg), second = new JSONObject(logs.get(1).msg);
+        assertTrue(second.getLong("seq") > record.getLong("seq"));
+        assertEquals(record.getInt("pid"), second.getInt("pid"));
+        assertEquals(record.getString("writer"), second.getString("writer"));
+        assertEquals(java.util.UUID.fromString(record.getString("writer")).toString(), record.getString("writer"));
         assertEquals("capture_complete", record.getString("event"));
         assertEquals("module", record.getString("source"));
         assertEquals("accessibility", record.getString("captureSource"));

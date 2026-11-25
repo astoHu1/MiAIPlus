@@ -10,7 +10,7 @@ public class NodeTargetsTest {
     private static final String BUTTON = "android.widget.Button [100,100][300,300] window=3 id=submit enabled=true clickable text=提交\n";
     private static final Pattern REFERENCE = Pattern.compile(" target=([^ \n]+)");
 
-    @Test public void referenceUsesDisplayGeometryWithoutDependingOnCoordinateSpace() throws Exception {
+    @Test public void referencesAndImageCoordinatesResolveToTheSameDisplayPoint() throws Exception {
         ScreenService.Frame frame = frame(BUTTON);
         NodeTargets targets = NodeTargets.capture(frame);
         for (String action : new String[]{"tap", "double_tap", "long_press"}) {
@@ -23,6 +23,11 @@ public class NodeTargetsTest {
             assertEquals(action, new Action(resolved).name);
             assertTrue(request.getJSONObject("action").has("target"));
         }
+        JSONObject coordinate = new JSONObject().put("coordinate_space", "image_pixels").put("action",
+            new JSONObject().put("action", "tap").put("element", new JSONArray().put(100).put(100)));
+        JSONArray point = targets.normalize(coordinate, frame).getJSONArray("element");
+        assertEquals(200, point.getDouble(0), 0.0001);
+        assertEquals(100, point.getDouble(1), 0.0001);
         assertEquals(BUTTON, frame.tree());
         assertTrue(targets.tree().contains("clickable target="));
         assertTrue(targets.tree().contains(" text=提交"));
@@ -126,15 +131,6 @@ public class NodeTargetsTest {
                 BUTTON.replace("[100,100][300,300]", "[200,100][400,300]"),
                 BUTTON + "android.view.View [0,0][1000,2000] window=4 enabled=true\n"})
             assertFalse(PageGuard.canExecute(action, frame, frame(changed)));
-    }
-
-    @Test public void coordinateRequestsKeepTheirExistingNormalization() throws Exception {
-        ScreenService.Frame frame = frame(BUTTON);
-        JSONObject request = new JSONObject().put("coordinate_space", "image_pixels").put("action",
-            new JSONObject().put("action", "tap").put("element", new JSONArray().put(100).put(100)));
-        JSONArray point = NodeTargets.capture(frame).normalize(request, frame).getJSONArray("element");
-        assertEquals(200, point.getDouble(0), 0.0001);
-        assertEquals(100, point.getDouble(1), 0.0001);
     }
 
     private static JSONObject request(String action, String target) throws Exception {

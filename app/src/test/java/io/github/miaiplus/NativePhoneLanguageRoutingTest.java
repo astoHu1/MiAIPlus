@@ -13,12 +13,9 @@ public final class NativePhoneLanguageRoutingTest {
         }
     }
 
-    @Test public void simplifiedChineseKeepsExistingIntentRouting() {
+    @Test public void simplifiedChineseAbsentLocaleAndEmptyInputCannotStartAHandoff() {
         assertFalse(NativePhoneLanguageRouting.candidate(Locale.SIMPLIFIED_CHINESE, "打开计算器"));
         assertFalse(NativePhoneLanguageRouting.candidate(Locale.forLanguageTag("zh-Hans-CN"), "打开计算器"));
-    }
-
-    @Test public void absentLocaleAndEmptyInputCannotStartAHandoff() {
         assertFalse(NativePhoneLanguageRouting.candidate((Locale)null, "打开计算器"));
         assertFalse(NativePhoneLanguageRouting.candidate(Locale.US, null));
         assertFalse(NativePhoneLanguageRouting.candidate(Locale.US, "  \n "));

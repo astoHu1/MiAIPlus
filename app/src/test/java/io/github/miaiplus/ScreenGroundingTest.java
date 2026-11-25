@@ -11,6 +11,8 @@ public final class ScreenGroundingTest {
         assertTrue(provenance, provenance.startsWith("系统观察：前台应用包名=com.tencent.mm；"));
         assertTrue(provenance, provenance.contains("执行屏幕=foreground；displayId=0"));
         assertFalse(provenance, provenance.contains("com.ss.android.ugc.aweme"));
+        assertTrue(provenance, provenance.contains("包名来自系统窗口，不是图片识别"));
+        assertTrue(provenance, provenance.contains("截图可能是宿主应用展示的另一应用截图"));
     }
 
     @Test public void backgroundComponentReportsItsPackageAndItsOwnDisplay() {
@@ -28,12 +30,5 @@ public final class ScreenGroundingTest {
         String provenance = ModelObservation.provenance(screenshot);
         assertTrue(provenance, provenance.startsWith("系统观察：前台应用包名=；"));
         assertFalse(provenance, provenance.contains("com.example.video"));
-    }
-
-    @Test public void observationExplainsThatTheScreenshotMayDepictAnotherApp() {
-        ScreenService.Frame screenshot = ScreenService.Frame.physical("image", "", 1000, 1000, "com.tencent.mm");
-        String provenance = ModelObservation.provenance(screenshot);
-        assertTrue(provenance, provenance.contains("包名来自系统窗口，不是图片识别"));
-        assertTrue(provenance, provenance.contains("截图可能是宿主应用展示的另一应用截图"));
     }
 }

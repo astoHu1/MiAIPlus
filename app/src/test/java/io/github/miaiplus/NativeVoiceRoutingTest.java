@@ -101,7 +101,7 @@ public final class NativeVoiceRoutingTest {
         assertEquals(0, manager.a.get("main").stops);
     }
 
-    @Test public void hostRemovingAPendingCallbackCannotKeepReloadBusyForever() {
+    @Test public void pendingStopReleasesReloadExactlyOnceWhetherExpiredOrRun() {
         java.util.concurrent.atomic.AtomicInteger releases = new java.util.concurrent.atomic.AtomicInteger();
         NativeVoiceRoutingHook.PendingStop pending = new NativeVoiceRoutingHook.PendingStop(releases::incrementAndGet);
         assertTrue(pending.expire());
@@ -109,18 +109,16 @@ public final class NativeVoiceRoutingTest {
         assertFalse(pending.expire());
         pending.finish();
         assertEquals(1, releases.get());
-    }
 
-    @Test public void timeoutCannotReleaseAnAlreadyRunningCancellation() {
-        java.util.concurrent.atomic.AtomicInteger releases = new java.util.concurrent.atomic.AtomicInteger();
-        NativeVoiceRoutingHook.PendingStop pending = new NativeVoiceRoutingHook.PendingStop(releases::incrementAndGet);
-        assertTrue(pending.start());
-        assertFalse(pending.expire());
-        assertEquals(0, releases.get());
-        pending.finish();
-        pending.finish();
-        assertFalse(pending.expire());
-        assertEquals(1, releases.get());
+        java.util.concurrent.atomic.AtomicInteger running = new java.util.concurrent.atomic.AtomicInteger();
+        NativeVoiceRoutingHook.PendingStop started = new NativeVoiceRoutingHook.PendingStop(running::incrementAndGet);
+        assertTrue(started.start());
+        assertFalse("timeout cannot release an already running cancellation", started.expire());
+        assertEquals(0, running.get());
+        started.finish();
+        started.finish();
+        assertFalse(started.expire());
+        assertEquals(1, running.get());
     }
 
     private static boolean cancel(Manager manager, Task main, String id) {

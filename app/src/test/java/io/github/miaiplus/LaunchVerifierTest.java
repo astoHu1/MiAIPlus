@@ -47,7 +47,7 @@ public class LaunchVerifierTest {
             assertEquals(250, f.time);
         }
     }
-    @Test public void newlyVisibleUntitledSecurityCenterReturnsForObservation() throws Exception {
+    @Test public void untitledOrUnchangedSecurityCenterReturnsForObservation() throws Exception {
         for (long visibleAt : new long[]{250, 10000}) {
             Fake f = new Fake();
             f.windows = t -> t >= visibleAt
@@ -55,11 +55,9 @@ public class LaunchVerifierTest {
             assertFalse(LaunchVerifier.launch(TARGET, f));
             assertEquals(1, f.starts); assertEquals(0, f.consentClicks); assertEquals(visibleAt, f.time);
         }
-    }
-    @Test public void originalSecurityCenterPageReturnsForObservationAtTimeout() throws Exception {
-        Fake f = new Fake(); f.windows = t -> "com.miui.securitycenter";
-        assertFalse(LaunchVerifier.launch(TARGET, f));
-        assertEquals(1, f.starts); assertEquals(0, f.consentClicks); assertEquals(10000, f.time);
+        Fake original = new Fake(); original.windows = t -> "com.miui.securitycenter";
+        assertFalse(LaunchVerifier.launch(TARGET, original));
+        assertEquals(1, original.starts); assertEquals(0, original.consentClicks); assertEquals(10000, original.time);
     }
     @Test public void launchConsentIsAllowedOnceThenTargetIsVerified() throws Exception {
         for (String target : new String[]{TARGET, "com.miui.securitycenter"}) {
@@ -110,12 +108,10 @@ public class LaunchVerifierTest {
         assertFalse(LaunchVerifier.launch(TARGET, f));
         assertEquals(1, f.starts); assertEquals(1, f.consentClicks); assertEquals(1000, f.time);
     }
-    @Test public void cancellationStopsBeforeLaunch() throws Exception {
-        Fake f = new Fake(); f.cancelled = true;
-        try { LaunchVerifier.launch(TARGET, f); fail(); } catch (CancellationException expected) { }
-        assertEquals(0, f.starts);
-    }
-    @Test public void cancellationStopsLaunchWaitAndConsentGrace() throws Exception {
+    @Test public void cancellationStopsBeforeLaunchAndDuringLaunchWaitAndConsentGrace() throws Exception {
+        Fake before = new Fake(); before.cancelled = true;
+        assertThrows(CancellationException.class, () -> LaunchVerifier.launch(TARGET, before));
+        assertEquals(0, before.starts);
         for (boolean consent : new boolean[]{false, true}) {
             Fake f = new Fake(); f.cancelAt = 1000; f.consent = consent;
             f.windows = t -> consent && t >= 250 ? LaunchVerifier.XIAOMI_CONFIRMATION : "fixture.origin";

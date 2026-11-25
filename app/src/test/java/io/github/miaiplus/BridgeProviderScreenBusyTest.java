@@ -65,23 +65,17 @@ public final class BridgeProviderScreenBusyTest {
         editor.commit();
     }
 
-    @Test public void diagnosticsSettingsExposeOnlyLiveOptInWithoutCredentials() {
+    @Test public void diagnosticSettingsAndAppendFollowLiveOptInCheckCallerAndRejectInvalidPayload() throws Exception {
+        var store = DiagnosticLogStore.get(RuntimeEnvironment.getApplication());
+        store.clear();
         assertFalse(provider.call("phone_use_log_settings", null, null).getBoolean("enabled"));
+        Bundle data = new Bundle(); data.putString("record", "{\"event\":\"fixture\",\"source\":\"host\"}");
+        provider.call("phone_use_log_append", null, data);
+        assertTrue(store.snapshot().lines().isEmpty());
         prefs.edit().putBoolean(Config.PHONE_USE_LOG_KEY, true).putString("apiKey", "fixture-secret").commit();
         Bundle enabled = provider.call("phone_use_log_settings", null, null);
         assertEquals(Set.of("enabled"), enabled.keySet());
         assertTrue(enabled.getBoolean("enabled"));
-        prefs.edit().putBoolean(Config.PHONE_USE_LOG_KEY, false).commit();
-        assertFalse(provider.call("phone_use_log_settings", null, null).getBoolean("enabled"));
-    }
-
-    @Test public void diagnosticAppendChecksCallerAndOptInAndRejectsInvalidPayload() throws Exception {
-        var store = DiagnosticLogStore.get(RuntimeEnvironment.getApplication());
-        store.clear();
-        Bundle data = new Bundle(); data.putString("record", "{\"event\":\"fixture\",\"source\":\"host\"}");
-        provider.call("phone_use_log_append", null, data);
-        assertTrue(store.snapshot().lines().isEmpty());
-        prefs.edit().putBoolean(Config.PHONE_USE_LOG_KEY, true).commit();
         org.robolectric.shadows.ShadowBinder.setCallingUid(12345);
         try { assertThrows(SecurityException.class, () -> provider.call("phone_use_log_append", null, data)); }
         finally { org.robolectric.shadows.ShadowBinder.setCallingUid(android.os.Process.myUid()); }
@@ -90,6 +84,8 @@ public final class BridgeProviderScreenBusyTest {
         data.putString("record", "invalid-json"); provider.call("phone_use_log_append", null, data);
         data.putString("record", "x".repeat(9000)); provider.call("phone_use_log_append", null, data);
         assertEquals(1, store.snapshot().lines().size());
+        prefs.edit().putBoolean(Config.PHONE_USE_LOG_KEY, false).commit();
+        assertFalse(provider.call("phone_use_log_settings", null, null).getBoolean("enabled"));
         store.clear();
     }
 
@@ -146,34 +142,6 @@ public final class BridgeProviderScreenBusyTest {
             field(NativeSession.class, phase).setBoolean(null, false);
             assertFalse(screenBusy().getBoolean("screenBusy"));
         }
-    }
-
-    @Test public void staleContinuationPreservesExpiredCauseAndCompletedTaskWithoutStartingWorker() throws Exception {
-        prefs.edit().putBoolean("enabled", true).putString("planner", "native").commit();
-        field(BridgeProvider.class, "screenTaskId").set(null, "completed-screen");
-        field(BridgeProvider.class, "screenTaskActive").setBoolean(null, false);
-        field(BridgeProvider.class, "screenResult").set(null, "PAUSE：需要用户补充任务信息");
-        Map<?, ?> jobs = (Map<?, ?>) field(BridgeProvider.class, "JOBS").get(null);
-        int initialJobs = jobs.size();
-        JSONObject action = new JSONObject().put("action", "finish")
-            .put("message", "stale completion must not start another task");
-        JSONObject request = new JSONObject().put("session", "expired-fixture-session")
-            .put("origin_tool", PhoneUseRouting.FOREGROUND_TOOL).put("action", action);
-        Bundle extras = new Bundle();
-        extras.putString("mode", "screen");
-        extras.putString("query", "MIAIPLUS:" + request);
-        Bundle rejected = provider.call("start", null, extras);
-        String error = rejected.getString("error", "");
-        assertTrue(error, error.startsWith("STOP：MiAIPlus 控屏已停止。"));
-        assertTrue(error, error.contains("控屏会话不存在或已过期"));
-        assertTrue(error, error.contains("不要重试旧动作"));
-        assertFalse(rejected.containsKey("id"));
-        assertEquals("completed-screen", field(BridgeProvider.class, "screenTaskId").get(null));
-        assertEquals("PAUSE：需要用户补充任务信息", field(BridgeProvider.class, "screenResult").get(null));
-        assertFalse(field(BridgeProvider.class, "screenTaskActive").getBoolean(null));
-        assertNull(field(BridgeProvider.class, "active").get(null));
-        assertNull(field(NativeSession.class, "active").get(null));
-        assertEquals(initialJobs, jobs.size());
     }
 
     @Test public void unrelatedChatAndStaleCompletedScreenDoNotRemainScreenBusy() throws Exception {

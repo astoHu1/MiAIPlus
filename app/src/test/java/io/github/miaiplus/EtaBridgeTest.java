@@ -119,12 +119,14 @@ public final class EtaBridgeTest {
         assertTrue(outcome.text(), outcome.observation());
         assertTrue(outcome.text().startsWith("DONE："));
         assertTrue(outcome.text().contains("本周有 2 个日程"));
+        assertTrue(outcome.text().contains("工具调用 1 次"));
         assertEquals(EtaBridge.MSG_DRAIN_RESULTS, nextSent());
         assertEquals(EtaBridge.MSG_START_RUN, nextSent());
         assertEquals(EtaBridge.MSG_ACK_RESULT, nextSent());
         assertEquals("", sentRunIds.poll(1, TimeUnit.SECONDS));
         assertEquals(sentRunIds.poll(1, TimeUnit.SECONDS), sentRunIds.poll(1, TimeUnit.SECONDS));
         assertFalse(EtaBridge.busy());
+        assertEquals(1, closed.get());
     }
 
     @Test public void newConnectionAcknowledgesOnlyThisRelaysLeftoverResults() throws Exception {
@@ -217,7 +219,7 @@ public final class EtaBridgeTest {
         assertTrue(sentWhat.isEmpty());
     }
 
-    @Test public void startRequestCarriesTaskBriefAndTheEtaVoiceHandoff() throws Exception {
+    @Test public void startRequestCarriesTaskBriefHandoffAndPrivilegedFlagsFromTheArgument() throws Exception {
         Bundle data = EtaBridge.startRequest("run-1", "整理  本周\n通知", false);
         assertEquals("run-1", data.getString("run_id"));
         assertTrue(data.getString("prompt").contains("[委派任务]"));
@@ -237,14 +239,11 @@ public final class EtaBridgeTest {
         assertEquals("整理  本周\n通知", payload.getString("userText"));
         assertEquals("miaiplus:run-1", payload.getString("conversationKey"));
         assertEquals("整理 本周 通知", payload.getString("title"));
-    }
-
-    @Test public void startRequestPrivilegedFlagsFollowTheArgumentAndTitleIsBounded() throws Exception {
         for (boolean privileged : new boolean[]{false, true}) {
-            Bundle data = EtaBridge.startRequest("r", "t", privileged);
-            assertEquals(privileged, data.getBoolean("terminal_tools"));
-            assertEquals(privileged, data.getBoolean("device_sensitive_read_tools"));
-            assertEquals(privileged, data.getBoolean("device_sensitive_action_tools"));
+            Bundle flags = EtaBridge.startRequest("r", "t", privileged);
+            assertEquals(privileged, flags.getBoolean("terminal_tools"));
+            assertEquals(privileged, flags.getBoolean("device_sensitive_read_tools"));
+            assertEquals(privileged, flags.getBoolean("device_sensitive_action_tools"));
         }
         String title = new JSONObject(EtaBridge.startRequest("r", "长".repeat(500), false).getBundle("handoff")
             .getString("handoff_payload")).getString("title");
@@ -260,22 +259,7 @@ public final class EtaBridgeTest {
         assertFalse(EtaBridge.status(new JSONObject()).observation());
     }
 
-    @Test public void happyPathReturnsDoneWithContentAcknowledgesAndReleasesTheLink() throws Exception {
-        Object run = register();
-        Thread feeder = feed(run, 100, ingested(), tool("tool_started", "device_read"), result(true, "共 3 条通知", ""));
-        EtaBridge.Outcome outcome = await(run, 5000);
-        feeder.join();
-        assertTrue(outcome.observation());
-        assertTrue(outcome.text().startsWith("DONE："));
-        assertTrue(outcome.text().contains("共 3 条通知"));
-        assertTrue(outcome.text().contains("工具调用 1 次"));
-        assertEquals(EtaBridge.MSG_ACK_RESULT, nextSent());
-        assertEquals(id(run), sentRunIds.poll(1, TimeUnit.SECONDS));
-        assertFalse(EtaBridge.busy());
-        assertEquals(1, closed.get());
-    }
-
-    @Test public void failedResultReturnsStopWithEtasError() throws Exception {
+    @Test public void failedResultReturnsStopWithEtasErrorAndIgnoresALateResult() throws Exception {
         Object run = register();
         Thread feeder = feed(run, 50, ingested(), result(false, "", "模型额度不足"));
         EtaBridge.Outcome outcome = await(run, 5000);
@@ -284,6 +268,11 @@ public final class EtaBridgeTest {
         assertTrue(outcome.text().startsWith("STOP："));
         assertTrue(outcome.text().contains("模型额度不足"));
         assertTrue(outcome.text().contains("不要自动重试"));
+        // A late result after the terminal state must not overwrite it.
+        receive(run, result(true, "第二次", ""));
+        String text = await(run, 100).text();
+        assertTrue(text.startsWith("STOP："));
+        assertTrue(text.contains("模型额度不足"));
     }
 
     @Test public void silenceBeyondAdmissionWindowStopsTheRunAndRequestsCancel() throws Exception {
@@ -357,19 +346,7 @@ public final class EtaBridgeTest {
         assertEquals(id(run), sentRunIds.poll(1, TimeUnit.SECONDS));
     }
 
-    @Test public void lostConnectionFailsTheActiveRun() throws Exception {
-        Object run = register();
-        receive(run, ingested());
-        lost(fakeLink);
-        EtaBridge.Outcome outcome = await(run, 1000);
-        assertFalse(outcome.observation());
-        assertTrue(outcome.text().startsWith("STOP："));
-        assertTrue(outcome.text().contains("连接已断开"));
-        assertFalse(EtaBridge.busy());
-        assertEquals(1, closed.get());
-    }
-
-    @Test public void staleConnectionLossIsIgnored() throws Exception {
+    @Test public void lostConnectionFailsTheActiveRunButStaleConnectionLossIsIgnored() throws Exception {
         Object run = register();
         receive(run, ingested());
         lost(new EtaBridge.Link() {
@@ -377,7 +354,13 @@ public final class EtaBridgeTest {
             @Override public void close() { }
         });
         assertTrue(EtaBridge.busy());
-        EtaBridge.dispose();
+        lost(fakeLink);
+        EtaBridge.Outcome outcome = await(run, 1000);
+        assertFalse(outcome.observation());
+        assertTrue(outcome.text().startsWith("STOP："));
+        assertTrue(outcome.text().contains("连接已断开"));
+        assertFalse(EtaBridge.busy());
+        assertEquals(1, closed.get());
     }
 
     @Test public void overlongResultIsTruncatedWithANote() throws Exception {
@@ -412,15 +395,6 @@ public final class EtaBridgeTest {
         Object bad = register();
         receive(bad, result(false, "", ""));
         assertTrue(await(bad, 100).text().contains("没有说明原因"));
-    }
-
-    @Test public void lateResultAfterTerminalStateDoesNotOverwriteIt() throws Exception {
-        Object run = register();
-        receive(run, result(false, "", "第一次"));
-        receive(run, result(true, "第二次", ""));
-        String text = await(run, 100).text();
-        assertTrue(text.startsWith("STOP："));
-        assertTrue(text.contains("第一次"));
     }
 
     // ---- helpers -------------------------------------------------------------------------------------------

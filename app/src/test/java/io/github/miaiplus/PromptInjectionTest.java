@@ -1,7 +1,6 @@
 package io.github.miaiplus;
 
 import java.util.Map;
-import java.util.Set;
 import org.junit.Test;
 import static org.junit.Assert.*;
 
@@ -74,11 +73,6 @@ public class PromptInjectionTest {
         assertEquals(plain, apply(plain, "", "off", CUSTOM));
     }
 
-    @Test public void unavailableSettingsLeaveTheHostPromptUntouched() {
-        String mode = null;
-        assertEquals(HOST, apply(HOST, "", mode == null ? "off" : mode, CUSTOM));
-    }
-
     @Test public void standaloneChatPrependsOnlyWhenOptedInAndLeavesTheScreenLoopAlone() {
         assertEquals(CUSTOM.trim() + "\n\n" + STANDALONE_SYSTEM, standaloneSystem(true, "append", CUSTOM));
         assertEquals(STANDALONE_SYSTEM, standaloneSystem(false, "append", CUSTOM));
@@ -96,14 +90,6 @@ public class PromptInjectionTest {
         assertFalse("blank text", forceAgent(false, "", false, true, "replace", " \n"));
     }
 
-    @Test public void voiceHandoffRequiresTheSenderAndNeverCancelsTheTurnWithoutOne() {
-        assertEquals("handoff", voiceDecision(true, "append", CUSTOM, true));
-        assertEquals("sender_unavailable", voiceDecision(true, "append", CUSTOM, false));
-        assertEquals("stock", voiceDecision(false, "append", CUSTOM, true));
-        assertEquals("stock", voiceDecision(true, "off", CUSTOM, false));
-        assertEquals("stock", voiceDecision(true, "replace", "", true));
-    }
-
     private static String standaloneSystem(boolean applyStandalone, String mode, String text) {
         return applyStandalone
             ? PromptInjection.composeStandalone(STANDALONE_SYSTEM, mode, text) : STANDALONE_SYSTEM;
@@ -112,10 +98,5 @@ public class PromptInjectionTest {
     private static boolean forceAgent(boolean global, String requestedTool, boolean languageRoute,
                                       boolean routeText, String mode, String text) {
         return PromptInjection.routesTextChat(global, requestedTool, languageRoute, routeText, mode, text);
-    }
-
-    private static String voiceDecision(boolean applyVoice, String mode, String text, boolean senderAvailable) {
-        if (!applyVoice || !Config.effectivePrompt(mode, text)) return "stock";
-        return senderAvailable ? "handoff" : "sender_unavailable";
     }
 }

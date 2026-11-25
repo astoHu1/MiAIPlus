@@ -30,12 +30,6 @@ public final class PhoneUsePermissionPolicyTest {
         }
     }
 
-    @Test public void ordinaryNavigationAndNormalRiskDoNotNeedReview() throws Exception {
-        Action action = tap();
-        action.data.put("risk_level", "normal");
-        assertFalse(PhoneUsePermissionPolicy.needsReview(action, frame("打开搜索")));
-    }
-
     @Test public void terminalMessagesAndWaitDoNotBecomeActionsToConfirm() throws Exception {
         for (String name : new String[]{"wait", "finish", "ask_user", "take_over"}) {
             Action action = new Action(new JSONObject().put("action", name).put("message", "确认支付")
@@ -45,9 +39,12 @@ public final class PhoneUsePermissionPolicyTest {
         }
     }
 
-    @Test public void ordinaryIrreversibleCommitLabelsNeedReview() throws Exception {
+    @Test public void irreversibleCommitLabelsNeedReviewButNormalNavigationDoesNot() throws Exception {
         for (String label : new String[]{"发送", "发布", "删除", "确认删除", "提交订单", "send", "publish now"})
             assertTrue(label, PhoneUsePermissionPolicy.needsReview(tap(), frame(label)));
+        Action action = tap();
+        action.data.put("risk_level", "normal");
+        assertFalse(PhoneUsePermissionPolicy.needsReview(action, frame("打开搜索")));
     }
 
     @Test public void severeCommitTargetsAlwaysRequireManualEvenInYolo() throws Exception {
@@ -118,26 +115,20 @@ public final class PhoneUsePermissionPolicyTest {
             "android.widget.Button [100,100][300,300] enabled=true clickable text=电池\n")));
     }
 
-    @Test public void normalizedCoordinatesUsePhysicalGeometry() throws Exception {
+    @Test public void severeTargetIsFoundThroughPhysicalGeometryAndDuplicateLabels() throws Exception {
         ScreenService.Frame large = new ScreenService.Frame("image",
             "android.widget.Button [200,200][600,600] enabled=true clickable text=确认支付\n",
             2000, 2000, "app", 500, 500, 0, "");
         assertTrue(PhoneUsePermissionPolicy.critical(tap(), large));
-    }
-
-    @Test public void duplicateTextAndDescriptionDoNotHideSevereTargets() throws Exception {
         assertTrue(PhoneUsePermissionPolicy.critical(tap(), frame("app",
             "android.widget.Button [100,100][300,300] enabled=true clickable text=支付 description=支付\n")));
     }
 
-    @Test public void confirmationUsesConcreteButtonLabelAndPreservesExplicitDescription() throws Exception {
+    @Test public void confirmationUsesButtonLabelOrExplicitDescriptionButNeverInputContents() throws Exception {
         Action action = tap();
         assertEquals("点击目标控件；目标控件：确认支付", PhoneUsePermissionPolicy.confirmationMessage(action, frame("确认支付")));
         action.data.put("message", "完整说明\n" + "对象和后果".repeat(30));
         assertEquals(action.data.getString("message"), PhoneUsePermissionPolicy.confirmationMessage(action, frame("确认支付")));
-    }
-
-    @Test public void confirmationNeverDerivesTypedOrExistingInputContents() throws Exception {
         Action type = new Action(new JSONObject().put("action", "type").put("text", "private-value"));
         String message = PhoneUsePermissionPolicy.confirmationMessage(type, frame("app",
             "android.widget.EditText [100,100][300,300] enabled=true editable focused text=existing-private-value\n"));

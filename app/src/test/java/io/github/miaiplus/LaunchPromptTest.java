@@ -23,8 +23,6 @@ public class LaunchPromptTest {
                 assertFalse(LaunchPrompt.matches("com.miui.securitycenter", group, request,
                     List.of(request, "本次允许", "拒绝"), CALLERS, TARGETS));
         }
-    }
-    @Test public void otherSystemPermissionActivityIsNotAutoApproved() {
         assertFalse(LaunchPrompt.matches("com.miui.securitycenter", "相机", "MiAIPlus想要打开fixture.target，是否允许？",
             List.of("MiAIPlus想要打开fixture.target，是否允许？", "本次允许", "拒绝"), CALLERS, TARGETS));
     }

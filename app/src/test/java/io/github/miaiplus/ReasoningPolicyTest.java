@@ -5,24 +5,19 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class ReasoningPolicyTest {
-    @Test public void sol61RejectsNoneAndMinimalButSol60AllowsNone() {
-        assertEquals("responses", ModelProtocol.resolve("auto", "openai/gpt-6.1-sol"));
+    @Test public void builtinChoicesFollowKnownModelFamiliesAndNeverInventSwitchesForAliases() {
         assertEquals(java.util.List.of("default", "low", "medium", "high", "xhigh", "max"),
             ReasoningPolicy.choices("openai/gpt-6.1-sol", "responses"));
         assertEquals("default", ReasoningPolicy.normalize("gpt-6.1-sol", "responses", "none"));
         assertEquals("default", ReasoningPolicy.normalize("gpt-6.1-sol", "responses", "minimal"));
         assertTrue(ReasoningPolicy.choices("gpt-6-sol", "responses").contains("none"));
         assertFalse(ReasoningPolicy.choices("gpt-6-astra", "responses").contains("none"));
-    }
-    @Test public void olderOpenAiModelsHaveDifferentEfforts() {
         assertTrue(ReasoningPolicy.choices("gpt-5-2025-08-07", "chat").contains("minimal"));
         assertFalse(ReasoningPolicy.choices("gpt-5.1", "chat").contains("xhigh"));
         assertTrue(ReasoningPolicy.choices("gpt-5.5", "responses").contains("xhigh"));
         assertFalse(ReasoningPolicy.choices("gpt-5.5", "responses").contains("max"));
         assertTrue(ReasoningPolicy.choices("gpt-5.4", "responses").contains("none"));
         assertFalse(ReasoningPolicy.choices("gpt-5.3-codex", "responses").contains("none"));
-    }
-    @Test public void aliasesAndThinkingOnlyQwenNeverGetInventedSwitches() {
         for (String model : java.util.List.of("custom-alias", "claude-sonnet-4-5", "gemini-2.5-pro",
             "gpt-5.1-chat-latest", "gpt-6.1-sol-fast-unknown", "qwen3.7-max-preview", "qwen3.8-2.4t-a95b"))
             assertEquals(java.util.List.of("default"), ReasoningPolicy.choices(model, "chat"));
@@ -37,7 +32,7 @@ public class ReasoningPolicyTest {
         assertFalse(body.has("reasoning_effort"));
         assertEquals(1024, body.getInt("max_tokens"));
     }
-    @Test public void finalWireBodyUsesCorrectFieldAndClearsStockThinking() throws Exception {
+    @Test public void builtinApplyUsesEachProviderWireFormatAndStripsInvalidSampling() throws Exception {
         JSONObject response = new JSONObject("{\"enable_thinking\":false,\"reasoning_effort\":\"low\",\"temperature\":0}");
         ReasoningPolicy.apply(response, "gpt-6.1-sol", "responses", "max");
         assertEquals("max", response.getJSONObject("reasoning").getString("effort"));
@@ -47,8 +42,13 @@ public class ReasoningPolicyTest {
         ReasoningPolicy.apply(chat, "gpt-5.1", "chat", "high");
         assertEquals("high", chat.getString("reasoning_effort"));
         assertEquals(8192, chat.getInt("max_completion_tokens")); assertFalse(chat.has("max_tokens"));
-    }
-    @Test public void qwenUsesBooleanAndDeepseekUsesProviderSwitch() throws Exception {
+        JSONObject providerDefault = new JSONObject("{\"temperature\":0,\"top_p\":1,\"max_tokens\":1024}");
+        ReasoningPolicy.apply(providerDefault, "gpt-5.1", "chat", "default");
+        assertFalse(providerDefault.has("temperature")); assertFalse(providerDefault.has("top_p"));
+        assertFalse(providerDefault.has("reasoning_effort")); assertEquals(8192, providerDefault.getInt("max_completion_tokens"));
+        JSONObject ordinary = new JSONObject("{\"temperature\":0,\"max_tokens\":1024}");
+        ReasoningPolicy.apply(ordinary, "gpt-4.1", "chat", "default");
+        assertEquals(0, ordinary.getInt("temperature")); assertEquals(1024, ordinary.getInt("max_tokens"));
         JSONObject body = new JSONObject();
         ReasoningPolicy.apply(body, "qwen3.8-max", "chat", "off");
         assertFalse(body.getBoolean("enable_thinking")); assertFalse(body.has("reasoning_effort"));
@@ -73,15 +73,6 @@ public class ReasoningPolicyTest {
         assertNotEquals(key, ReasoningPolicy.preferenceKey("https://example.test/v1", "gpt-6-sol", "responses"));
         assertNotEquals(key, ReasoningPolicy.preferenceKey("https://example.test/v1", "gpt-6.1-sol", "chat"));
         assertFalse(key.contains("example"));
-    }
-    @Test public void providerDefaultDoesNotReintroduceInvalidNativeSamplingForKnownOpenAi() throws Exception {
-        JSONObject body = new JSONObject("{\"temperature\":0,\"top_p\":1,\"max_tokens\":1024}");
-        ReasoningPolicy.apply(body, "gpt-5.1", "chat", "default");
-        assertFalse(body.has("temperature")); assertFalse(body.has("top_p"));
-        assertFalse(body.has("reasoning_effort")); assertEquals(8192, body.getInt("max_completion_tokens"));
-        JSONObject ordinary = new JSONObject("{\"temperature\":0,\"max_tokens\":1024}");
-        ReasoningPolicy.apply(ordinary, "gpt-4.1", "chat", "default");
-        assertEquals(0, ordinary.getInt("temperature")); assertEquals(1024, ordinary.getInt("max_tokens"));
     }
     @Test public void wireContractRoundTripPreservesImmutableCapabilities() {
         var mutable = new java.util.ArrayList<>(java.util.List.of("default", "low", "high"));
@@ -116,7 +107,7 @@ public class ReasoningPolicyTest {
         assertThrows(IllegalArgumentException.class, () -> new ReasoningPolicy.Plan(
             java.util.List.of("default", "on"), "qwen", false, true));
     }
-    @Test public void remoteWireContractUsesExplicitProviderCapabilitiesInsteadOfModelPrefixes() throws Exception {
+    @Test public void remoteWireContractUsesExplicitProviderCapabilitiesAndKeepsProviderSwitchSemantics() throws Exception {
         var standard = new ReasoningPolicy.Plan(java.util.List.of("default", "high"), "standard", true, true);
         JSONObject body = new JSONObject("{\"temperature\":0,\"top_p\":1,\"max_tokens\":1024,\"enable_thinking\":true}");
         standard.apply(body, "new-provider-model", "chat", "high");
@@ -133,24 +124,22 @@ public class ReasoningPolicyTest {
         JSONObject untouched = new JSONObject("{\"temperature\":0,\"max_tokens\":1024}");
         ordinary.apply(untouched, "gpt-new-alias", "chat", "default");
         assertEquals(0, untouched.getInt("temperature")); assertEquals(1024, untouched.getInt("max_tokens"));
-    }
-    @Test public void remoteProviderSwitchesKeepTheirWireSemantics() throws Exception {
         var qwen = new ReasoningPolicy.Plan(java.util.List.of("default", "off", "on"), "qwen", false, false);
-        JSONObject body = new JSONObject();
-        qwen.apply(body, "new-qwen-model", "chat", "off");
-        assertFalse(body.getBoolean("enable_thinking"));
-        qwen.apply(body, "new-qwen-model", "chat", "on");
-        assertTrue(body.getBoolean("enable_thinking"));
-        qwen.apply(body, "new-qwen-model", "responses", "on");
-        assertFalse(body.has("enable_thinking")); assertFalse(body.has("reasoning"));
+        JSONObject switches = new JSONObject();
+        qwen.apply(switches, "new-qwen-model", "chat", "off");
+        assertFalse(switches.getBoolean("enable_thinking"));
+        qwen.apply(switches, "new-qwen-model", "chat", "on");
+        assertTrue(switches.getBoolean("enable_thinking"));
+        qwen.apply(switches, "new-qwen-model", "responses", "on");
+        assertFalse(switches.has("enable_thinking")); assertFalse(switches.has("reasoning"));
         var deepseek = new ReasoningPolicy.Plan(java.util.List.of("default", "none", "high"), "deepseek", true, false);
-        deepseek.apply(body, "new-deepseek-model", "chat", "none");
-        assertEquals("disabled", body.getJSONObject("thinking").getString("type"));
-        assertFalse(body.has("reasoning_effort"));
-        deepseek.apply(body, "new-deepseek-model", "chat", "high");
-        assertEquals("enabled", body.getJSONObject("thinking").getString("type"));
-        assertEquals("high", body.getString("reasoning_effort"));
-        deepseek.apply(body, "new-deepseek-model", "responses", "high");
-        assertFalse(body.has("thinking")); assertEquals("high", body.getJSONObject("reasoning").getString("effort"));
+        deepseek.apply(switches, "new-deepseek-model", "chat", "none");
+        assertEquals("disabled", switches.getJSONObject("thinking").getString("type"));
+        assertFalse(switches.has("reasoning_effort"));
+        deepseek.apply(switches, "new-deepseek-model", "chat", "high");
+        assertEquals("enabled", switches.getJSONObject("thinking").getString("type"));
+        assertEquals("high", switches.getString("reasoning_effort"));
+        deepseek.apply(switches, "new-deepseek-model", "responses", "high");
+        assertFalse(switches.has("thinking")); assertEquals("high", switches.getJSONObject("reasoning").getString("effort"));
     }
 }

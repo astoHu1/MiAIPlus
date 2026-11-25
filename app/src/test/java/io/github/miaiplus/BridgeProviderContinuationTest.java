@@ -56,6 +56,10 @@ public final class BridgeProviderContinuationTest {
         for (int attempt = 0; attempt < 5; attempt++) {
             Bundle result = start(query("expired-session", ""));
             assertTerminalRejection(result);
+            String error = result.getString("error", "");
+            assertTrue(error, error.startsWith("STOP：MiAIPlus 控屏已停止。"));
+            assertTrue(error, error.contains("控屏会话不存在或已过期"));
+            assertTrue(error, error.contains("不要重试旧动作"));
             assertNull(field(BridgeProvider.class, "active").get(null));
             assertNull(field(NativeSession.class, "active").get(null));
             assertUnchangedTask(before);
@@ -149,17 +153,6 @@ public final class BridgeProviderContinuationTest {
         }
     }
 
-    @Test public void lateModelExhaustionDoesNotReplaceAnAlreadyCompletedTaskResult() throws Exception {
-        Bundle before = provider.call("screen_state", null, null);
-        for (int attempt = 0; attempt < 3; attempt++) {
-            assertFalse(provider.call("model_exhausted", "finished-task", null).getBoolean("accepted"));
-            assertUnchangedTask(before);
-            assertEquals(completed.result, provider.call("screen_state", null, null).getString("result"));
-            assertNull(field(NativeSession.class, "active").get(null));
-            assertEquals("", field(BridgeProvider.class, "screenStopReason").get(null));
-        }
-    }
-
     @Test public void delayedHostCleanupCannotCancelChatAfterScreenExecutionHasExited() throws Exception {
         // The notification observer has not refreshed the old screen flag yet, but a chat is now running.
         field(BridgeProvider.class, "screenTaskActive").setBoolean(null, true);
@@ -170,6 +163,8 @@ public final class BridgeProviderContinuationTest {
             assertFalse(chat.cancelled.get());
             assertSame(chat, field(BridgeProvider.class, "active").get(null));
             assertEquals(completed.result, field(BridgeProvider.class, "screenResult").get(null));
+            assertEquals("", field(BridgeProvider.class, "screenStopReason").get(null));
+            assertNull(field(NativeSession.class, "active").get(null));
         }
     }
 

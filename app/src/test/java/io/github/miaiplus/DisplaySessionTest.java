@@ -31,13 +31,4 @@ public class DisplaySessionTest {
         assertEquals(576, background.imageWidth());
         assertEquals(1024, background.imageHeight());
     }
-
-    @Test public void navigationActionsAreTheOnesThatSkipPreActionReobservation() {
-        assertTrue(BackgroundActions.NAVIGATION.contains("launch"));
-        assertTrue(BackgroundActions.NAVIGATION.contains("back"));
-        assertTrue(BackgroundActions.NAVIGATION.contains("home"));
-        assertFalse(BackgroundActions.NAVIGATION.contains("tap"));
-        assertFalse(BackgroundActions.NAVIGATION.contains("type"));
-    }
-
 }

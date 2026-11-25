@@ -118,17 +118,15 @@ public class DisplayHelperFramesAndGesturesTest {
         assertNull(field("frameLatest").get(null));
     }
 
-    @Test public void tapActuallyHoldsAndAllEventsShareOneGestureOrigin() throws Exception {
+    @Test public void gesturesHoldForTheRequestedRealDurationAndShareOneGestureOrigin() throws Exception {
         invoke("tap", new Class<?>[] { long.class, String.class }, 1L, "10 20");
         assertGesture(60, 2);
-    }
-
-    @Test public void longPressDoesNotAddDurationToTheRealUpEventTime() throws Exception {
+        // Long press must not add its duration to the real UP event time.
+        sink.events.clear();
         invoke("longpress", new Class<?>[] { long.class, String.class }, 1L, "10 20 300");
         assertGesture(300, 2);
-    }
-
-    @Test public void swipeSchedulesFullRequestedDurationInsteadOfHalfDurationSleeps() throws Exception {
+        // Swipe schedules the full requested duration instead of half-duration sleeps.
+        sink.events.clear();
         sink.latencyMs = 3;
         invoke("swipe", new Class<?>[] { long.class, String.class }, 1L, "10 20 110 220 240");
         assertGesture(240, 13);

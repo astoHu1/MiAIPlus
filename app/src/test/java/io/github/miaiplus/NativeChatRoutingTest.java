@@ -76,14 +76,11 @@ public final class NativeChatRoutingTest {
         assertEquals("", NativeChatRouting.requestedPhoneTool(null));
     }
 
-    @Test public void explicitBackgroundTaskNeverSelectsForegroundTools() {
+    @Test public void decisionsKeepFixedRulesAndExplicitBackgroundOverridesForeground() {
         assertEquals(PhoneUseRouting.BACKGROUND_TOOL,
             NativeChatRouting.requestedPhoneTool("用后台控屏去抖音打开这个视频"));
         assertEquals(PhoneUseRouting.BACKGROUND_TOOL,
             NativeChatRouting.requestedPhoneTool("在后台打开计算器输入137乘29"));
-    }
-
-    @Test public void diagnosticDecisionsKeepOnlyFixedRulesAndTheSelectedCapability() {
         assertEquals(new NativeChatRouting.Decision("", "blank"), NativeChatRouting.decide(null));
         assertEquals(new NativeChatRouting.Decision("", "explanation"), NativeChatRouting.decide("如何在后台打开应用"));
         assertEquals(new NativeChatRouting.Decision("", "no_match"), NativeChatRouting.decide("你好 private-query"));
@@ -106,21 +103,14 @@ public final class NativeChatRoutingTest {
         assertFalse(NativeChatRouting.forcesAgent(callback));
     }
 
-    @Test public void nestedOrdinarySubmissionCannotBorrowAnOuterBackgroundRoute() {
-        Object callback = new Object();
-        try (NativeChatRouting.Scope outer = NativeChatRouting.begin(callback, true)) {
-            try (NativeChatRouting.Scope inner = NativeChatRouting.begin(callback, false)) {
-                assertFalse(NativeChatRouting.forcesAgent(callback));
-            }
-            assertTrue(NativeChatRouting.forcesAgent(callback));
-        }
-        assertFalse(NativeChatRouting.forcesAgent(callback));
-    }
-
-    @Test public void routeBelongsToTheSubmittingCallbackAndThread() throws Exception {
+    @Test public void routeBelongsToTheSubmittingCallbackThreadAndInnermostScope() throws Exception {
         Object callback = new Object();
         Object otherCallback = new Object();
         try (NativeChatRouting.Scope ignored = NativeChatRouting.begin(callback, true)) {
+            try (NativeChatRouting.Scope ordinary = NativeChatRouting.begin(callback, false)) {
+                assertFalse(NativeChatRouting.forcesAgent(callback));
+            }
+            assertTrue(NativeChatRouting.forcesAgent(callback));
             assertFalse(NativeChatRouting.forcesAgent(otherCallback));
             assertFalse(CompletableFuture.supplyAsync(() -> NativeChatRouting.forcesAgent(callback)).get());
             try (NativeChatRouting.Scope inner = NativeChatRouting.begin(otherCallback, true)) {

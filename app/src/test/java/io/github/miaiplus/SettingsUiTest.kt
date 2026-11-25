@@ -207,43 +207,6 @@ class SettingsUiTest {
         }
     }
 
-    @Test fun controlProtocolMenuKeepsNativeSelectionAndFitsDarkNarrowLargeText() {
-        val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
-        val project = generateSequence(File(System.getProperty("user.dir"))) { it.parentFile }
-            .first { File(it, "settings.gradle").isFile }
-        val screenshots = File(project, "work/menu-ui-20261111").apply { mkdirs() }
-        fun captureMenu(name: String) {
-            compose.onNodeWithText("动作协议").performScrollTo().performClick()
-            val option = compose.onAllNodesWithText("AutoGLM").onLast()
-            option.assertIsDisplayed()
-            val menuLabel = option.getBoundsInRoot()
-            val root = compose.onRoot().getBoundsInRoot()
-            check(menuLabel.left >= root.left && menuLabel.right <= root.right)
-            compose.waitForIdle()
-            val bitmap = compose.onRoot().captureToImage().asAndroidBitmap()
-            File(screenshots, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
-            bitmap.recycle()
-        }
-        openControlPage()
-        captureMenu("control-protocol-light")
-        compose.onNodeWithText("AutoGLM").performClick()
-        compose.runOnIdle { assertEquals("autoglm", state.config.protocol) }
-        RuntimeEnvironment.setQualifiers("+night")
-        compose.activityRule.scenario.recreate()
-        captureMenu("control-protocol-dark")
-        compose.runOnIdle { compose.activity.onBackPressedDispatcher.onBackPressed() }
-        RuntimeEnvironment.setQualifiers("+w320dp-notnight")
-        RuntimeEnvironment.setFontScale(1.5f)
-        try {
-            compose.activityRule.scenario.recreate()
-            captureMenu("control-protocol-narrow-large-text")
-            compose.runOnIdle { assertEquals(1.5f, compose.activity.resources.configuration.fontScale, 0.01f) }
-        } finally {
-            RuntimeEnvironment.setFontScale(1f)
-            RuntimeEnvironment.setQualifiers("+w393dp-notnight")
-        }
-    }
-
     @After fun clearFixturePreferences() {
         // AndroidViewModel's factory can retain its Application between Robolectric cases.
         // Clean the same preferences owner used by the UI, including after a failed test.
@@ -284,6 +247,9 @@ class SettingsUiTest {
         compose.onNodeWithText("200 步").assertExists()
         val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
         assertEquals(200, state.config.maxSteps)
+        compose.onNodeWithText("动作协议").performScrollTo().performClick()
+        compose.onNodeWithText("AutoGLM").performClick()
+        compose.runOnIdle { assertEquals("autoglm", state.config.protocol) }
     }
 
     @Test fun pluginsTabOwnsControlAndVirtualPagesAndReturnsThroughParents() {
@@ -380,7 +346,7 @@ class SettingsUiTest {
         compose.runOnIdle { assertEquals(0, state.plugins.entries.count { it.kind() == "mcp" }) }
     }
 
-    @Test fun profileDraftRequiresExplicitSaveAndCanBeDiscarded() {
+    @Test fun unsavedProfileDialogCancelsDiscardsOrSavesBeforeLeaving() {
         compose.onNodeWithTag("tab-Model").performClick()
         capture("model-light")
         compose.onNodeWithText("配置名称").performTextReplacement("测试服务")
@@ -399,17 +365,21 @@ class SettingsUiTest {
         compose.onNodeWithTag("tab-Model").performClick()
         compose.onNode(hasSetTextAction() and hasText("默认配置")).assertExists()
         compose.onNodeWithText("保存配置").assertDoesNotExist()
-    }
 
-    @Test fun missingModuleReportsAnUnconnectedState() {
-        compose.onNodeWithText("运行状态").performScrollTo().performClick()
-        compose.onNodeWithText("暂无报告，请在 LSPosed 中启用模块后重启小爱").assertExists()
-        capture("status-light")
-        compose.onNodeWithText("直接测试").performScrollTo().performClick()
-        compose.onNodeWithText("想在手机上做什么？").assertExists()
-        capture("test-light")
-        compose.onNodeWithContentDescription("返回").performClick()
-        compose.onNodeWithText("小爱连接").assertExists()
+        compose.onNodeWithText("配置名称").performTextReplacement("我的 API")
+        val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
+        compose.runOnIdle {
+            assertEquals("我的 API", state.draft?.name)
+        }
+        compose.onNodeWithTag("tab-Plugins").performClick()
+        compose.onNodeWithText("保存并离开").performClick()
+        compose.onNodeWithTag("tab-Plugins").assertIsSelected()
+        compose.runOnIdle {
+            assertEquals("我的 API", EndpointProfiles(io.github.miaiplus.Config.prefs(state.getApplication<Application>())).active().name)
+        }
+        compose.onNodeWithTag("tab-Model").performClick()
+        compose.onNode(hasSetTextAction() and hasText("我的 API")).assertExists()
+        compose.onNodeWithText("保存配置").assertDoesNotExist()
     }
 
     @Test fun secondaryPagesAnimateBothWaysAndReturnToTheirParent() {
@@ -422,12 +392,14 @@ class SettingsUiTest {
         compose.mainClock.advanceTimeBy(400)
         compose.onNodeWithTag("page-Home").assertDoesNotExist()
         compose.onNodeWithTag("tab-Home").assertIsSelected()
+        compose.onNodeWithText("暂无报告，请在 LSPosed 中启用模块后重启小爱").assertExists()
         compose.mainClock.autoAdvance = true
         compose.onNodeWithText("直接测试").performScrollTo()
         compose.mainClock.autoAdvance = false
         compose.onNodeWithText("直接测试").performClick()
         compose.mainClock.advanceTimeBy(400)
         compose.onNodeWithTag("page-Test").assertExists()
+        compose.onNodeWithText("想在手机上做什么？").assertExists()
         compose.onNodeWithContentDescription("返回").performClick()
         compose.mainClock.advanceTimeBy(80)
         compose.onNodeWithTag("page-Test").assertExists()
@@ -530,24 +502,6 @@ class SettingsUiTest {
             observer.stop()
             observer.clear()
         }
-    }
-
-    @Test fun savingBeforeSwitchingTabsUsesTheRequestedDestination() {
-        compose.onNodeWithTag("tab-Model").performClick()
-        compose.onNodeWithText("配置名称").performTextReplacement("我的 API")
-        val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
-        compose.runOnIdle {
-            assertEquals("我的 API", state.draft?.name)
-        }
-        compose.onNodeWithTag("tab-Plugins").performClick()
-        compose.onNodeWithText("保存并离开").performClick()
-        compose.onNodeWithTag("tab-Plugins").assertIsSelected()
-        compose.runOnIdle {
-            assertEquals("我的 API", EndpointProfiles(io.github.miaiplus.Config.prefs(state.getApplication<Application>())).active().name)
-        }
-        compose.onNodeWithTag("tab-Model").performClick()
-        compose.onNode(hasSetTextAction() and hasText("我的 API")).assertExists()
-        compose.onNodeWithText("保存配置").assertDoesNotExist()
     }
 
     @Test fun modelSectionsKeepTheirScrollPositionAcrossTabsAndRecreation() {

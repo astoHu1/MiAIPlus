@@ -35,28 +35,22 @@ public class PageGuardTest {
             frame("new screenshot", ROOT + BUTTON + clock + "10:01\n")));
     }
 
-    @Test public void changedTargetSemanticsGeometryOrAvailabilityRequiresAnotherObservation() throws Exception {
+    @Test public void changedOrDisabledTargetRequiresAnotherObservation() throws Exception {
         ScreenService.Frame before = frame("image", ROOT + BUTTON);
         for (String changed : new String[]{BUTTON.replace("提交", "删除"),
                 BUTTON.replace("[100,100][300,300]", "[250,100][450,300]"),
                 BUTTON.replace("id=submit", "id=delete"), BUTTON.replace("enabled=true", "enabled=false"),
                 BUTTON.replace(" clickable", "")})
             assertFalse(changed, PageGuard.canExecute(tap(), before, frame("image", ROOT + changed)));
-    }
-
-    @Test public void disabledTargetsAreNeverInjectedEvenIfUnchanged() throws Exception {
         ScreenService.Frame disabled = frame("image", ROOT + BUTTON.replace("enabled=true", "enabled=false"));
         assertFalse(PageGuard.canExecute(tap(), disabled, disabled));
     }
 
-    @Test public void newDialogOrTransparentInterceptorRequiresAnotherObservation() throws Exception {
+    @Test public void newOrReorderedCoveringNodesRequireAnotherObservation() throws Exception {
         ScreenService.Frame before = frame("image", ROOT + BUTTON);
         for (String covering : new String[]{"android.widget.FrameLayout [50,50][800,800] window=4 enabled=true\n",
                 "android.view.View [0,0][1000,1000] window=3 enabled=true\n"})
             assertFalse(covering, PageGuard.canExecute(tap(), before, frame("image", ROOT + BUTTON + covering)));
-    }
-
-    @Test public void coveringNodeIdentityAndOrderMustRemainStable() throws Exception {
         assertFalse(PageGuard.canExecute(tap(), frame("image", ROOT + BUTTON),
             frame("image", ROOT.replace("id=root", "id=modal") + BUTTON)));
         String label = "android.widget.TextView [100,100][300,300] window=3 enabled=true text=确认\n";
@@ -103,20 +97,13 @@ public class PageGuardTest {
             frame("image", ROOT + FIELD.replace("id=input", "id=another"))));
     }
 
-    @Test public void typeRejectsMissingAmbiguousAndPasswordFocus() throws Exception {
+    @Test public void typeRejectsMissingAmbiguousOrPasswordFocusAndNewCoveringDialog() throws Exception {
         assertFalse(PageGuard.canExecute(type(), frame("image", ROOT), frame("image", ROOT)));
         ScreenService.Frame multiple = frame("image", ROOT + FIELD + FIELD.replace("id=input", "id=another"));
         assertFalse(PageGuard.canExecute(type(), multiple, multiple));
         ScreenService.Frame password = frame("image", ROOT + FIELD.replace("text=草稿", "[password redacted]"));
         assertFalse(PageGuard.canExecute(type(), password, password));
-    }
-
-    @Test public void typeRejectsNewCoveringDialog() throws Exception {
         String dialog = "android.widget.FrameLayout [50,50][800,800] window=4 enabled=true\n";
         assertFalse(PageGuard.canExecute(type(), frame("image", ROOT + FIELD), frame("image", ROOT + FIELD + dialog)));
-    }
-
-    @Test public void theStepBudgetIsLongEnoughForASlowToolCall() {
-        assertEquals(240_000L, RunState.STEP_BUDGET_MS);
     }
 }

@@ -115,7 +115,7 @@ public final class ActionPermissionReviewTest {
         assertEquals("ask_user", review.consume(answer(candidate, old, "allow"), frame(BUTTON)));
     }
 
-    @Test public void aChangedTargetOrDisplayCannotUseTheReview() throws Exception {
+    @Test public void aChangedTargetDisplayOrAuthorizationTextCannotUseTheReview() throws Exception {
         Action candidate = action();
         for (ScreenService.Frame current : new ScreenService.Frame[]{frame(BUTTON.replace("发送", "删除")),
             new ScreenService.Frame("image", BUTTON, 1000, 1000, "app", 1000, 1000, 1, "background")}) {
@@ -123,6 +123,14 @@ public final class ActionPermissionReviewTest {
             JSONObject challenge = review.issue(candidate, frame(BUTTON));
             assertEquals("ask_user", review.consume(answer(candidate, challenge, "allow"), current));
         }
+        ActionPermissionReview review = new ActionPermissionReview();
+        ScreenService.Frame old = new ScreenService.Frame("image", BUTTON
+            + "android.widget.TextView [600,100][900,300] enabled=true text=获取相机权限\n",
+            1000, 1000, "com.android.permissioncontroller", 1000, 1000, 0, "");
+        ScreenService.Frame current = new ScreenService.Frame("image", old.tree().replace("获取相机权限", "获取麦克风权限"),
+            1000, 1000, "com.android.permissioncontroller", 1000, 1000, 0, "");
+        JSONObject challenge = review.issue(candidate, old);
+        assertEquals("ask_user", review.consume(answer(candidate, challenge, "allow"), current));
     }
 
     @Test public void unrelatedPageRefreshKeepsTheSameReviewedTarget() throws Exception {
@@ -139,17 +147,5 @@ public final class ActionPermissionReviewTest {
         candidate.data.put("risk_level", "critical");
         JSONObject challenge = review.issue(candidate, frame(BUTTON));
         assertEquals("ask_user", review.consume(answer(candidate, challenge, "allow"), frame(BUTTON)));
-    }
-
-    @Test public void changingOtherAuthorizationTextInvalidatesAStableAllowButton() throws Exception {
-        ActionPermissionReview review = new ActionPermissionReview();
-        Action candidate = action();
-        ScreenService.Frame old = new ScreenService.Frame("image", BUTTON
-            + "android.widget.TextView [600,100][900,300] enabled=true text=获取相机权限\n",
-            1000, 1000, "com.android.permissioncontroller", 1000, 1000, 0, "");
-        ScreenService.Frame current = new ScreenService.Frame("image", old.tree().replace("获取相机权限", "获取麦克风权限"),
-            1000, 1000, "com.android.permissioncontroller", 1000, 1000, 0, "");
-        JSONObject challenge = review.issue(candidate, old);
-        assertEquals("ask_user", review.consume(answer(candidate, challenge, "allow"), current));
     }
 }

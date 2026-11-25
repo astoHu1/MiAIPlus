@@ -118,17 +118,11 @@ public final class InteractionUiTest {
         assertFalse(window.active(false));
     }
 
-    @Test public void userWakeCannotReleaseHostWhileControlStillRuns() {
+    @Test public void onlyCurrentCompletionCardAfterControlStopsCanReleaseQuietWindow() {
         InteractionUi.HostQuietWindow window = new InteractionUi.HostQuietWindow();
         window.finished();
         assertFalse(window.userEntered(true));
         assertTrue(window.active(true));
-        assertTrue(window.active(false));
-    }
-
-    @Test public void onlyCurrentCompletionCardCanReleaseQuietWindow() {
-        InteractionUi.HostQuietWindow window = new InteractionUi.HostQuietWindow();
-        window.finished();
         for (Intent entry : new Intent[]{null, new Intent(),
             new Intent().putExtra(RETURN_TOKEN, "previous-task")}) {
             if (InteractionUi.isCompletionEntry(false, entry, "current-task")) window.userEntered(false);
@@ -140,24 +134,5 @@ public final class InteractionUiTest {
         assertTrue(InteractionUi.isCompletionEntry(false, current, "current-task"));
         assertTrue(window.userEntered(false));
         assertFalse(window.active(false));
-    }
-
-    @Test public void separatelyInstalledModuleKeepsHostActionsAndConversationStateSeparate() throws Exception {
-        if ("io.github.miaiplus".equals(BuildConfig.APPLICATION_ID)) return;
-        Intent own = InteractionUi.consentIntent("com.miui.voiceassist", "task-a", "token-a", true);
-        assertTrue(own.getAction().startsWith(BuildConfig.APPLICATION_ID + "."));
-        assertEquals(BuildConfig.APPLICATION_ID, own.getScheme());
-        assertFalse(InteractionUi.consentFilter().hasAction("com.miui.voiceassist.MIAIPLUS_FOREGROUND_ALLOW"));
-        assertFalse(InteractionUi.isCompletionEntry(false,
-            new Intent().putExtra("io.github.miaiplus.RETURN_CONVERSATION", "task-a"), "task-a"));
-        assertEquals(BuildConfig.APPLICATION_ID + ".CONVERSATION_RETURN", ConversationReturn.RETURN_ROUTE);
-        assertTrue(ConversationReturn.isModuleReturn(new Intent().putExtra(ConversationReturn.RETURN_ROUTE, true)));
-        assertFalse(ConversationReturn.isModuleReturn(new Intent().putExtra("io.github.miaiplus.CONVERSATION_RETURN", true)));
-        var channel = InteractionUi.class.getDeclaredField("CHANNEL");
-        channel.setAccessible(true);
-        assertEquals(BuildConfig.APPLICATION_ID + ".computer", channel.get(null));
-        var notification = InteractionUi.class.getDeclaredField("NOTIFICATION");
-        notification.setAccessible(true);
-        assertNotEquals(0x4d494149, notification.getInt(null));
     }
 }

@@ -30,21 +30,6 @@ class PromptSettingsUiTest {
         Config.prefs(state.getApplication<Application>()).edit().clear().commit()
     }
 
-    @Test fun homeEntryOpensThePromptEditorWithoutTheConfigurationFooter() {
-        openPromptPage()
-        compose.onNodeWithText("生效方式").assertExists()
-        compose.onNodeWithText("关闭").assertExists()
-        compose.onNodeWithText("提示词内容").assertExists()
-        compose.onNodeWithText("0/4000").assertExists()
-        compose.onNodeWithText("保存当前人设").performScrollTo().assertExists()
-        compose.onNodeWithText("删除当前人设").performScrollTo().performTouchInput { click() }
-        compose.onNodeWithText("删除「默认人设」？").assertDoesNotExist()
-        compose.onNodeWithText("另存为人设").assertDoesNotExist()
-        compose.onNodeWithText("还原").assertDoesNotExist()
-        compose.onNodeWithText("保存配置").assertDoesNotExist()
-        compose.onNodeWithText("至少保留一个人设").assertDoesNotExist()
-    }
-
     @Test fun modeSelectionSavesImmediatelyAndLeavingKeepsTheEditorDraftWithoutAsking() {
         val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
         openPromptPage()
@@ -114,25 +99,6 @@ class PromptSettingsUiTest {
             val owner = state.getApplication<Application>()
             assertEquals("翻译的提示词", Config(owner).customPromptText)
             assertEquals(2, PersonaProfiles(Config.prefs(owner)).profiles.size)
-        }
-    }
-
-    @Test fun savingAnEmptyPromptClearsTheAppliedText() {
-        val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
-        compose.runOnIdle {
-            state.updatePersona(text = "原提示词")
-            check(state.savePersona())
-            check(state.setPromptMode(PromptKeys.MODE_REPLACE))
-        }
-        openPromptPage()
-        compose.onNodeWithText("提示词内容").performTextReplacement("")
-        compose.onNodeWithText("保存当前人设").performScrollTo().performClick()
-        compose.runOnIdle {
-            val owner = state.getApplication<Application>()
-            assertEquals("", Config(owner).customPromptText)
-            assertEquals("replace", Config(owner).customPromptMode)
-            assertFalse(Config(owner).hasEffectivePrompt())
-            assertFalse(state.promptDirty)
         }
     }
 

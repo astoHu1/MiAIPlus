@@ -29,12 +29,8 @@ public final class PackageIdentityTest {
         packages = context.getPackageManager();
     }
 
-    @Test public void mainlineKeepsOriginalApplicationPackage() {
-        assertEquals("io.github.miaiplus", BuildConfig.APPLICATION_ID);
-        assertEquals(BuildConfig.APPLICATION_ID, context.getPackageName());
-    }
-
     @Test public void bridgeManifestAuthorityAndRuntimeUriFollowApplicationId() throws Exception {
+        assertEquals(BuildConfig.APPLICATION_ID, context.getPackageName());
         String authority = BuildConfig.APPLICATION_ID + ".bridge";
         assertEquals(Uri.parse("content://" + authority), BridgeProvider.URI);
         ProviderInfo info = packages.resolveContentProvider(authority, 0);

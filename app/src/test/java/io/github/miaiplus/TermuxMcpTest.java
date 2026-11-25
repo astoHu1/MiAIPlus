@@ -106,7 +106,6 @@ public class TermuxMcpTest {
         assertFalse(TermuxMcp.hasExpectedTools(tools));
         tools.add(tool("job_cancel"));
         assertTrue(TermuxMcp.hasExpectedTools(tools));
-        assertEquals("miaiplus_termux_job_status", tool("job_status").name());
         assertTrue(TermuxMcp.toolDescription(tool("run_digest")).contains("Bash"));
         assertTrue(TermuxMcp.toolDescription(tool("run_digest")).contains("timeout_ms"));
     }

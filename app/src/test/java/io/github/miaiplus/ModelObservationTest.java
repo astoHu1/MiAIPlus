@@ -101,11 +101,6 @@ public class ModelObservationTest {
         assertFalse(foreground.contains("本机未提供后台屏"));
     }
 
-    @Test public void aLastRowWithoutNewlineIsPreservedAsOneWholeRow() {
-        String source = BUTTON.substring(0, BUTTON.length() - 1);
-        assertEquals(source, ModelObservation.externalTree(frame(source)));
-    }
-
     @Test public void shortTreesRemainVerbatimUntilPrefixSavingsExceedTheUtf8LegendCost() {
         String longOutput = ModelObservation.externalTree(frame(BUTTON.repeat(20)));
         String legend = longOutput.substring(0, longOutput.indexOf('\n') + 1);
@@ -116,6 +111,8 @@ public class ModelObservationTest {
             assertEquals(source, ModelObservation.externalTree(frame(source)));
             assertEquals(source, ModelObservation.nativeTree(frame(source)));
         }
+        String unterminated = BUTTON.substring(0, BUTTON.length() - 1);
+        assertEquals(unterminated, ModelObservation.externalTree(frame(unterminated)));
         String source = BUTTON.repeat(below + 1);
         String output = ModelObservation.externalTree(frame(source));
         assertTrue(output.startsWith(legend));

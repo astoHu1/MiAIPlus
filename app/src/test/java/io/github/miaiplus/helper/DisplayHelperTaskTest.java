@@ -108,12 +108,6 @@ public class DisplayHelperTaskTest {
         }
     }
 
-    @Test public void otherVirtualScreenIsProtectedWhileOwnScreenCanBeReused() throws Exception {
-        var tasks = DisplayHelper.queryTasks(new TaskServiceFixture(List.of(
-            task(7, 9, true, "example.target", ""), task(8, 12, true, "example.target", ""))));
-        assertEquals(12, DisplayHelper.visibleTaskDisplay(tasks, "example.target", 9));
-    }
-
     @Test public void launchCanWaitForLocalSystemPromptsWithoutClaimingTheTargetOpened() {
         for (String prompt : new String[]{"com.miui.securitycenter/.ConfirmStartActivity",
             "com.android.permissioncontroller/.GrantPermissionsActivity",
@@ -139,6 +133,10 @@ public class DisplayHelperTaskTest {
             assertEquals("TASK_STOLEN", DisplayHelper.launchOutcome(target,
                 "com.miui.securitycenter/.ConfirmStartActivity", conflict));
         }
+        // A task on the own screen must not mask a second copy visible on another virtual screen.
+        var split = DisplayHelper.queryTasks(new TaskServiceFixture(List.of(
+            task(7, 9, true, target, ""), task(8, 12, true, target, ""))));
+        assertEquals(12, DisplayHelper.visibleTaskDisplay(split, target, 9));
     }
 
     @Test public void failedIncompleteOrUnownedTaskSnapshotsCannotBecomeNoConflict() throws Exception {

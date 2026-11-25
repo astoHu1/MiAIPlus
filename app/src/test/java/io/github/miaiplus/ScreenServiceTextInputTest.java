@@ -44,7 +44,7 @@ public class ScreenServiceTextInputTest {
         io.github.miaiplus.Config.prefs(service).edit().remove(io.github.miaiplus.Config.PHONE_USE_LOG_KEY).commit();
     }
 
-    @Test public void loggingPreservesTreeAndRefusedInputAndIdentifiesMissingFocusWithoutPageText() {
+    @Test public void writingWithoutInputFocusLeavesTheFieldUntouchedAndLogsNoPageText() {
         PhoneUseLog.init(service);
         String before = ScreenService.treeOnDisplay(7, PACKAGE);
         io.github.miaiplus.Config.prefs(service).edit().putBoolean(io.github.miaiplus.Config.PHONE_USE_LOG_KEY, true).commit();
@@ -54,6 +54,7 @@ public class ScreenServiceTextInputTest {
         Shadows.shadowOf(root).addChild(field);
         assertFalse(ScreenService.setTextOnDisplay(7, PACKAGE, "private-replacement"));
         assertTrue(Shadows.shadowOf(field).getPerformedActions().isEmpty());
+        assertEquals("private-existing-input", field.getText().toString());
         String logs = org.robolectric.shadows.ShadowLog.getLogsForTag(PhoneUseLog.TAG).toString();
         assertTrue(logs.contains("no_input_focus"));
         assertFalse(logs.contains("private-existing-input")); assertFalse(logs.contains("private-replacement"));
@@ -74,15 +75,6 @@ public class ScreenServiceTextInputTest {
         for (Sample sample : cases) {
             assertEquals(sample.toString(), sample.matches(), matches(sample.actual(), sample.expected()));
         }
-    }
-
-    @Test public void writingWithoutInputFocusDoesNotOverwriteTheFirstEditableField() {
-        AccessibilityNodeInfo first = node(true, "keep this value");
-        Shadows.shadowOf(root).addChild(first);
-
-        assertFalse(ScreenService.setTextOnDisplay(7, PACKAGE, "replacement"));
-        assertTrue(Shadows.shadowOf(first).getPerformedActions().isEmpty());
-        assertEquals("keep this value", first.getText().toString());
     }
 
     @Test public void autoFocusAndFreshWindowReadBackStillVerifyTheOriginalField() {

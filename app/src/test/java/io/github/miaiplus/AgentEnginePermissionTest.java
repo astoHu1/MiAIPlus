@@ -59,6 +59,11 @@ public final class AgentEnginePermissionTest {
         assertEquals(GOAL, ModelShadow.evidence.getString("task_goal"));
         assertEquals("tap", ModelShadow.evidence.getJSONObject("proposal").getJSONObject("action").getString("action"));
         assertEquals(BUTTON + CLOCK + "10:00\n", ModelShadow.evidence.getString("accessibility_tree"));
+        setUp();
+        assertCompleted(run("auto", "autoglm"));
+        assertEquals("autoglm", 1, ModelShadow.audits);
+        assertEquals("autoglm", 0, ScreenShadow.confirmations);
+        assertEquals("autoglm", 1, ScreenShadow.executions);
     }
 
     @Test public void planningApprovalCannotBypassMissingOrFailedIndependentReview() throws Exception {
@@ -72,7 +77,7 @@ public final class AgentEnginePermissionTest {
         }
     }
 
-    @Test public void finishWithoutAppCompletesInBothIndependentProtocolsWithForegroundEvidenceAvailable() throws Exception {
+    @Test public void finishWithoutAppOrMessageCompletesInBothIndependentProtocolsAndOptionalAppDoesNotGate() throws Exception {
         for (String protocol : new String[]{"phone_use", "autoglm"}) {
             setUp();
             assertCompleted(run("manual", protocol));
@@ -80,36 +85,19 @@ public final class AgentEnginePermissionTest {
             assertEquals(1, ScreenShadow.executions);
             assertTrue(ModelShadow.lastOutcome, ModelShadow.lastOutcome.contains("系统观察：前台应用包名=fixture.app"));
             assertTrue(ModelShadow.lastOutcome, ModelShadow.lastOutcome.contains("截图可能是宿主应用展示的另一应用截图"));
-        }
-    }
-
-    @Test public void optionalFinishAppDoesNotGateEitherIndependentProtocol() throws Exception {
-        for (String protocol : new String[]{"phone_use", "autoglm"}) {
             setUp();
             ModelShadow.finishApp = "other.app";
             assertCompleted(run("manual", protocol));
-            assertEquals(2, ModelShadow.plans);
-            assertEquals(1, ScreenShadow.executions);
-        }
-    }
-
-    @Test public void emptyFinishMessageIsAcceptedInBothIndependentProtocols() throws Exception {
-        for (String protocol : new String[]{"phone_use", "autoglm"}) {
+            assertEquals(protocol, 2, ModelShadow.plans);
+            assertEquals(protocol, 1, ScreenShadow.executions);
             setUp();
             ModelShadow.finishMessage = "";
             assertEquals("模型报告任务完成：", run("manual", protocol));
-            assertEquals(2, ModelShadow.plans);
+            assertEquals(protocol, 2, ModelShadow.plans);
         }
     }
 
-    @Test public void autoGlmAlsoGetsIndependentReviewBeforeExecuting() throws Exception {
-        assertCompleted(run("auto", "autoglm"));
-        assertEquals(1, ModelShadow.audits);
-        assertEquals(0, ScreenShadow.confirmations);
-        assertEquals(1, ScreenShadow.executions);
-    }
-
-    @Test public void manualAndYoloKeepDifferentSensitiveActionBehavior() throws Exception {
+    @Test public void manualAndYoloConfirmByRiskLevelWithoutIndependentReview() throws Exception {
         assertCompleted(run("manual", "phone_use"));
         assertEquals(1, ScreenShadow.confirmations);
         assertEquals(0, ModelShadow.audits);
@@ -118,20 +106,16 @@ public final class AgentEnginePermissionTest {
         assertEquals(0, ScreenShadow.confirmations);
         assertEquals(0, ModelShadow.audits);
         assertEquals(1, ScreenShadow.executions);
-    }
-
-    @Test public void manualDoesNotAskForOrdinaryAction() throws Exception {
+        setUp();
         ModelShadow.normal = true;
         assertCompleted(run("manual", "phone_use"));
-        assertEquals(0, ScreenShadow.confirmations);
-        assertEquals(0, ModelShadow.audits);
+        assertEquals("manual ordinary", 0, ScreenShadow.confirmations);
+        assertEquals("manual ordinary", 0, ModelShadow.audits);
         assertEquals(1, ScreenShadow.executions);
-    }
-
-    @Test public void yoloStillAsksForCriticalAction() throws Exception {
+        setUp();
         ModelShadow.critical = true;
         assertCompleted(run("yolo", "phone_use"));
-        assertEquals(1, ScreenShadow.confirmations);
+        assertEquals("yolo critical", 1, ScreenShadow.confirmations);
         assertEquals(0, ModelShadow.audits);
     }
 

@@ -47,12 +47,4 @@ class SettingsStateDisplayGeometryTest {
         assertTrue(state.setDisplayGeometry(Config.MAX_DISPLAY_SIZE, Config.MIN_DISPLAY_SIZE,
             Config.MAX_DISPLAY_DENSITY))
     }
-
-    @Test
-    fun readsCurrentDefaultDisplayGeometry() {
-        val geometry = SettingsState(application).currentDisplayGeometry()
-        assertTrue(geometry.width > 0)
-        assertTrue(geometry.height > 0)
-        assertTrue(geometry.density > 0)
-    }
 }

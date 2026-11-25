@@ -256,7 +256,7 @@ public final class PluginRuntimeTest {
         assertFalse(invalidated.toString().contains("old result must not be exposed"));
     }
 
-    @Test public void runningMcpSurvivesLegacyPhoneSettingsAndOtherPluginEnableChanges() throws Exception {
+    @Test public void runningMcpSurvivesRenameLegacyPhoneSettingsAndOtherPluginEnableChanges() throws Exception {
         Config.prefs(context).edit().putBoolean("enabled", true).putString("planner", "native").commit();
         PluginSettings.Snapshot added = PluginSettings.saveMcp(context, "", "Other fixture plugin",
             "https://other.example.invalid/mcp", "other-fixture-token", PluginSettings.MCP_PROTOCOL_VERSION);
@@ -278,6 +278,8 @@ public final class PluginRuntimeTest {
         assertEquals("running", PluginRuntime.poll(context, OWNER, id).getString("status"));
         PluginSettings.setEnabled(context, otherId, false);
         assertEquals("running", PluginRuntime.poll(context, OWNER, id).getString("status"));
+        PluginSettings.saveMcp(context, entry.id(), "Renamed fixture", ENDPOINT, TOKEN, PluginSettings.MCP_PROTOCOL_VERSION);
+        assertEquals("running", PluginRuntime.poll(context, OWNER, id).getString("status"));
         assertEquals(0, client.cancels.get());
 
         client.returnCall.countDown();
@@ -287,26 +289,10 @@ public final class PluginRuntimeTest {
         assertTrue(finished.getString("result").contains(client.response));
         Config.prefs(context).edit().putBoolean("enabled", true).putString("planner", "native").commit();
         PluginSettings.setEnabled(context, otherId, true);
-        assertEquals("done", PluginRuntime.poll(context, OWNER, id).getString("status"));
-        assertEquals(1, client.calls.get());
-        assertEquals(0, client.cancels.get());
-    }
-
-    @Test public void renamingSamePluginDoesNotCancelItsRunningCallOrInvalidateCompletedResult() throws Exception {
-        FakeClient client = queue(true, false);
-        client.response = "remote result after display-label change";
-        String id = start(request("{}"));
-        await(client.entered);
-        PluginSettings.saveMcp(context, entry.id(), "Renamed fixture", ENDPOINT, TOKEN, PluginSettings.MCP_PROTOCOL_VERSION);
-        assertEquals("running", PluginRuntime.poll(context, OWNER, id).getString("status"));
-        assertEquals(0, client.cancels.get());
-        client.returnCall.countDown();
-        awaitFinished(id);
-        assertEquals("done", PluginRuntime.poll(context, OWNER, id).getString("status"));
         PluginSettings.saveMcp(context, entry.id(), "Renamed again", ENDPOINT, TOKEN, PluginSettings.MCP_PROTOCOL_VERSION);
-        Bundle result = PluginRuntime.poll(context, OWNER, id);
-        assertEquals("done", result.getString("status"));
-        assertTrue(result.getString("result").contains(client.response));
+        Bundle renamed = PluginRuntime.poll(context, OWNER, id);
+        assertEquals("done", renamed.getString("status"));
+        assertTrue(renamed.getString("result").contains(client.response));
         assertEquals(1, client.calls.get());
         assertEquals(0, client.cancels.get());
     }
