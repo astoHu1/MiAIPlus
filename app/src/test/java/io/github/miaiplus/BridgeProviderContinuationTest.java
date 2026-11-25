@@ -22,12 +22,13 @@ import org.robolectric.RuntimeEnvironment;
 @RunWith(RobolectricTestRunner.class)
 @org.robolectric.annotation.Config(sdk = 33, application = Application.class)
 public final class BridgeProviderContinuationTest {
+    private Context context;
     private BridgeProvider provider;
     private Map<String, RunState> jobs;
     private RunState completed;
 
     @Before public void setUp() throws Exception {
-        Context context = new ContextWrapper(RuntimeEnvironment.getApplication()) {
+        context = new ContextWrapper(RuntimeEnvironment.getApplication()) {
             @Override public Context getApplicationContext() { return this; }
             @Override public String getPackageCodePath() { return ""; }
         };
@@ -166,6 +167,69 @@ public final class BridgeProviderContinuationTest {
             assertEquals("", field(BridgeProvider.class, "screenStopReason").get(null));
             assertNull(field(NativeSession.class, "active").get(null));
         }
+    }
+
+    @Test public void nativeSessionBetweenStepsStaysBusyUntilActualFinish() throws Exception {
+        Object session = nativeSession();
+        assertFalse(field(BridgeProvider.class, "screenTaskActive").getBoolean(null));
+        assertTrue("native session is busy even without a notification task", screenBusy());
+        field(BridgeProvider.class, "screenTaskId").set(null, "native-task");
+        field(BridgeProvider.class, "screenTaskActive").setBoolean(null, true);
+        field(BridgeProvider.class, "screenResult").set(null, "CONTINUE：等待模型下一步");
+        assertNull(field(BridgeProvider.class, "active").get(null));
+        assertTrue(NativeSession.hasActiveSession());
+        assertTrue(screenBusy());
+
+        JSONObject finish = new JSONObject().put("session", field(session.getClass(), "id").get(session))
+            .put("action", new JSONObject().put("action", "finish").put("message", "fixture done"));
+        assertTrue(NativeSession.handle(new Config(Config.prefs(context)), "MIAIPLUS:" + finish,
+            android.os.Process.myUid()).startsWith("模型报告任务完成"));
+
+        assertFalse(NativeSession.hasPendingOperation());
+        assertFalse(screenBusy());
+        assertFalse(field(BridgeProvider.class, "screenTaskActive").getBoolean(null));
+    }
+
+    @Test public void screenBusyFollowsReservationExecutionAndCleanupButNotAStaleCompletedScreen() throws Exception {
+        RunState run = new RunState("preparing-screen", android.os.Process.myUid());
+        run.screen = true;
+        run.preparingScreen = true;
+        field(BridgeProvider.class, "active").set(null, run);
+        field(BridgeProvider.class, "screenTaskActive").setBoolean(null, true);
+        assertFalse(NativeSession.hasPendingOperation());
+        assertTrue(screenBusy());
+        run.cancel();
+        assertTrue("a cancelled step stays busy until the worker unwinds", screenBusy());
+        field(BridgeProvider.class, "active").set(null, null);
+        assertFalse(screenBusy());
+
+        for (String phase : new String[]{"executing", "closing"}) {
+            field(NativeSession.class, phase).setBoolean(null, true);
+            assertFalse(phase, NativeSession.hasActiveSession());
+            assertTrue(phase, screenBusy());
+            field(NativeSession.class, phase).setBoolean(null, false);
+            assertFalse(phase, screenBusy());
+        }
+
+        RunState chat = new RunState("ordinary-chat", android.os.Process.myUid());
+        field(BridgeProvider.class, "active").set(null, chat);
+        field(BridgeProvider.class, "screenTaskId").set(null, "completed-screen");
+        field(BridgeProvider.class, "screenTaskActive").setBoolean(null, true);
+        assertFalse(screenBusy());
+        assertSame(chat, field(BridgeProvider.class, "active").get(null));
+        assertFalse(chat.cancelled.get());
+    }
+
+    private boolean screenBusy() { return provider.call("screen_busy", null, null).getBoolean("screenBusy"); }
+
+    private Object nativeSession() throws Exception {
+        Class<?> type = Class.forName(NativeSession.class.getName() + "$State");
+        Constructor<?> constructor = type.getDeclaredConstructor(String.class, int.class, int.class,
+            ScreenService.class, boolean.class);
+        constructor.setAccessible(true);
+        Object session = constructor.newInstance("fixture goal", android.os.Process.myUid(), 200, null, false);
+        field(NativeSession.class, "active").set(null, session);
+        return session;
     }
 
     private Object activateSession(String taskId) throws Exception {

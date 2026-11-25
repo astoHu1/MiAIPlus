@@ -99,32 +99,27 @@ public class DisplayHelperTaskTest {
         field.set(owner, value);
     }
 
-    @Test public void customAndEmptyAffinitiesStillProtectActualMainScreenComponent() throws Exception {
+    @Test public void launchOutcomeTrustsOnlyComponentOwnershipAndNeverHidesATaskOnAnotherDisplay() throws Exception {
+        String target = "example.target";
+        // An unrelated or empty affinity must never become ownership evidence.
         for (String affinity : new String[] { "unrelated.task.group", "" }) {
-            var tasks = DisplayHelper.queryTasks(new TaskServiceFixture(List.of(task(7, 0, true, "example.target", affinity))));
-            assertEquals(0, DisplayHelper.visibleTaskDisplay(tasks, "example.target", 9));
+            var tasks = DisplayHelper.queryTasks(new TaskServiceFixture(List.of(task(7, 0, true, target, affinity))));
+            assertEquals(0, DisplayHelper.visibleTaskDisplay(tasks, target, 9));
             assertEquals(-1, DisplayHelper.visibleTaskDisplay(tasks, "unrelated.task.group", 9));
             assertEquals(7, tasks.get(0).id());
         }
-    }
-
-    @Test public void launchCanWaitForLocalSystemPromptsWithoutClaimingTheTargetOpened() {
-        for (String prompt : new String[]{"com.miui.securitycenter/.ConfirmStartActivity",
-            "com.android.permissioncontroller/.GrantPermissionsActivity",
-            "com.lbe.security.miui/.PermissionDialog", "android/com.android.internal.app.ResolverActivity",
-            "com.android.intentresolver/.ChooserActivity", "com.miui.packageinstaller/.InstallActivity"}) {
-            assertEquals(prompt, "awaiting_confirmation", DisplayHelper.launchOutcome("example.target", prompt, -1));
-        }
-        for (String unknown : new String[]{"", "untrusted.app/.ChooserActivity", "android/.OtherActivity"})
-            assertEquals(unknown, "LAUNCH_FAILED", DisplayHelper.launchOutcome("example.target", unknown, -1));
-    }
-
-    @Test public void launchAndPromptResultsNeverHideATargetTaskOnAnotherDisplay() throws Exception {
-        String target = "example.target";
         var ownTask = DisplayHelper.queryTasks(new TaskServiceFixture(List.of(task(7, 9, true, target, ""))));
         int ownConflict = DisplayHelper.visibleTaskDisplay(ownTask, target, 9);
         assertEquals(-1, ownConflict);
         assertEquals("launched", DisplayHelper.launchOutcome(target, target + "/.Main", ownConflict));
+        for (String prompt : new String[]{"com.miui.securitycenter/.ConfirmStartActivity",
+            "com.android.permissioncontroller/.GrantPermissionsActivity",
+            "com.lbe.security.miui/.PermissionDialog", "android/com.android.internal.app.ResolverActivity",
+            "com.android.intentresolver/.ChooserActivity", "com.miui.packageinstaller/.InstallActivity"}) {
+            assertEquals(prompt, "awaiting_confirmation", DisplayHelper.launchOutcome(target, prompt, -1));
+        }
+        for (String unknown : new String[]{"", "untrusted.app/.ChooserActivity", "android/.OtherActivity"})
+            assertEquals(unknown, "LAUNCH_FAILED", DisplayHelper.launchOutcome(target, unknown, -1));
         for (int other : new int[]{0, 12}) {
             var stolen = DisplayHelper.queryTasks(new TaskServiceFixture(List.of(task(7, other, true, target, ""))));
             int conflict = DisplayHelper.visibleTaskDisplay(stolen, target, 9);
@@ -166,7 +161,7 @@ public class DisplayHelperTaskTest {
         return new JSONObject(captured.toString().strip());
     }
 
-    @Test public void rejectedIgnoredLocalOrMissingImePolicyCannotReportIsolationReady() throws Exception {
+    @Test public void onlyAVerifiedHidePolicyReportsImeIsolationAndRecheckingDoesNotReconfigure() throws Exception {
         for (Object policy : List.of(new RejectedImePolicy(), new IgnoredImePolicy(),
                 new LocalImePolicy(), new Object())) {
             String scenario = policy.getClass().getSimpleName();
@@ -176,19 +171,15 @@ public class DisplayHelperTaskTest {
             assertEquals(scenario, "IME_ISOLATION_FAILED", reply.getString("code"));
             assertTrue(scenario, !reply.optBoolean("verified", false));
         }
-    }
-
-    @Test public void hidePolicyIsVerifiedAndRecheckingDoesNotReconfigureDisplay() throws Exception {
         WorkingImePolicy policy = new WorkingImePolicy();
         JSONObject first = imeReply(policy);
         assertEquals("HIDE", first.getString("policy"));
         assertEquals("true", first.getString("verified"));
-        assertEquals(1, policy.writes);
         assertEquals("HIDE", imeReply(policy).getString("policy"));
         assertEquals(1, policy.writes);
     }
 
-    @Test public void platformMustExposeBothRequestAndEffectiveFocusCapabilities() throws Exception {
+    @Test public void focusIsolationRequiresBothPlatformCapabilitiesAndBothEffectiveBits() throws Exception {
         int[] flags = DisplayHelper.requiredFocusFlags(FocusManagerFlags.class, FocusDisplayFlags.class);
         assertEquals((1 << 14) | (1 << 16), flags[0]);
         assertEquals((1 << 11) | (1 << 12), flags[1]);
@@ -196,9 +187,6 @@ public class DisplayHelperTaskTest {
             () -> DisplayHelper.requiredFocusFlags(PartialFocusFlags.class, FocusDisplayFlags.class));
         assertThrows(Exception.class,
             () -> DisplayHelper.requiredFocusFlags(FocusManagerFlags.class, Object.class));
-    }
-
-    @Test public void ignoredFocusBitsFailEvenWhenOneIsolationFeatureWorks() {
         int ownFocus = 1 << 11, noSteal = 1 << 12;
         DisplayHelper.verifyFocusFlags(ownFocus | noSteal | 1, ownFocus | noSteal);
         assertThrows(IllegalStateException.class, () -> DisplayHelper.verifyFocusFlags(ownFocus, ownFocus | noSteal));

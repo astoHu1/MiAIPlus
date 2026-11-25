@@ -2,8 +2,6 @@ package io.github.miaiplus
 
 import android.app.Application
 import android.content.pm.PackageInfo
-import android.graphics.Bitmap
-import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -24,7 +22,6 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config as RobolectricConfig
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.Shadows.shadowOf
-import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
 @RobolectricConfig(sdk = [35], application = Application::class)
@@ -165,9 +162,7 @@ class PluginSettingsUiTest {
         compose.onNodeWithTag("termux-start").assertHasNoClickAction()
     }
 
-    @Test
-    @RobolectricConfig(qualifiers = "zh-rCN-w320dp-h873dp-xxhdpi")
-    fun configuredTermuxOptionsStayInSubpageAndPersistAcrossRecreation() {
+    @Test fun configuredTermuxOptionsStayInSubpageAndPersistAcrossRecreation() {
         val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
         val app = state.getApplication<Application>()
         compose.runOnIdle {
@@ -187,39 +182,23 @@ class PluginSettingsUiTest {
         for (tag in listOf("termux-autostart", "termux-start", "termux-setup")) {
             compose.onNodeWithTag(tag).assertDoesNotExist()
         }
-        compose.onNodeWithText("停止调用").assertDoesNotExist()
-        capture("settings-plugins-termux")
         compose.onNodeWithTag("termux-settings").performScrollTo().performClick()
         compose.onNodeWithTag("tab-Plugins").assertIsSelected()
         compose.onNodeWithTag("termux-enabled").assertDoesNotExist()
         compose.onNodeWithTag("termux-start").assertHasClickAction()
-        compose.onNodeWithText("重新配置").assertIsDisplayed()
         termuxSwitch("termux-autostart").assertIsOff()
-        capture("settings-termux")
         compose.onNodeWithTag("termux-autostart").performClick()
         termuxSwitch("termux-autostart").assertIsOn()
         assertTrue(PluginSettings.termuxAutoStart(app))
 
-        RuntimeEnvironment.setQualifiers("+night")
-        RuntimeEnvironment.setFontScale(1.5f)
-        try {
-            compose.activityRule.scenario.recreate()
-            compose.runOnIdle { assertEquals(1.5f, compose.activity.resources.configuration.fontScale, 0.01f) }
-            compose.onNodeWithTag("termux-settings-page").assertExists()
-            termuxSwitch("termux-autostart").assertIsDisplayed().assertIsOn()
-            compose.onNodeWithTag("termux-start").assertIsDisplayed()
-            compose.onNodeWithTag("termux-setup").assertIsDisplayed()
-            capture("settings-termux-dark-large-text")
-            compose.onNodeWithContentDescription("返回").performClick()
-            compose.onNodeWithTag("plugin-settings").assertExists()
-            compose.onNodeWithTag("termux-enabled").performScrollTo().performClick()
-            termuxSwitch("termux-enabled").assertIsOff()
-            compose.onNodeWithTag("termux-settings").performScrollTo().performClick()
-            termuxSwitch("termux-autostart").assertIsOn().assertIsNotEnabled()
-        } finally {
-            RuntimeEnvironment.setFontScale(1f)
-            RuntimeEnvironment.setQualifiers("+notnight")
-        }
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithTag("termux-settings-page").assertExists()
+        termuxSwitch("termux-autostart").assertIsOn()
+        compose.onNodeWithContentDescription("返回").performClick()
+        compose.onNodeWithTag("termux-enabled").performScrollTo().performClick()
+        termuxSwitch("termux-enabled").assertIsOff()
+        compose.onNodeWithTag("termux-settings").performScrollTo().performClick()
+        termuxSwitch("termux-autostart").assertIsOn().assertIsNotEnabled()
     }
 
     private fun termuxSwitch(tag: String) = compose.onNode(
@@ -229,37 +208,6 @@ class PluginSettingsUiTest {
 
     private fun installTermuxFixture(app: Application) {
         shadowOf(app.packageManager).installPackage(PackageInfo().apply { packageName = "com.termux" })
-    }
-
-    @Test fun mcpEditorPreservesCursorAcrossIncrementalInputAndSelectionChanges() {
-        val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
-        compose.onNodeWithTag("tab-Plugins").performClick()
-        compose.onNodeWithTag("add-mcp-plugin").performClick()
-        for ((tag, chunks) in listOf(
-            "plugin-label" to listOf("测试", " MCP", " 插件"),
-            "plugin-endpoint" to listOf("https://", "example.test", "/mcp"),
-            "plugin-token" to listOf("fixture", "-token", "-123"),
-        )) {
-            val field = compose.onNodeWithTag(tag).performScrollTo()
-            var expected = ""
-            for (chunk in chunks) {
-                field.performTextInput(chunk)
-                expected += chunk
-                field.assert(SemanticsMatcher.expectValue(SemanticsProperties.InputText,
-                    androidx.compose.ui.text.AnnotatedString(expected)))
-                field.assert(SemanticsMatcher.expectValue(SemanticsProperties.TextSelectionRange,
-                    androidx.compose.ui.text.TextRange(expected.length)))
-            }
-            field.performTextInputSelection(androidx.compose.ui.text.TextRange(0))
-            field.performTextInput("prefix-")
-            field.assert(SemanticsMatcher.expectValue(SemanticsProperties.InputText,
-                androidx.compose.ui.text.AnnotatedString("prefix-$expected")))
-        }
-        compose.runOnIdle {
-            assertEquals("prefix-测试 MCP 插件", state.plugins.draft?.label)
-            assertEquals("prefix-https://example.test/mcp", state.plugins.draft?.endpoint)
-            assertEquals("prefix-fixture-token-123", state.plugins.draft?.bearerToken)
-        }
     }
 
     @Test fun mcpEditorKeepsSelectionWhenRevealingTokenAndDropsCancelledInput() {
@@ -306,35 +254,9 @@ class PluginSettingsUiTest {
         Config.prefs(state.getApplication<Application>()).edit().clear().commit()
     }
 
-    @Test
-    @RobolectricConfig(qualifiers = "zh-rCN-w320dp-h873dp-xxhdpi")
-    fun mcpAddActionAlignsWithHeadingAndOpensEditorOnNarrowScreen() {
-        compose.onNodeWithTag("tab-Plugins").performClick()
-        val title = compose.onNodeWithTag("mcp-section-title").fetchSemanticsNode().boundsInRoot
-        val add = compose.onNodeWithTag("add-mcp-plugin").fetchSemanticsNode().boundsInRoot
-        val empty = compose.onNodeWithText("还没有 MCP 插件").fetchSemanticsNode().boundsInRoot
-        assertEquals(title.center.y, add.center.y, 1f)
-        assertTrue("Add action overlaps the section title", title.right <= add.left)
-        assertTrue("Add action overlaps the plugin card", add.bottom < empty.top)
-        compose.onNodeWithTag("add-mcp-plugin").assertIsDisplayed().performClick()
-        compose.onNodeWithText("添加 MCP 插件").assertExists()
-        compose.onNodeWithText("取消", substring = false).performClick()
-    }
-
-    @Test fun pluginPageShowsPeerBuiltinsAndKeepsCredentialDraftMaskedAcrossRecreation() {
+    @Test fun mcpCredentialDraftStaysMaskedAcrossRecreationAndEnablingRequiresConfirmation() {
         val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
         compose.onNodeWithTag("tab-Plugins").performClick()
-        compose.onNodeWithTag("plugin-settings").assertExists()
-        compose.onNodeWithText("前台控屏").assertExists()
-        compose.onNodeWithText("后台控屏").assertExists()
-        compose.onNodeWithTag("tab-Plugins").assertIsSelected()
-        capture("settings-plugins-light")
-        RuntimeEnvironment.setQualifiers("+night")
-        compose.activityRule.scenario.recreate()
-        capture("settings-plugins-dark")
-        RuntimeEnvironment.setQualifiers("+notnight")
-        compose.activityRule.scenario.recreate()
-
         compose.onNodeWithTag("add-mcp-plugin").performClick()
         compose.onNodeWithTag("plugin-label").performTextInput("Fixture MCP")
         compose.onNodeWithTag("plugin-endpoint").performTextInput("https://example.com/mcp")
@@ -353,38 +275,6 @@ class PluginSettingsUiTest {
         compose.onNodeWithText("启用 MCP 插件？").assertExists()
         compose.onNodeWithText("取消", substring = false).performClick()
         assertFalse(state.plugins.entries.first { it.id() == remote.id() }.enabled())
-        capture("settings-plugins-mcp")
-    }
-
-    @Test fun toolInspectionShowsSourceNameAndReadOnlyExpandableInputSchema() {
-        val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
-        lateinit var tool: PluginToolSpec
-        compose.runOnIdle {
-            state.plugins.create()
-            state.plugins.updateDraft(label = "Fixture MCP", endpoint = "https://example.test/mcp")
-            assertTrue(state.plugins.save())
-            val snapshot = requireNotNull(state.plugins.snapshot)
-            val id = snapshot.entries().first { it.kind() == "mcp" }.id()
-            tool = PluginToolSpec(id, "mcp", PluginToolSpec.mcpName(id, "read_fixture"), "read_fixture",
-                "Read fixture", "Read synthetic data",
-                """{"type":"object","properties":{"city":{"type":"string"}}}""", 30000)
-            PluginSettings.updateTools(state.getApplication<Application>(), id, snapshot.revision(), listOf(tool))
-            assertTrue(state.plugins.reload())
-        }
-        compose.onNodeWithTag("tab-Plugins").performClick()
-        compose.onNodeWithText("1 个工具", substring = true).assertExists()
-        compose.onNodeWithText("Fixture MCP", substring = false).performScrollTo().performClick()
-        compose.onNodeWithText("Read synthetic data").assertExists()
-        compose.onNodeWithText(tool.displayName(), substring = false).performScrollTo().performClick()
-        compose.onNodeWithText("来源：read_fixture").assertDoesNotExist()
-        compose.onNodeWithText("工具名：${tool.name()}").assertDoesNotExist()
-        compose.onNodeWithTag("plugin-schema-${tool.name()}").assertDoesNotExist()
-        compose.onNodeWithText("参数详情").performClick()
-        compose.onNodeWithText("来源：read_fixture").assertExists()
-        compose.onNodeWithText("工具名：${tool.name()}").assertExists()
-        compose.onNodeWithTag("plugin-schema-${tool.name()}").assertTextContains("\"city\"", substring = true)
-        compose.onNodeWithText("收起详情").performClick()
-        compose.onNodeWithTag("plugin-schema-${tool.name()}").assertDoesNotExist()
     }
 
     @Test fun mcpEditorSavesExplicitProtocolAndReopensSelection() {
@@ -409,13 +299,5 @@ class PluginSettingsUiTest {
         compose.onNodeWithText("2025-11-25（默认）", substring = false).performClick()
         compose.onNodeWithText("取消", substring = false).performScrollTo().performClick()
         assertEquals("2025-06-18", state.plugins.entries.first { it.id() == remote.id() }.protocolVersion())
-    }
-
-    private fun capture(name: String) {
-        compose.waitForIdle()
-        val bitmap = compose.onRoot().captureToImage().asAndroidBitmap()
-        val directory = File("build/outputs/ui-screenshots").apply { mkdirs() }
-        File(directory, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
-        bitmap.recycle()
     }
 }

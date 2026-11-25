@@ -1,5 +1,6 @@
 package io.github.miaiplus;
 
+import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.function.LongFunction;
 import org.junit.Test;
@@ -7,6 +8,8 @@ import static org.junit.Assert.*;
 
 public class LaunchVerifierTest {
     private static final String TARGET = "fixture.target";
+    private static final List<String> CALLERS = List.of("MiAIPlus", "io.github.miaiplus");
+    private static final List<String> TARGETS = List.of("测试应用", "fixture.target");
     private static final class Fake implements LaunchVerifier.Driver {
         long time;
         long cancelAt = Long.MAX_VALUE;
@@ -21,7 +24,7 @@ public class LaunchVerifierTest {
         @Override public long now() { return time; }
         @Override public void pause(long millis) { time += millis; }
     }
-    @Test public void ordinaryWindowsRequireStableTargetAndAtMostOneStart() throws Exception {
+    @Test public void ordinaryWindowsRequireAStableTargetAndAtMostOneStart() throws Exception {
         for (long readyAt : new long[]{0, 1000, 4000}) {
             Fake f = new Fake();
             f.windows = t -> t >= readyAt ? TARGET : readyAt == 1000
@@ -31,8 +34,6 @@ public class LaunchVerifierTest {
             assertEquals("stable window when target ready at " + readyAt, readyAt + 500, f.time);
             assertEquals("ordinary window must not approve consent", 0, f.consentClicks);
         }
-    }
-    @Test public void briefTargetWindowDoesNotCountAsSuccess() throws Exception {
         Fake f = new Fake(); f.windows = t -> t == 250 ? TARGET : "fixture.origin";
         try { LaunchVerifier.launch(TARGET, f); fail(); }
         catch (IllegalStateException expected) { assertTrue(expected.getMessage().startsWith("PAUSE：")); }
@@ -46,8 +47,6 @@ public class LaunchVerifierTest {
             assertEquals(1, f.starts);
             assertEquals(250, f.time);
         }
-    }
-    @Test public void untitledOrUnchangedSecurityCenterReturnsForObservation() throws Exception {
         for (long visibleAt : new long[]{250, 10000}) {
             Fake f = new Fake();
             f.windows = t -> t >= visibleAt
@@ -59,7 +58,16 @@ public class LaunchVerifierTest {
         assertFalse(LaunchVerifier.launch(TARGET, original));
         assertEquals(1, original.starts); assertEquals(0, original.consentClicks); assertEquals(10000, original.time);
     }
-    @Test public void launchConsentIsAllowedOnceThenTargetIsVerified() throws Exception {
+    @Test public void existingPermissionPromptsReturnForPlanningBeforeAnotherLaunch() throws Exception {
+        for (String blocker : new String[]{"com.lbe.security.miui",
+            LaunchVerifier.classifyForeground("com.miui.securitycenter", "相机")}) {
+            Fake f = new Fake(); f.consent = true; f.windows = t -> blocker;
+            assertFalse(blocker, LaunchVerifier.launch(TARGET, f));
+            assertEquals(blocker, 0, f.starts);
+            assertEquals(blocker, 0, f.consentClicks);
+        }
+    }
+    @Test public void launchConsentIsAllowedOnceThenAStableTargetIsVerified() throws Exception {
         for (String target : new String[]{TARGET, "com.miui.securitycenter"}) {
             for (boolean existingPrompt : new boolean[]{false, true}) {
                 String scenario = target + ", existing prompt=" + existingPrompt;
@@ -72,41 +80,26 @@ public class LaunchVerifierTest {
                 assertEquals(scenario, existingPrompt ? 750 : 1500, f.time);
             }
         }
-    }
-    @Test public void clickingConsentDoesNotCountAsSuccessfulLaunch() throws Exception {
-        Fake f = new Fake(); f.consent = true;
-        f.windows = t -> t < 250 ? "fixture.origin" : LaunchVerifier.XIAOMI_CONFIRMATION;
-        assertFalse(LaunchVerifier.launch(TARGET, f));
-        assertEquals(1, f.starts); assertEquals(1, f.consentClicks); assertEquals(1750, f.time);
-    }
-    @Test public void lateLaunchConsentAllowsTheTargetToBecomeStableWithinGrace() throws Exception {
-        Fake f = new Fake(); f.consent = true;
-        f.windows = t -> t < 10000 ? "fixture.origin" : t < 10750
+        Fake late = new Fake(); late.consent = true;
+        late.windows = t -> t < 10000 ? "fixture.origin" : t < 10750
             ? LaunchVerifier.classifyForeground("com.miui.securitycenter", "打开应用") : TARGET;
-        assertTrue(LaunchVerifier.launch(TARGET, f));
-        assertEquals(1, f.starts); assertEquals(1, f.consentClicks); assertEquals(11250, f.time);
+        assertTrue(LaunchVerifier.launch(TARGET, late));
+        assertEquals(1, late.starts); assertEquals(1, late.consentClicks); assertEquals(11250, late.time);
+        Fake interrupted = new Fake(); interrupted.consent = true;
+        interrupted.windows = t -> t < 250 ? "fixture.origin" : t == 500 ? LaunchVerifier.XIAOMI_CONFIRMATION : TARGET;
+        assertTrue(LaunchVerifier.launch(TARGET, interrupted));
+        assertEquals(1, interrupted.starts); assertEquals(1, interrupted.consentClicks); assertEquals(1250, interrupted.time);
     }
-    @Test public void launchConsentInterruptsTheTargetsStableWindow() throws Exception {
-        Fake f = new Fake(); f.consent = true;
-        f.windows = t -> t < 250 ? "fixture.origin" : t == 500 ? LaunchVerifier.XIAOMI_CONFIRMATION : TARGET;
-        assertTrue(LaunchVerifier.launch(TARGET, f));
-        assertEquals(1, f.starts); assertEquals(1, f.consentClicks); assertEquals(1250, f.time);
-    }
-    @Test public void existingPermissionPromptsReturnForPlanningBeforeAnotherLaunch() throws Exception {
-        for (String blocker : new String[]{"com.lbe.security.miui",
-            LaunchVerifier.classifyForeground("com.miui.securitycenter", "相机")}) {
-            Fake f = new Fake(); f.consent = true; f.windows = t -> blocker;
-            assertFalse(blocker, LaunchVerifier.launch(TARGET, f));
-            assertEquals(blocker, 0, f.starts);
-            assertEquals(blocker, 0, f.consentClicks);
-        }
-    }
-    @Test public void anotherSecurityPermissionAfterLaunchConsentRequiresANewDecision() throws Exception {
-        Fake f = new Fake(); f.consent = true;
-        f.windows = t -> t < 250 ? "fixture.origin" : LaunchVerifier.classifyForeground("com.miui.securitycenter",
+    @Test public void consentClickWithoutTheTargetOrFollowedByAnotherPermissionDoesNotClaimLaunch() throws Exception {
+        Fake stuck = new Fake(); stuck.consent = true;
+        stuck.windows = t -> t < 250 ? "fixture.origin" : LaunchVerifier.XIAOMI_CONFIRMATION;
+        assertFalse(LaunchVerifier.launch(TARGET, stuck));
+        assertEquals(1, stuck.starts); assertEquals(1, stuck.consentClicks); assertEquals(1750, stuck.time);
+        Fake another = new Fake(); another.consent = true;
+        another.windows = t -> t < 250 ? "fixture.origin" : LaunchVerifier.classifyForeground("com.miui.securitycenter",
             t < 1000 ? "启动应用" : "相机");
-        assertFalse(LaunchVerifier.launch(TARGET, f));
-        assertEquals(1, f.starts); assertEquals(1, f.consentClicks); assertEquals(1000, f.time);
+        assertFalse(LaunchVerifier.launch(TARGET, another));
+        assertEquals(1, another.starts); assertEquals(1, another.consentClicks); assertEquals(1000, another.time);
     }
     @Test public void cancellationStopsBeforeLaunchAndDuringLaunchWaitAndConsentGrace() throws Exception {
         Fake before = new Fake(); before.cancelled = true;
@@ -118,5 +111,42 @@ public class LaunchVerifierTest {
             assertThrows(CancellationException.class, () -> LaunchVerifier.launch(TARGET, f));
             assertEquals(1, f.starts); assertEquals(consent ? 1 : 0, f.consentClicks); assertEquals(1000, f.time);
         }
+    }
+
+    @Test public void launchTargetResolvesOnlyUniqueLauncherPackagesOrLabels() {
+        var exact = new AppLaunchTarget("fixture.first", "Main", "First");
+        var other = new AppLaunchTarget("fixture.other", "Main", "fixture.first");
+        assertEquals(exact, AppLaunchTarget.resolve(" fixture.first ", List.of(other, exact)));
+        assertEquals(exact, AppLaunchTarget.resolve("First", List.of(exact,
+            new AppLaunchTarget("fixture.first", "Alias", "First"))));
+        try {
+            AppLaunchTarget.resolve("First", List.of(new AppLaunchTarget("fixture.first", "Main", "First"),
+                new AppLaunchTarget("fixture.other", "Main", "First"))); fail();
+        } catch (IllegalStateException expected) { assertTrue(expected.getMessage().contains("不唯一")); }
+        for (String app : new String[]{"missing.app", "intent://fixture", "", "fixture.Main"}) {
+            try { AppLaunchTarget.resolve(app, List.of()); fail(); }
+            catch (IllegalStateException expected) { assertTrue(expected.getMessage().contains("启动入口")); }
+        }
+    }
+    @Test public void launchPromptMatchesOnlyTheSystemRequestForThisCallerAndTarget() {
+        for (String group : new String[]{"启动应用", "打开应用"}) {
+            for (String request : new String[]{"MiAIPlus 想要打开\nfixture.target，是否允许？",
+                "“MiAIPlus”尝试打开“测试应用”", "MiAIPlus 正在尝试打开 测试应用"})
+                assertTrue(LaunchPrompt.matches("com.miui.securitycenter", group, request,
+                    List.of(group, request, "本次允许", "始终允许", "拒绝"), CALLERS, TARGETS));
+        }
+        for (String group : new String[]{"启动应用", "打开应用"}) {
+            for (String request : new String[]{"其他应用想要打开fixture.target，是否允许？",
+                "MiAIPlus想要打开其他应用，是否允许？", "MiAIPlus想要打开fixture.target.evil，是否允许？",
+                "MiAIPlus想要打开fixture.target并读取通讯录，是否允许？", "MiAIPlus请求访问相机"})
+                assertFalse(LaunchPrompt.matches("com.miui.securitycenter", group, request,
+                    List.of(request, "本次允许", "拒绝"), CALLERS, TARGETS));
+            assertFalse(LaunchPrompt.matches("fixture.target", group, "MiAIPlus想要打开fixture.target，是否允许？",
+                List.of("MiAIPlus想要打开fixture.target，是否允许？", "本次允许", "拒绝"), CALLERS, TARGETS));
+            assertFalse(LaunchPrompt.matches("com.miui.securitycenter", group, "MiAIPlus想要打开fixture.target，是否允许？",
+                List.of("MiAIPlus想要打开fixture.target，是否允许？", "始终允许", "拒绝"), CALLERS, TARGETS));
+        }
+        assertFalse(LaunchPrompt.matches("com.miui.securitycenter", "相机", "MiAIPlus想要打开fixture.target，是否允许？",
+            List.of("MiAIPlus想要打开fixture.target，是否允许？", "本次允许", "拒绝"), CALLERS, TARGETS));
     }
 }

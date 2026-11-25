@@ -54,13 +54,21 @@ public class PersonaProfilesTest {
         assertEquals("已保存的提示词", fromFlat.active().text);
     }
 
-    @Test public void blankAndOverlongNamesFailValidationAndDuplicatesLeaveStorageUntouched() {
+    @Test public void validationRejectsBlankOrOverlongNamesBlankTextAndDuplicatesWithoutTouchingStorage() {
         for (String name : new String[]{"", "   ", "一二三四五六七八九十一二三四五六七八九十一"}) {
             try { persona("b", name, "新内容").validated(); fail("Accepted: " + name); }
             catch (IllegalArgumentException expected) {
                 if (name.isBlank()) assertEquals("请填写人设名称", expected.getMessage());
             }
         }
+        assertEquals(20, persona("b", "一二三四五六七八九十一二三四五六七八九十", "x").validated().name.length());
+        try { persona("id", "名称", "   ").validated(); fail("Blank text accepted"); }
+        catch (IllegalArgumentException expected) { assertEquals("请填写提示词内容", expected.getMessage()); }
+        String oversized = "字".repeat(Config.MAX_CUSTOM_PROMPT_CHARS + 50);
+        PersonaProfiles.Profile validated = persona("id", " 名称 ", oversized).validated();
+        assertEquals("名称", validated.name);
+        assertEquals(Config.MAX_CUSTOM_PROMPT_CHARS, validated.text.length());
+        assertTrue(oversized.startsWith(validated.text));
         Storage storage = new Storage();
         storage.save(persona("a", "人设甲", "原文"), true);
         Map<String, String> before = new HashMap<>(storage.values);
@@ -69,25 +77,9 @@ public class PersonaProfilesTest {
             assertEquals("人设名称已存在", expected.getMessage());
             assertEquals(before, storage.values);
         }
-        PersonaProfiles.Profile renamed = persona("a", "一二三四五六七八九十一二三四五六七八九十", "原文").validated();
-        assertEquals(20, renamed.name.length());
-        storage.save(renamed, false);
-        PersonaProfiles profiles = new PersonaProfiles(storage.prefs);
-        assertEquals(1, profiles.profiles.size());
-        assertEquals("一二三四五六七八九十一二三四五六七八九十", profiles.active().name);
     }
 
-    @Test public void validationRequiresPromptTextAndTruncatesItAtFourThousandCharacters() {
-        try { persona("id", "名称", "   ").validated(); fail("Blank text accepted"); }
-        catch (IllegalArgumentException expected) { assertEquals("请填写提示词内容", expected.getMessage()); }
-        String oversized = "字".repeat(Config.MAX_CUSTOM_PROMPT_CHARS + 50);
-        PersonaProfiles.Profile validated = persona("id", " 名称 ", oversized).validated();
-        assertEquals("名称", validated.name);
-        assertEquals(Config.MAX_CUSTOM_PROMPT_CHARS, validated.text.length());
-        assertTrue(oversized.startsWith(validated.text));
-    }
-
-    @Test public void switchingWritesTheActiveProfileTextIntoTheFlatSnapshotAndKeepsTheOtherProfile() {
+    @Test public void switchingAndDeletingKeepTheFlatSnapshotOnTheActiveProfile() {
         Storage storage = new Storage();
         var first = persona("a", "人设甲", "甲的提示词");
         var second = persona("b", "人设乙", "乙的提示词");
@@ -99,39 +91,26 @@ public class PersonaProfilesTest {
         assertEquals(first.id, profiles.activeId);
         assertEquals("甲的提示词", storage.values.get(Config.CUSTOM_PROMPT_TEXT_KEY));
         assertEquals("乙的提示词", profiles.find(second.id).text);
-    }
-
-    @Test public void deletingTheActiveProfileSelectsTheRemainingOneAndDropsItsText() {
-        Storage storage = new Storage();
-        var first = persona("a", "甲", "甲的内容");
-        var second = persona("b", "乙", "乙的内容");
-        storage.save(first, true);
-        storage.save(second, false);
-        storage.save(first, false);
         storage.save(second, true);
-        PersonaProfiles profiles = new PersonaProfiles(storage.prefs);
+        profiles = new PersonaProfiles(storage.prefs);
         assertEquals(1, profiles.profiles.size());
         assertEquals(second.id, profiles.activeId);
-        assertEquals("乙的内容", storage.values.get(Config.CUSTOM_PROMPT_TEXT_KEY));
-        assertFalse(storage.values.toString().contains("甲的内容"));
+        assertEquals("乙的提示词", storage.values.get(Config.CUSTOM_PROMPT_TEXT_KEY));
+        assertFalse(storage.values.toString().contains("甲的提示词"));
     }
 
-    @Test public void missingOrDeletedActiveIdentitySelectsTheFirstStoredPersona() {
+    @Test public void missingActiveIdentitySelectsTheFirstPersonaAndCorruptJsonFallsBackToTheDefault() {
         for (String active : new String[]{null, "deleted"}) {
             Storage storage = new Storage();
             storage.save(persona("a", "甲", "甲的内容"), true);
             storage.save(persona("b", "乙", "乙的内容"), false);
             if (active == null) storage.values.remove("activePersonaProfile");
             else storage.values.put("activePersonaProfile", active);
-
             PersonaProfiles profiles = new PersonaProfiles(storage.prefs);
             assertEquals("a", profiles.activeId);
             assertEquals("甲的内容", profiles.active().text);
             assertEquals(2, profiles.profiles.size());
         }
-    }
-
-    @Test public void corruptJsonFallsBackToAnEmptyDefaultPersonaInsteadOfThrowing() {
         for (String broken : new String[]{"broken", "[]", "[\"not-json\"]",
             "[{\"id\":\"\",\"name\":\"有名\",\"text\":\"\"}]",
             "[{\"id\":\"a\",\"name\":\"甲\",\"text\":\"\"},{\"id\":\"a\",\"name\":\"乙\",\"text\":\"\"}]",

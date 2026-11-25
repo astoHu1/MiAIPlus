@@ -43,7 +43,7 @@ public class NativeReasoningHookTest {
         for (String title : List.of("自动模式", "快速模式", "专家模式")) modes.add(title);
     }
 
-    @Test public void floatingMenuUsesModelEffortsAndKeepsOtherEntries() {
+    @Test public void floatingMenuOnlyExposesEffortsTheActiveModelSupports() {
         config.putString("reasoning", "high");
         NativeReasoningHook.replaceFloatingModes(menu, config);
         assertNotNull(menu.findItem(42));
@@ -53,6 +53,17 @@ public class NativeReasoningHookTest {
         assertEquals("最高 · max", modes.getItem(5).getTitle());
         assertArrayEquals(new Boolean[]{false, false, false, true, false, false}, NativeReasoningHook.floatingChecks(config));
         for (int i = 0; i < modes.size(); i++) assertEquals(i == 3, modes.getItem(i).isChecked());
+
+        config.putString("model", "qwen3.8-max"); config.putString("api", "chat");
+        config.putString("reasoning", "on");
+        NativeReasoningHook.replaceFloatingModes(menu, config);
+        assertEquals(3, modes.size());
+        assertEquals("开启思考", modes.getItem(2).getTitle());
+        assertArrayEquals(new Boolean[]{false, false, true}, NativeReasoningHook.floatingChecks(config));
+        config.putString("model", "unknown-alias");
+        NativeReasoningHook.replaceFloatingModes(menu, config);
+        assertEquals(1, modes.size());
+        assertTrue(modes.getItem(0).isChecked());
     }
 
     @Test public void choosingFloatingEffortOnlyUpdatesItsScopedPreferenceThroughBridge() {
@@ -69,7 +80,7 @@ public class NativeReasoningHookTest {
         assertTrue(modes.getItem(5).isChecked());
     }
 
-    @Test public void staleFloatingSelectionCannotWriteToAnotherModelOrOfficialMode() {
+    @Test public void staleOrOfficialFloatingSelectionCannotWriteAnotherModelPreference() {
         NativeReasoningHook.replaceFloatingModes(menu, config);
         MenuItem stale = modes.getItem(5);
         Config.prefs(context).edit().putString("model", "qwen3.8-max").commit();
@@ -85,23 +96,7 @@ public class NativeReasoningHookTest {
         NativeReasoningHook.replaceFloatingModes(menu, config);
         assertEquals(3, modes.size());
         assertEquals("自动模式", modes.getItem(0).getTitle());
-        assertEquals("快速模式", modes.getItem(1).getTitle());
         assertEquals("专家模式", modes.getItem(2).getTitle());
         assertFalse(NativeReasoningHook.applyFloatingSelection(context, modes.getItem(0)));
-    }
-
-    @Test public void qwenAndUnknownModelsOnlyExposeSupportedChoices() {
-        config.putString("model", "qwen3.8-max"); config.putString("api", "chat");
-        config.putString("reasoning", "on");
-        NativeReasoningHook.replaceFloatingModes(menu, config);
-        assertEquals(3, modes.size());
-        assertEquals("关闭思考", modes.getItem(1).getTitle());
-        assertEquals("开启思考", modes.getItem(2).getTitle());
-        assertArrayEquals(new Boolean[]{false, false, true}, NativeReasoningHook.floatingChecks(config));
-        config.putString("model", "unknown-alias");
-        NativeReasoningHook.replaceFloatingModes(menu, config);
-        assertEquals(1, modes.size());
-        assertTrue(modes.getItem(0).isChecked());
-        assertArrayEquals(new Boolean[]{true}, NativeReasoningHook.floatingChecks(config));
     }
 }

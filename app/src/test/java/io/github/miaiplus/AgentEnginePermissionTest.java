@@ -66,7 +66,7 @@ public final class AgentEnginePermissionTest {
         assertEquals("autoglm", 1, ScreenShadow.executions);
     }
 
-    @Test public void planningApprovalCannotBypassMissingOrFailedIndependentReview() throws Exception {
+    @Test public void planningApprovalCannotBypassMissingFailedOrDenyingIndependentReview() throws Exception {
         for (String response : new String[]{"missing_token", "malformed", "network", "ask_user"}) {
             setUp();
             ModelShadow.auditMode = response;
@@ -75,6 +75,11 @@ public final class AgentEnginePermissionTest {
             assertEquals(response, 1, ScreenShadow.confirmations);
             assertEquals(response, 1, ScreenShadow.executions);
         }
+        setUp();
+        ModelShadow.auditMode = "deny";
+        assertTrue(run("auto", "phone_use").startsWith("PAUSE：权限审计拒绝"));
+        assertEquals(0, ScreenShadow.confirmations);
+        assertEquals(0, ScreenShadow.executions);
     }
 
     @Test public void finishWithoutAppOrMessageCompletesInBothIndependentProtocolsAndOptionalAppDoesNotGate() throws Exception {
@@ -119,43 +124,26 @@ public final class AgentEnginePermissionTest {
         assertEquals(0, ModelShadow.audits);
     }
 
-    @Test public void changedTargetAfterConfirmationContinuesWithoutInjectingOldCoordinates() throws Exception {
-        ScreenShadow.changedTarget = true;
-        assertCompleted(run("manual", "phone_use"));
-        assertEquals(1, ScreenShadow.confirmations);
-        assertEquals(0, ScreenShadow.executions);
-        assertEquals(2, ModelShadow.plans);
-        assertTrue(ModelShadow.lastOutcome.contains("本步未执行"));
-    }
-
-    @Test public void unrelatedRefreshDuringConfirmationDoesNotAbortStableTarget() throws Exception {
-        ScreenShadow.changedClock = true;
-        assertCompleted(run("manual", "phone_use"));
-        assertEquals(1, ScreenShadow.confirmations);
-        assertEquals(1, ScreenShadow.executions);
-    }
-
-    @Test public void changedPermissionBodyCannotReuseApprovalForSameAllowButton() throws Exception {
-        ScreenShadow.systemPermission = ScreenShadow.changedPermission = true;
-        assertCompleted(run("manual", "phone_use"));
-        assertEquals(1, ScreenShadow.confirmations);
-        assertEquals(0, ScreenShadow.executions);
-        assertTrue(ModelShadow.lastOutcome.contains("本步未执行"));
-    }
-
-    @Test public void targetChangeAtInjectionBoundaryAlsoContinuesSameLoop() throws Exception {
-        ScreenShadow.rejectInjection = true;
-        assertCompleted(run("manual", "phone_use"));
-        assertEquals(0, ScreenShadow.executions);
-        assertEquals(2, ModelShadow.plans);
-        assertTrue(ModelShadow.lastOutcome.contains("注入前"));
-    }
-
-    @Test public void independentDenyStopsWithoutAskingOrExecuting() throws Exception {
-        ModelShadow.auditMode = "deny";
-        assertTrue(run("auto", "phone_use").startsWith("PAUSE：权限审计拒绝"));
-        assertEquals(0, ScreenShadow.confirmations);
-        assertEquals(0, ScreenShadow.executions);
+    @Test public void changedTargetPermissionBodyOrInjectionBoundarySkipsTheStepButUnrelatedRefreshDoesNot() throws Exception {
+        for (String change : new String[]{"target", "permission", "injection", "clock"}) {
+            setUp();
+            switch (change) {
+                case "target" -> ScreenShadow.changedTarget = true;
+                case "permission" -> ScreenShadow.systemPermission = ScreenShadow.changedPermission = true;
+                case "injection" -> ScreenShadow.rejectInjection = true;
+                default -> ScreenShadow.changedClock = true;
+            }
+            assertCompleted(run("manual", "phone_use"));
+            assertEquals(change, 1, ScreenShadow.confirmations);
+            assertEquals(change, 2, ModelShadow.plans);
+            if (change.equals("clock")) {
+                assertEquals(change, 1, ScreenShadow.executions);
+                continue;
+            }
+            assertEquals(change, 0, ScreenShadow.executions);
+            assertTrue(ModelShadow.lastOutcome, ModelShadow.lastOutcome.contains("本步未执行"));
+            if (change.equals("injection")) assertTrue(ModelShadow.lastOutcome, ModelShadow.lastOutcome.contains("注入前"));
+        }
     }
 
     @Test public void cancelledExpiredAndInterruptedAuditCannotFallThroughToConfirmation() throws Exception {
@@ -171,7 +159,7 @@ public final class AgentEnginePermissionTest {
         }
     }
 
-    @Test public void backgroundManualUsesCommonConfirmationAndOnlyBackgroundExecutionThenReleasesDisplay() throws Exception {
+    @Test public void backgroundConfirmationExecutesOnlyInBackgroundOrNotAtAllAndReleasesDisplay() throws Exception {
         assertCompleted(run("manual", "phone_use", true));
         assertEquals(1, ScreenShadow.confirmations);
         assertEquals(1, BackgroundActionShadow.executions);
@@ -181,9 +169,7 @@ public final class AgentEnginePermissionTest {
         assertEquals(1, BackgroundShadow.closes);
         assertFalse(BackgroundShadow.opened);
         assertNoPhysicalScreenAccess();
-    }
-
-    @Test public void backgroundDeniedConfirmationInjectsNothingAndReleasesDisplay() throws Exception {
+        setUp();
         ScreenShadow.acceptConfirmation = false;
         assertEquals("操作已取消", run("manual", "phone_use", true));
         assertEquals(1, ScreenShadow.confirmations);

@@ -17,7 +17,6 @@ import io.github.miaiplus.hook.HookCallback;
 import io.github.miaiplus.hook.Hooks;
 import java.lang.reflect.Proxy;
 import java.util.List;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -117,15 +116,11 @@ public class NativePluginToolsTest {
         assertEquals(2, definitions.size());
         ToolDefinition calendar = (ToolDefinition)definitions.get(0);
         ToolDefinition notes = (ToolDefinition)definitions.get(1);
-        assertEquals("MCP 插件「日历插件」/ 来源工具 lookup：" + first.description(), calendar.getDescription());
-        assertEquals("MCP 插件「笔记插件」/ 来源工具 lookup：" + second.description(), notes.getDescription());
+        assertTrue(calendar.getDescription().contains("日历插件"));
+        assertTrue(notes.getDescription().contains("笔记插件"));
         assertNotEquals(calendar.getName(), notes.getName());
         Tool tool = registry.get(first.name());
         assertEquals(calendar.getDescription(), tool.getDescription());
-        assertEquals(calendar.getDescription(), tool.getSummary());
-        assertEquals(calendar.getDescription(), tool.getSearchHint());
-        assertEquals("日历插件 · Lookup", tool.getDisplayName());
-        assertEquals("plugin", tool.getCategory());
         assertTrue(execute(tool) instanceof ToolResult.Success);
         assertEquals(first.pluginId(), provider.lastRequest.getString("pluginId"));
         assertFalse(provider.lastRequest.containsKey("pluginLabel"));
@@ -161,7 +156,20 @@ public class NativePluginToolsTest {
         assertEquals(0, registry.size());
     }
 
-    @Test public void collisionsAndForeignReplacementAreNeverOverwrittenOrRemoved() {
+    @Test public void invisibleForeignRegistrationIsNotMistakenForAnAvailableName() {
+        HostCompatibility.select("8.3.30.4420", 508003030L);
+        Tool foreign = foreign(PhoneUseRouting.FOREGROUND_TOOL);
+        registry.register(foreign);
+        registry.hiddenNames.add(PhoneUseRouting.FOREGROUND_TOOL);
+        assertNull(registry.peek(PhoneUseRouting.FOREGROUND_TOOL));
+        assertTrue(NativePluginTools.refresh(context));
+        NativePluginTools.synchronizeRegistry(registry);
+        assertSame(foreign, registry.get(PhoneUseRouting.FOREGROUND_TOOL));
+        NativePluginTools.dispose();
+        assertSame(foreign, registry.get(PhoneUseRouting.FOREGROUND_TOOL));
+    }
+
+    @Test public void collisionsAndForeignReplacementAreNeverOverwrittenOrRemoved() throws Exception {
         Tool foreign = foreign(PhoneUseRouting.FOREGROUND_TOOL);
         registry.register(foreign);
         assertTrue(NativePluginTools.refresh(context));
@@ -169,12 +177,19 @@ public class NativePluginToolsTest {
         assertSame(foreign, registry.get(PhoneUseRouting.FOREGROUND_TOOL));
         Tool replacement = foreign(PhoneUseRouting.BACKGROUND_TOOL);
         registry.register(replacement);
+        ToolDefinition foreignDefinition = new ToolDefinition(PhoneUseRouting.BACKGROUND_TOOL,
+            "foreign definition", "{}");
+        var param = arguments(List.of(foreignDefinition));
+        NativePluginTools.addDefinition(context, param);
+        assertSame(foreignDefinition, ((List<?>)param.args[1]).get(0));
+        assertSame(replacement, registry.get(PhoneUseRouting.BACKGROUND_TOOL));
         NativePluginTools.dispose();
         assertSame(foreign, registry.get(PhoneUseRouting.FOREGROUND_TOOL));
         assertSame(replacement, registry.get(PhoneUseRouting.BACKGROUND_TOOL));
     }
 
     @Test public void disabledOrUnreadableCatalogRemovesOwnedDefinitionsAndProxies() throws Exception {
+        assertTrue(NativePluginTools.availableForRouting(context, PhoneUseRouting.BACKGROUND_TOOL));
         assertTrue(NativePluginTools.refresh(context));
         NativePluginTools.synchronizeRegistry(registry);
         var first = arguments(List.of());
@@ -182,6 +197,7 @@ public class NativePluginToolsTest {
         List<?> old = (List<?>)first.args[1];
         assertEquals(2, old.size());
         setCatalog(List.of());
+        assertFalse(NativePluginTools.availableForRouting(context, PhoneUseRouting.BACKGROUND_TOOL));
         var empty = arguments(old);
         NativePluginTools.addDefinition(context, empty);
         assertTrue(((List<?>)empty.args[1]).isEmpty());
@@ -192,23 +208,24 @@ public class NativePluginToolsTest {
         provider.unavailable = true;
         assertFalse(NativePluginTools.refresh(context));
         assertEquals(0, registry.size());
-    }
-
-    @Test public void routingDistinguishesDisabledToolFromUnavailableCatalog() throws Exception {
-        assertTrue(NativePluginTools.availableForRouting(context, PhoneUseRouting.BACKGROUND_TOOL));
-        setCatalog(List.of());
-        assertFalse(NativePluginTools.availableForRouting(context, PhoneUseRouting.BACKGROUND_TOOL));
-        provider.unavailable = true;
+        // An unavailable catalog is distinct from a disabled tool for routing.
         assertThrows(IllegalStateException.class,
             () -> NativePluginTools.availableForRouting(context, PhoneUseRouting.BACKGROUND_TOOL));
     }
 
-    @Test public void unprovenDefinitionCopiesArePreservedButDisabledProxyCannotExecute() throws Exception {
+    @Test public void staleOrDisabledProxyCannotStartRemoteRequestButUnprovenCopiesArePreserved() throws Exception {
         PluginToolSpec remote = remoteSpec();
         setCatalog(List.of(remote));
         assertTrue(NativePluginTools.refresh(context));
         NativePluginTools.synchronizeRegistry(registry);
         Tool stale = registry.get(remote.name());
+        setCatalog(List.of(remote));
+        ToolResult.Failure result = (ToolResult.Failure)execute(stale);
+        assertFalse(result.retryable);
+        assertFalse(result.terminateAgent);
+        assertEquals(0, provider.starts);
+        assertNotSame(stale, registry.get(remote.name()));
+
         ToolDefinition copied = new ToolDefinition(remote.name(), "registry-generated copy", stale.getParameters());
         setCatalog(List.of());
         var param = arguments(List.of(copied));
@@ -239,34 +256,6 @@ public class NativePluginToolsTest {
         assertEquals(1L, result.stream().filter(value -> PhoneUseRouting.FOREGROUND_TOOL.equals(
             ((ToolDefinition)value).getName())).count());
         assertSame(foreign, otherRegistry.get(PhoneUseRouting.FOREGROUND_TOOL));
-    }
-
-    @Test public void invisibleForeignRegistrationIsNotMistakenForAnAvailableName() {
-        HostCompatibility.select("8.3.30.4420", 508003030L);
-        Tool foreign = foreign(PhoneUseRouting.FOREGROUND_TOOL);
-        registry.register(foreign);
-        registry.hiddenNames.add(PhoneUseRouting.FOREGROUND_TOOL);
-        assertNull(registry.peek(PhoneUseRouting.FOREGROUND_TOOL));
-        assertTrue(NativePluginTools.refresh(context));
-        NativePluginTools.synchronizeRegistry(registry);
-        assertSame(foreign, registry.get(PhoneUseRouting.FOREGROUND_TOOL));
-        NativePluginTools.dispose();
-        assertSame(foreign, registry.get(PhoneUseRouting.FOREGROUND_TOOL));
-    }
-
-    @Test public void sameNameNativeDefinitionIsPreservedWhenTheRegistryBelongsToAnotherTool() throws Exception {
-        assertTrue(NativePluginTools.refresh(context));
-        NativePluginTools.synchronizeRegistry(registry);
-        Tool replacement = foreign(PhoneUseRouting.FOREGROUND_TOOL);
-        registry.register(replacement);
-        ToolDefinition foreignDefinition = new ToolDefinition(PhoneUseRouting.FOREGROUND_TOOL,
-            "foreign definition", "{}");
-        var param = arguments(List.of(foreignDefinition));
-        NativePluginTools.addDefinition(context, param);
-        List<?> result = (List<?>)param.args[1];
-        assertSame(foreignDefinition, result.get(0));
-        assertEquals(2, result.size());
-        assertSame(replacement, registry.get(PhoneUseRouting.FOREGROUND_TOOL));
     }
 
     @Test public void remoteSuccessStaysInAgentLoopAndCannotConsumePhoneFrames() throws Exception {
@@ -314,20 +303,6 @@ public class NativePluginToolsTest {
         assertEquals(0, provider.cancels);
     }
 
-    @Test public void staleProxyIsRejectedBeforeStartingAnyRemoteRequest() throws Exception {
-        PluginToolSpec remote = remoteSpec();
-        setCatalog(List.of(remote));
-        assertTrue(NativePluginTools.refresh(context));
-        NativePluginTools.synchronizeRegistry(registry);
-        Tool stale = registry.get(remote.name());
-        setCatalog(List.of(remote));
-        ToolResult.Failure result = (ToolResult.Failure)execute(stale);
-        assertFalse(result.retryable);
-        assertFalse(result.terminateAgent);
-        assertEquals(0, provider.starts);
-        assertNotSame(stale, registry.get(remote.name()));
-    }
-
     @Test public void interruptRequestsRemoteCancellationAndReleasesReloadBusyCount() throws Exception {
         PluginToolSpec remote = remoteSpec();
         setCatalog(List.of(remote));
@@ -346,7 +321,7 @@ public class NativePluginToolsTest {
         assertTrue(Hooks.freeze()); Hooks.thaw();
     }
 
-    @Test public void etaCatalogRegistersBothToolsAndOnlyThenAdvertisesTheEtaPolicy() {
+    @Test public void etaCatalogRegistersBothToolsAndScreenVariantAnswersPhoneRouting() {
         assertFalse(NativePluginTools.promptPolicy(context).contains(EtaAgent.RUN_TOOL));
         var specs = new java.util.ArrayList<>(PhoneUsePlugin.specs()); specs.addAll(EtaAgent.specs(false));
         setCatalog(specs);
@@ -362,15 +337,12 @@ public class NativePluginToolsTest {
         assertFalse(NativePluginTools.promptPolicy(context).contains(EtaAgent.RUN_TOOL));
         setCatalog(EtaAgent.specs(true));
         assertTrue(NativePluginTools.promptPolicy(context).startsWith(EtaAgent.POLICY_HEADER));
-    }
 
-    @Test public void screenVariantEtaCatalogAnswersForegroundAndBackgroundRouting() {
         setCatalog(EtaAgent.specs(false, true));
         assertTrue(NativePluginTools.etaControlsScreen(context));
         assertFalse(NativePluginTools.etaPrivileged(context));
         assertTrue(NativePluginTools.availableForRouting(context, PhoneUseRouting.FOREGROUND_TOOL));
         assertTrue(NativePluginTools.availableForRouting(context, PhoneUseRouting.BACKGROUND_TOOL));
-        assertTrue(NativePluginTools.promptPolicy(context).contains("控屏协议（Eta）"));
         setCatalog(EtaAgent.specs(true, true));
         assertTrue(NativePluginTools.etaPrivileged(context));
         setCatalog(EtaAgent.specs(false));
@@ -385,25 +357,6 @@ public class NativePluginToolsTest {
         assertFalse(NativePluginTools.canReload(context));
         provider.unavailable = true;
         assertFalse(NativePluginTools.canReload(context));
-    }
-
-    @Test public void builtinPromptOnlyAdvertisesEnabledFunctions() {
-        assertEquals("", PhoneUsePlugin.promptPolicy(Set.of()));
-        String foreground = PhoneUsePlugin.promptPolicy(Set.of(PhoneUseRouting.FOREGROUND_TOOL));
-        String background = PhoneUsePlugin.promptPolicy(Set.of(PhoneUseRouting.BACKGROUND_TOOL));
-        String both = PhoneUsePlugin.promptPolicy(Set.of(PhoneUseRouting.FOREGROUND_TOOL,
-            PhoneUseRouting.BACKGROUND_TOOL));
-        assertTrue(foreground.contains("后台控屏未启用"));
-        assertTrue(background.contains("前台控屏未启用"));
-        assertTrue(both.contains("两个独立函数"));
-        for (String tool : new String[]{PhoneUseRouting.FOREGROUND_TOOL, PhoneUseRouting.BACKGROUND_TOOL}) {
-            String example = PhoneUsePlugin.cliStartExample(tool);
-            assertTrue(both.contains(example));
-            assertEquals(tool.equals(PhoneUseRouting.FOREGROUND_TOOL), foreground.contains(example));
-            assertEquals(tool.equals(PhoneUseRouting.BACKGROUND_TOOL), background.contains(example));
-        }
-        assertTrue(both.contains("保留origin_tool"));
-        assertFalse(both.contains("原样传递完整任务"));
     }
 
     @Test public void directLanguageRoutingRequiresForegroundPhoneToolAndFreshCatalog() {

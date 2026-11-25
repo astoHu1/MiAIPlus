@@ -92,7 +92,7 @@ MCP「添加」文字按钮与分组标题居中、对齐卡片内容边缘，�
 | `DiagnosticLogPage.kt` / `DiagnosticLogState.kt` | 日志筛选、详情、前台刷新和导出交互 |
 | `DiagnosticLogStore.java` / `PhoneUseLog.java` | 私有轮转存储、双来源采集与诊断上下文 |
 
-`SettingsUiTest` 覆盖导航、草稿、配置、权限预设、日志与直接测试交接；`SettingsStateDisplayGeometryTest` 覆盖画布配置；`DiagnosticLogStoreTest` 覆盖轮转、存储失败、队列容量和 ZIP 白名单。
+`SettingsUiTest` 覆盖导航、草稿、配置、权限预设、日志与直接测试交接；`VirtualScreenStateTest` 覆盖画布配置；`DiagnosticLogStoreTest` 覆盖轮转、存储失败、队列容量和 ZIP 白名单。
 
 ## 截图
 

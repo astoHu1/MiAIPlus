@@ -84,7 +84,7 @@ public final class EtaBridgeTest {
         eta.quitSafely();
     }
 
-    @Test public void runRejectsMissingBlankAndOversizeTasksBeforeAnyConnection() throws Exception {
+    @Test public void runRejectsInvalidTasksMissingOrUntrustedEtaAndTheLockScreenBeforeAnyConnection() throws Exception {
         for (String json : new String[]{"{}", "{\"task\":\"   \"}"}) {
             EtaBridge.Outcome outcome = EtaBridge.run(context, new JSONObject(json), false);
             assertFalse(outcome.observation());
@@ -94,39 +94,17 @@ public final class EtaBridgeTest {
             new JSONObject().put("task", "x".repeat(EtaBridge.MAX_TASK_CHARS + 1)), false);
         assertFalse(big.observation());
         assertTrue(big.text().contains("8000"));
-        assertEquals(0, opened.get());
-    }
-
-    @Test public void runRefusesWithoutAnInstalledTrustedEtaAndNeverConnects() throws Exception {
-        EtaBridge.Outcome outcome = EtaBridge.run(context, new JSONObject().put("task", "整理通知"), false);
-        assertFalse(outcome.observation());
-        assertTrue(outcome.text().contains("未安装 Eta"));
-        assertTrue(outcome.text().contains("不要自动重试"));
-        assertEquals(0, opened.get());
-        assertFalse(EtaBridge.busy());
-    }
-
-    @Test public void runSendsTheRequestToEtaAndReturnsItsAnswer() throws Exception {
+        EtaBridge.Outcome missing = EtaBridge.run(context, new JSONObject().put("task", "整理通知"), false);
+        assertFalse(missing.observation());
+        assertTrue(missing.text().contains("未安装 Eta"));
+        assertTrue(missing.text().contains("不要自动重试"));
         EtaAgentTest.installReadyEta(context);
-        onStart = reply -> {
-            try {
-                reply.send(ingested());
-                reply.send(tool("tool_started", "calendar_read"));
-                reply.send(result(true, "本周有 2 个日程", ""));
-            } catch (android.os.RemoteException e) { throw new AssertionError(e); }
-        };
-        EtaBridge.Outcome outcome = EtaBridge.run(context, new JSONObject().put("task", "汇总本周日程"), false);
-        assertTrue(outcome.text(), outcome.observation());
-        assertTrue(outcome.text().startsWith("DONE："));
-        assertTrue(outcome.text().contains("本周有 2 个日程"));
-        assertTrue(outcome.text().contains("工具调用 1 次"));
-        assertEquals(EtaBridge.MSG_DRAIN_RESULTS, nextSent());
-        assertEquals(EtaBridge.MSG_START_RUN, nextSent());
-        assertEquals(EtaBridge.MSG_ACK_RESULT, nextSent());
-        assertEquals("", sentRunIds.poll(1, TimeUnit.SECONDS));
-        assertEquals(sentRunIds.poll(1, TimeUnit.SECONDS), sentRunIds.poll(1, TimeUnit.SECONDS));
+        shadowOf(context.getSystemService(KeyguardManager.class)).setKeyguardLocked(true);
+        EtaBridge.Outcome locked = EtaBridge.run(context, new JSONObject().put("task", "汇总本周日程"), false);
+        assertFalse(locked.observation());
+        assertTrue(locked.text().contains("锁屏"));
+        assertEquals(0, opened.get());
         assertFalse(EtaBridge.busy());
-        assertEquals(1, closed.get());
     }
 
     @Test public void newConnectionAcknowledgesOnlyThisRelaysLeftoverResults() throws Exception {
@@ -182,27 +160,19 @@ public final class EtaBridgeTest {
         assertTrue(outcome.text().contains("没有确认"));
     }
 
-    @Test public void runRefusesOnTheLockScreenWithoutConnecting() throws Exception {
-        EtaAgentTest.installReadyEta(context);
-        shadowOf(context.getSystemService(KeyguardManager.class)).setKeyguardLocked(true);
-        EtaBridge.Outcome outcome = EtaBridge.run(context, new JSONObject().put("task", "汇总本周日程"), false);
-        assertFalse(outcome.observation());
-        assertTrue(outcome.text().contains("锁屏"));
-        assertEquals(0, opened.get());
-    }
-
-    @Test public void secondRunWhileOneIsActiveIsRefusedAsBusyAndNotSent() throws Exception {
+    @Test public void runRelaysTheAnswerAndRefusesASecondRunAsBusyWithoutSendingIt() throws Exception {
         EtaAgentTest.installReadyEta(context);
         AtomicReference<Messenger> replyTo = new AtomicReference<>();
         CountDownLatch started = new CountDownLatch(1);
         onStart = reply -> {
             replyTo.set(reply);
-            try { reply.send(ingested()); } catch (android.os.RemoteException e) { throw new AssertionError(e); }
+            try { reply.send(ingested()); reply.send(tool("tool_started", "calendar_read")); }
+            catch (android.os.RemoteException e) { throw new AssertionError(e); }
             started.countDown();
         };
         AtomicReference<EtaBridge.Outcome> first = new AtomicReference<>();
         Thread caller = new Thread(() -> {
-            try { first.set(EtaBridge.run(context, new JSONObject().put("task", "第一个任务"), false)); }
+            try { first.set(EtaBridge.run(context, new JSONObject().put("task", "汇总本周日程"), false)); }
             catch (org.json.JSONException e) { throw new AssertionError(e); }
         });
         caller.start();
@@ -210,13 +180,21 @@ public final class EtaBridgeTest {
         EtaBridge.Outcome second = EtaBridge.run(context, new JSONObject().put("task", "第二个任务"), false);
         assertTrue(second.observation());
         assertTrue(second.text().startsWith("BUSY："));
-        replyTo.get().send(result(true, "完成", ""));
+        replyTo.get().send(result(true, "本周有 2 个日程", ""));
         caller.join(5000);
-        assertTrue(first.get().text().startsWith("DONE："));
+        EtaBridge.Outcome outcome = first.get();
+        assertTrue(outcome.text(), outcome.observation());
+        assertTrue(outcome.text().startsWith("DONE："));
+        assertTrue(outcome.text().contains("本周有 2 个日程"));
+        assertTrue(outcome.text().contains("工具调用 1 次"));
         assertEquals(EtaBridge.MSG_DRAIN_RESULTS, nextSent());
         assertEquals(EtaBridge.MSG_START_RUN, nextSent());
         assertEquals(EtaBridge.MSG_ACK_RESULT, nextSent());
         assertTrue(sentWhat.isEmpty());
+        assertEquals("", sentRunIds.poll(1, TimeUnit.SECONDS));
+        assertEquals(sentRunIds.poll(1, TimeUnit.SECONDS), sentRunIds.poll(1, TimeUnit.SECONDS));
+        assertFalse(EtaBridge.busy());
+        assertEquals(1, closed.get());
     }
 
     @Test public void startRequestCarriesTaskBriefHandoffAndPrivilegedFlagsFromTheArgument() throws Exception {
@@ -250,15 +228,6 @@ public final class EtaBridgeTest {
         assertEquals(40, title.length());
     }
 
-    @Test public void statusForAnUnknownRunFailsWithoutContactingEta() throws Exception {
-        EtaBridge.Outcome outcome = EtaBridge.status(new JSONObject().put("run_id", "nope").put("cancel", true));
-        assertFalse(outcome.observation());
-        assertTrue(outcome.text().contains("没有找到这个 Eta 任务"));
-        assertEquals(0, opened.get());
-        assertTrue(sentWhat.isEmpty());
-        assertFalse(EtaBridge.status(new JSONObject()).observation());
-    }
-
     @Test public void failedResultReturnsStopWithEtasErrorAndIgnoresALateResult() throws Exception {
         Object run = register();
         Thread feeder = feed(run, 50, ingested(), result(false, "", "模型额度不足"));
@@ -273,6 +242,22 @@ public final class EtaBridgeTest {
         String text = await(run, 100).text();
         assertTrue(text.startsWith("STOP："));
         assertTrue(text.contains("模型额度不足"));
+    }
+
+    @Test public void resultTextIsTruncatedWhenOverlongAndBlankResultsGetReadableFallbacks() throws Exception {
+        Object run = register();
+        receive(run, ingested());
+        receive(run, result(true, "字".repeat(EtaBridge.MAX_RESULT_CHARS + 500), ""));
+        String text = await(run, 1000).text();
+        assertTrue(text.contains("字".repeat(EtaBridge.MAX_RESULT_CHARS)));
+        assertFalse(text.contains("字".repeat(EtaBridge.MAX_RESULT_CHARS + 1)));
+        assertTrue(text.contains("[结果过长，已截断"));
+        Object ok = register();
+        receive(ok, result(true, "  ", ""));
+        assertTrue(await(ok, 100).text().contains("没有返回文字结果"));
+        Object bad = register();
+        receive(bad, result(false, "", ""));
+        assertTrue(await(bad, 100).text().contains("没有说明原因"));
     }
 
     @Test public void silenceBeyondAdmissionWindowStopsTheRunAndRequestsCancel() throws Exception {
@@ -316,6 +301,12 @@ public final class EtaBridgeTest {
         EtaBridge.Outcome outcome = EtaBridge.status(new JSONObject());
         assertTrue(outcome.text().contains(id(second)));
         assertTrue(outcome.text().contains("二"));
+        sentWhat.clear();
+        EtaBridge.Outcome unknown = EtaBridge.status(new JSONObject().put("run_id", "nope").put("cancel", true));
+        assertFalse(unknown.observation());
+        assertTrue(unknown.text().contains("没有找到这个 Eta 任务"));
+        assertEquals(0, opened.get());
+        assertTrue(sentWhat.isEmpty());
     }
 
     @Test public void cancelRequestSendsMsgCancelWithTheRunIdAndWaitsForTheEnd() throws Exception {
@@ -363,16 +354,6 @@ public final class EtaBridgeTest {
         assertEquals(1, closed.get());
     }
 
-    @Test public void overlongResultIsTruncatedWithANote() throws Exception {
-        Object run = register();
-        receive(run, ingested());
-        receive(run, result(true, "字".repeat(EtaBridge.MAX_RESULT_CHARS + 500), ""));
-        String text = await(run, 1000).text();
-        assertTrue(text.contains("字".repeat(EtaBridge.MAX_RESULT_CHARS)));
-        assertFalse(text.contains("字".repeat(EtaBridge.MAX_RESULT_CHARS + 1)));
-        assertTrue(text.contains("[结果过长，已截断"));
-    }
-
     @Test public void toolNamesFromEventsAreSanitisedAndOnlyRecentStepsAreKept() throws Exception {
         Object run = register();
         receive(run, ingested());
@@ -386,15 +367,6 @@ public final class EtaBridgeTest {
         assertFalse(text.contains("script"));
         assertTrue(text.contains("t1、t2、t3、t4"));
         assertFalse(text.contains("..x"));
-    }
-
-    @Test public void blankSuccessAndEmptyFailureGetReadableFallbacks() throws Exception {
-        Object ok = register();
-        receive(ok, result(true, "  ", ""));
-        assertTrue(await(ok, 100).text().contains("没有返回文字结果"));
-        Object bad = register();
-        receive(bad, result(false, "", ""));
-        assertTrue(await(bad, 100).text().contains("没有说明原因"));
     }
 
     // ---- helpers -------------------------------------------------------------------------------------------

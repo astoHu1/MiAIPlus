@@ -35,19 +35,19 @@ public class PageGuardTest {
             frame("new screenshot", ROOT + BUTTON + clock + "10:01\n")));
     }
 
-    @Test public void changedOrDisabledTargetRequiresAnotherObservation() throws Exception {
+    @Test public void changedDisabledOrCoveredTargetRequiresAnotherObservation() throws Exception {
         ScreenService.Frame before = frame("image", ROOT + BUTTON);
         for (String changed : new String[]{BUTTON.replace("提交", "删除"),
                 BUTTON.replace("[100,100][300,300]", "[250,100][450,300]"),
                 BUTTON.replace("id=submit", "id=delete"), BUTTON.replace("enabled=true", "enabled=false"),
                 BUTTON.replace(" clickable", "")})
             assertFalse(changed, PageGuard.canExecute(tap(), before, frame("image", ROOT + changed)));
+        for (String action : new String[]{"tap", "double_tap", "long_press", "type"})
+            assertTrue(action, PageGuard.needsFreshFrame(action));
+        for (String action : new String[]{"swipe", "back", "home", "wait"})
+            assertFalse(action, PageGuard.needsFreshFrame(action));
         ScreenService.Frame disabled = frame("image", ROOT + BUTTON.replace("enabled=true", "enabled=false"));
         assertFalse(PageGuard.canExecute(tap(), disabled, disabled));
-    }
-
-    @Test public void newOrReorderedCoveringNodesRequireAnotherObservation() throws Exception {
-        ScreenService.Frame before = frame("image", ROOT + BUTTON);
         for (String covering : new String[]{"android.widget.FrameLayout [50,50][800,800] window=4 enabled=true\n",
                 "android.view.View [0,0][1000,1000] window=3 enabled=true\n"})
             assertFalse(covering, PageGuard.canExecute(tap(), before, frame("image", ROOT + BUTTON + covering)));
@@ -71,21 +71,18 @@ public class PageGuardTest {
             new ScreenService.Frame("image", before.tree(), 1000, 1000, "app", 501, 500, 0, "")));
     }
 
-    @Test public void pureImageOrEmptyTreeRequiresAnIdenticalNonemptyImage() throws Exception {
+    @Test public void pureImageNeedsIdenticalImageWhileFarEdgeCoordinatesClampToTheTarget() throws Exception {
         for (String tree : new String[]{"", ROOT, ROOT + "android.widget.ImageView [100,100][300,300] enabled=true\n"}) {
             assertTrue(PageGuard.canExecute(tap(), frame("same image", tree), frame("same image", tree)));
             assertFalse(PageGuard.canExecute(tap(), frame("old image", tree), frame("new image", tree)));
             assertFalse(PageGuard.canExecute(tap(), frame("", tree), frame("", tree)));
         }
-    }
-
-    @Test public void normalizedCoordinatesUseDisplayPixelsAndClampTheFarEdge() throws Exception {
-        String tree = "android.widget.Button [900,900][1000,1000] enabled=true clickable text=角落\n";
+        String corner = "android.widget.Button [900,900][1000,1000] enabled=true clickable text=角落\n";
         Action edge = new Action(new JSONObject().put("action", "tap").put("element", new JSONArray().put(1000).put(1000)));
-        assertTrue(PageGuard.canExecute(edge, frame("old image", tree), frame("new image", tree)));
+        assertTrue(PageGuard.canExecute(edge, frame("old image", corner), frame("new image", corner)));
     }
 
-    @Test public void typeOnlyTracksTheFocusedEditableTarget() throws Exception {
+    @Test public void typeTracksOnlyOneFocusedEditableNonPasswordTargetUnderNoNewDialog() throws Exception {
         String other = "android.widget.TextView [700,0][1000,80] enabled=true text=";
         assertTrue(PageGuard.canExecute(type(), frame("old image", ROOT + FIELD + other + "old\n"),
             frame("new image", ROOT + FIELD + other + "new\n")));
@@ -95,9 +92,7 @@ public class PageGuardTest {
             frame("image", ROOT + FIELD.replace(" focused", ""))));
         assertFalse(PageGuard.canExecute(type(), frame("image", ROOT + FIELD),
             frame("image", ROOT + FIELD.replace("id=input", "id=another"))));
-    }
 
-    @Test public void typeRejectsMissingAmbiguousOrPasswordFocusAndNewCoveringDialog() throws Exception {
         assertFalse(PageGuard.canExecute(type(), frame("image", ROOT), frame("image", ROOT)));
         ScreenService.Frame multiple = frame("image", ROOT + FIELD + FIELD.replace("id=input", "id=another"));
         assertFalse(PageGuard.canExecute(type(), multiple, multiple));
@@ -105,5 +100,22 @@ public class PageGuardTest {
         assertFalse(PageGuard.canExecute(type(), password, password));
         String dialog = "android.widget.FrameLayout [50,50][800,800] window=4 enabled=true\n";
         assertFalse(PageGuard.canExecute(type(), frame("image", ROOT + FIELD), frame("image", ROOT + FIELD + dialog)));
+    }
+
+    @Test public void onlyMainlineInstallRetiresLegacyRootGuardAndPreflightNamesThePackage() {
+        String mainline = AccessibilityGuard.legacyRetirementScript("io.github.miaiplus");
+        assertTrue(mainline.contains("rm -f /data/adb/service.d/miaiplus-accessibility.sh"));
+        assertTrue(mainline.contains("/data/adb/miaiplus-accessibility/user*"));
+        assertTrue(mainline.contains("kill -TERM"));
+        for (String applicationId : new String[]{"io.github.miaiplus.pluginify", "other.module.test"}) {
+            String script = AccessibilityGuard.legacyRetirementScript(applicationId);
+            assertTrue(script.contains("id -u"));
+            assertFalse(script.contains("/data/adb/"));
+            assertFalse(script.contains("rm -f"));
+            assertFalse(script.contains("kill"));
+        }
+        String command = AccessibilityGuard.preflightCommand("Zml4dHVyZQ==", 7, "01234567-89ab-cdef-0123-456789abcdef");
+        assertTrue(command.endsWith("/system/bin/sh -s -- 7 01234567-89ab-cdef-0123-456789abcdef " + BuildConfig.APPLICATION_ID));
+        if (!"io.github.miaiplus".equals(BuildConfig.APPLICATION_ID)) assertFalse(command.contains("/data/adb/"));
     }
 }

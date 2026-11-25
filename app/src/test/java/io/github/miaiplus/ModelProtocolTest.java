@@ -22,7 +22,7 @@ public class ModelProtocolTest {
             }
         }
     }
-    @Test public void convertsVisionToolsAndResultsWithoutChatOnlyParameters() throws Exception {
+    @Test public void convertsVisionToolsResultsAndStructuredOutputWithoutChatOnlyParameters() throws Exception {
         JSONObject chat = new JSONObject("""
             {"model":"gpt-6.1-sol","temperature":0,"top_p":1,"max_tokens":8192,"stream":false,
              "messages":[{"role":"system","content":"instructions"},
@@ -50,8 +50,18 @@ public class ModelProtocolTest {
         JSONObject tool = body.getJSONArray("tools").getJSONObject(0);
         assertEquals("phone_use", tool.getString("name")); assertFalse(tool.has("function")); assertFalse(tool.getBoolean("strict"));
         assertEquals(original, chat.toString());
+        JSONObject structured = new JSONObject("""
+            {"model":"alias","messages":[{"role":"user","content":"classify"}],
+             "response_format":{"type":"json_schema","json_schema":{"name":"decision","schema":{"type":"object"}}},
+             "tools":[{"type":"function","function":{"name":"phone_use","parameters":{"type":"object"}}}],
+             "tool_choice":{"type":"function","function":{"name":"phone_use"}},"reasoning_effort":"high"}
+            """);
+        JSONObject named = ModelProtocol.request(structured);
+        assertEquals("phone_use", named.getJSONObject("tool_choice").getString("name"));
+        assertEquals("high", named.getJSONObject("reasoning").getString("effort"));
+        assertEquals("decision", named.getJSONObject("text").getJSONObject("format").getString("name"));
     }
-    @Test public void parsesMixedOutputAndReplaysOpaqueReasoningAndPhase() throws Exception {
+    @Test public void parsesMixedOutputReplaysOpaqueReasoningAndPreservesUsage() throws Exception {
         JSONObject response = new JSONObject("""
             {"status":"completed","output":[{"id":"rs_1","type":"reasoning","summary":[],"encrypted_content":"opaque"},
               {"type":"message","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"observe"}]},
@@ -67,6 +77,12 @@ public class ModelProtocolTest {
         assertEquals("commentary", input.getJSONObject(1).getString("phase"));
         assertEquals("function_call", input.getJSONObject(2).getString("type"));
         assertEquals("function_call_output", input.getJSONObject(3).getString("type"));
+        JSONObject usageResponse = new JSONObject("{\"usage\":{\"input_tokens\":100,\"output_tokens\":40,\"input_tokens_details\":{\"cached_tokens\":50},\"output_tokens_details\":{\"reasoning_tokens\":30}}}");
+        JSONObject usage = ModelProtocol.usage(usageResponse);
+        assertEquals(100, usage.getInt("prompt_tokens")); assertEquals(40, usage.getInt("completion_tokens"));
+        assertEquals(140, usage.getInt("total_tokens"));
+        assertEquals(50, usage.getJSONObject("prompt_tokens_details").getInt("cached_tokens"));
+        assertEquals(30, usage.getJSONObject("completion_tokens_details").getInt("reasoning_tokens"));
     }
     @Test public void rejectsIncompleteFailedEmptyAndRefusedOutput() throws Exception {
         for (String json : new String[]{
@@ -76,26 +92,6 @@ public class ModelProtocolTest {
             try { ModelProtocol.message(new JSONObject(json)); fail("Accepted invalid output"); }
             catch (IllegalStateException expected) { }
         }
-    }
-    @Test public void convertsStructuredOutputAndNamedToolChoice() throws Exception {
-        JSONObject chat = new JSONObject("""
-            {"model":"alias","messages":[{"role":"user","content":"classify"}],
-             "response_format":{"type":"json_schema","json_schema":{"name":"decision","schema":{"type":"object"}}},
-             "tools":[{"type":"function","function":{"name":"phone_use","parameters":{"type":"object"}}}],
-             "tool_choice":{"type":"function","function":{"name":"phone_use"}},"reasoning_effort":"high"}
-            """);
-        JSONObject body = ModelProtocol.request(chat);
-        assertEquals("phone_use", body.getJSONObject("tool_choice").getString("name"));
-        assertEquals("high", body.getJSONObject("reasoning").getString("effort"));
-        assertEquals("decision", body.getJSONObject("text").getJSONObject("format").getString("name"));
-    }
-    @Test public void preservesTokenUsageAndReasoningDetails() throws Exception {
-        JSONObject response = new JSONObject("{\"usage\":{\"input_tokens\":100,\"output_tokens\":40,\"input_tokens_details\":{\"cached_tokens\":50},\"output_tokens_details\":{\"reasoning_tokens\":30}}}");
-        JSONObject usage = ModelProtocol.usage(response);
-        assertEquals(100, usage.getInt("prompt_tokens")); assertEquals(40, usage.getInt("completion_tokens"));
-        assertEquals(140, usage.getInt("total_tokens"));
-        assertEquals(50, usage.getJSONObject("prompt_tokens_details").getInt("cached_tokens"));
-        assertEquals(30, usage.getJSONObject("completion_tokens_details").getInt("reasoning_tokens"));
     }
 
 }

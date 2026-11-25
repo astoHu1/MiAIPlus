@@ -2,6 +2,7 @@ package io.github.miaiplus;
 
 import static org.junit.Assert.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.json.JSONObject;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
@@ -19,14 +20,12 @@ public final class RunStateCancellationTest {
             assertTrue(nativeStep.cancelled.get());
             assertEquals(1, cleanup.get());
         }
-    }
-
-    @Test public void cancellationBeforeNativeSessionSetupIsNotLost() {
-        RunState ipc = new RunState("ipc", 1000);
-        RunState nativeStep = new RunState("session", 1000);
-        ipc.cancel();
-        try (var ignored = ipc.onCancel(nativeStep::cancel)) {
-            assertTrue(nativeStep.cancelled.get());
+        // Cancellation before native session setup is not lost.
+        RunState early = new RunState("ipc", 1000);
+        RunState lateStep = new RunState("session", 1000);
+        early.cancel();
+        try (var ignored = early.onCancel(lateStep::cancel)) {
+            assertTrue(lateStep.cancelled.get());
         }
     }
 
@@ -66,5 +65,24 @@ public final class RunStateCancellationTest {
             nextIpc.cancel();
             assertTrue(replacement.cancelled.get());
         }
+    }
+
+    @Test public void progressIntentIsBoundedSanitizedPrivateAndIgnoredByRepeatDetection() throws Exception {
+        Action action = new Action(new JSONObject().put("action", "type").put("text", "private message")
+            .put("intent", "填写搜索框"));
+        assertEquals("填写搜索框", TaskProgress.intent(action));
+        assertFalse(action.data.has("message"));
+        assertFalse(action.data.optBoolean("requires_confirmation"));
+        assertFalse(TaskProgress.intent(new Action(new JSONObject().put("action", "type").put("text", "private message")))
+            .contains("private message"));
+        assertEquals("等待页面加载", TaskProgress.intent(new Action(new JSONObject().put("action", "wait")
+            .put("intent", new JSONObject()))));
+        String quoted = "查找\"订单\"与\\记录";
+        assertEquals(quoted, TaskProgress.intent(new Action(new JSONObject().put("action", "wait").put("intent", quoted))));
+        assertEquals("点击搜索框 · 正在判断下一步", TaskProgress.waiting("点击搜索框"));
+        assertEquals("😀".repeat(60), TaskProgress.compact("\n\u202e" + "😀".repeat(70)));
+        Action first = new Action(new JSONObject().put("action", "wait").put("intent", "检查页面"));
+        Action second = new Action(new JSONObject().put("action", "wait").put("intent", "继续检查"));
+        assertEquals(first.fingerprint(), second.fingerprint());
     }
 }

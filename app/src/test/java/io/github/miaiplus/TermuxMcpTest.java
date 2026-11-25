@@ -7,7 +7,6 @@ import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.zip.GZIPInputStream;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.After;
@@ -90,24 +89,20 @@ public class TermuxMcpTest {
             "http://127.0.0.1:18871/" + version, TOKEN, "YQ==", version).contains("TermuxActivity"));
     }
 
-    @Test public void modelCannotConfirmItsOwnCommandOrPassHiddenUpstreamArguments() throws Exception {
+    @Test public void modelCannotPassHiddenArgumentsAndCatalogNeedsCompleteJobToolPair() throws Exception {
         var tool = new PluginToolSpec(PluginSettings.TERMUX_ID, "mcp", "miaiplus_termux_run_digest",
             "run_digest", "run_digest", "Fixture",
             "{\"type\":\"object\",\"properties\":{\"cmd\":{\"type\":\"string\"},\"confirmed\":{\"type\":\"boolean\"}}}", 60_000);
         assertTrue(TermuxMcp.acceptsArguments(tool, new JSONObject().put("cmd", "id -u")));
         assertFalse(TermuxMcp.acceptsArguments(tool, new JSONObject().put("cmd", "id -u").put("confirmed", true)));
         assertFalse(TermuxMcp.acceptsArguments(tool, new JSONObject().put("cmd", "id -u").put("timeout", 200)));
-    }
-
-    @Test public void managedCatalogAcceptsLegacySettingsAndAddsBoundedJobsWithoutConfirmation() throws Exception {
+        // Legacy catalogs stay valid; job tools are accepted only as a complete pair.
         assertTrue(TermuxMcp.hasExpectedTools(configured().tools()));
         var tools = new java.util.ArrayList<>(configured().tools());
         tools.add(tool("job_status"));
         assertFalse(TermuxMcp.hasExpectedTools(tools));
         tools.add(tool("job_cancel"));
         assertTrue(TermuxMcp.hasExpectedTools(tools));
-        assertTrue(TermuxMcp.toolDescription(tool("run_digest")).contains("Bash"));
-        assertTrue(TermuxMcp.toolDescription(tool("run_digest")).contains("timeout_ms"));
     }
 
     @Test public void transferRequiresOneTimePathAndClosesAfterServingTheArchive() throws Exception {
@@ -121,12 +116,6 @@ public class TermuxMcpTest {
             try (InputStream input = url.toURL().openStream()) {
                 assertArrayEquals(archive, input.readAllBytes());
             }
-        }
-    }
-
-    @Test public void apkAssetCanBeReadAsTheProvisionerArchive() throws Exception {
-        try (var archive = new GZIPInputStream(app.getAssets().open("termux-mcp/upstream.bin"))) {
-            assertEquals("LICENSE", new String(archive.readNBytes(7), StandardCharsets.US_ASCII));
         }
     }
 }

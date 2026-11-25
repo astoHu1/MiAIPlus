@@ -63,57 +63,43 @@ public final class PhoneUsePluginGateTest {
         ShadowBinder.setCallingUid(Process.myUid());
     }
 
-    @Test public void legacyForegroundContinuationChecksOriginalPluginAfterDefaultChangesToBackground() throws Exception {
-        Object session = activate(false, "");
-        String query = query(session, "");
-        prefs.edit().putBoolean("backgroundDisplay", true).commit();
-        PluginSettings.setEnabled(context, PluginSettings.FOREGROUND_ID, false);
-        PluginSettings.setEnabled(context, PluginSettings.BACKGROUND_ID, true);
-        assertPluginStopped(start(query));
-        assertSame(session, field(NativeSession.class, "active").get(null));
-        assertFalse(NativeSession.continuationBackground(query, Process.myUid(), ""));
-        assertFalse(field(session.getClass(), "initialBackground").getBoolean(session));
-        assertFalse(run(session).cancelled.get());
+    @Test public void legacyForegroundContinuationChecksOriginalPluginNotTheChangedDefault() throws Exception {
+        for (boolean originalEnabled : new boolean[]{false, true}) {
+            Object session = activate(false, "");
+            String query = query(session, "");
+            prefs.edit().putBoolean("backgroundDisplay", true).commit();
+            PluginSettings.setEnabled(context, PluginSettings.FOREGROUND_ID, originalEnabled);
+            PluginSettings.setEnabled(context, PluginSettings.BACKGROUND_ID, !originalEnabled);
+            Bundle result = start(query);
+            assertFalse(result.containsKey("id"));
+            if (originalEnabled) {
+                assertTrue(result.getString("error", ""), result.getString("error", "").contains("后台显示检测进行中"));
+            } else {
+                assertPluginStopped(result);
+                assertFalse(NativeSession.continuationBackground(query, Process.myUid(), ""));
+                assertFalse(field(session.getClass(), "initialBackground").getBoolean(session));
+            }
+            assertSame(session, field(NativeSession.class, "active").get(null));
+            assertFalse(run(session).cancelled.get());
+        }
     }
 
-    @Test public void disablingNewDefaultDoesNotBlockLegacyForegroundSessionWhoseOriginalPluginIsEnabled() throws Exception {
-        Object session = activate(false, "");
-        prefs.edit().putBoolean("backgroundDisplay", true).commit();
-        PluginSettings.setEnabled(context, PluginSettings.FOREGROUND_ID, true);
-        PluginSettings.setEnabled(context, PluginSettings.BACKGROUND_ID, false);
-        Bundle result = start(query(session, ""));
-        assertFalse(result.containsKey("id"));
-        assertTrue(result.getString("error", ""), result.getString("error", "").contains("后台显示检测进行中"));
-        assertSame(session, field(NativeSession.class, "active").get(null));
-        assertFalse(run(session).cancelled.get());
-    }
-
-    @Test public void legacyBackgroundSessionKeepsOriginalPluginAfterExplicitForegroundHandoff() throws Exception {
-        Object session = activate(true, "");
-        field(session.getClass(), "background").setBoolean(session, false);
-        prefs.edit().putBoolean("backgroundDisplay", false).commit();
-        PluginSettings.setEnabled(context, PluginSettings.FOREGROUND_ID, true);
-        PluginSettings.setEnabled(context, PluginSettings.BACKGROUND_ID, false);
-        String query = query(session, "");
-        assertTrue(NativeSession.continuationBackground(query, Process.myUid(), ""));
-        assertTrue(field(session.getClass(), "initialBackground").getBoolean(session));
-        assertPluginStopped(start(query));
-        assertFalse("preflight must not switch a handed-off session back to its old display",
-            field(session.getClass(), "background").getBoolean(session));
-        assertFalse(run(session).cancelled.get());
-    }
-
-    @Test public void typedBackgroundContinuationStillBelongsToBackgroundPluginAfterHandoff() throws Exception {
-        Object session = activate(true, PhoneUseRouting.BACKGROUND_TOOL);
-        field(session.getClass(), "background").setBoolean(session, false);
-        prefs.edit().putBoolean("backgroundDisplay", false).commit();
-        PluginSettings.setEnabled(context, PluginSettings.FOREGROUND_ID, true);
-        PluginSettings.setEnabled(context, PluginSettings.BACKGROUND_ID, false);
-        String query = query(session, PhoneUseRouting.BACKGROUND_TOOL);
-        assertTrue(NativeSession.continuationBackground(query, Process.myUid(), PhoneUseRouting.BACKGROUND_TOOL));
-        assertPluginStopped(start(query));
-        assertSame(session, field(NativeSession.class, "active").get(null));
-        assertFalse(run(session).cancelled.get());
+    @Test public void continuationAfterExplicitHandoffKeepsItsOriginalPlugin() throws Exception {
+        for (String sourceTool : new String[]{"", PhoneUseRouting.BACKGROUND_TOOL}) {
+            Object session = activate(true, sourceTool);
+            field(session.getClass(), "background").setBoolean(session, false);
+            prefs.edit().putBoolean("backgroundDisplay", false).commit();
+            PluginSettings.setEnabled(context, PluginSettings.FOREGROUND_ID, true);
+            PluginSettings.setEnabled(context, PluginSettings.BACKGROUND_ID, false);
+            String query = query(session, sourceTool);
+            assertTrue(NativeSession.continuationBackground(query, Process.myUid(), sourceTool));
+            assertTrue(field(session.getClass(), "initialBackground").getBoolean(session));
+            assertPluginStopped(start(query));
+            assertFalse("preflight must not switch a handed-off session back to its old display",
+                field(session.getClass(), "background").getBoolean(session));
+            assertSame(session, field(NativeSession.class, "active").get(null));
+            assertFalse(run(session).cancelled.get());
+        }
     }
 
     @Test public void continuationBackendLookupRejectsStaleOwnerSessionToolExpiredAndCancelledWithoutChangingState() throws Exception {

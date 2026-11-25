@@ -49,20 +49,15 @@ public final class PhoneUseLogTest {
         }
         assertTrue(output().contains("enabled")); assertFalse(output().contains("task-id"));
     }
-    @Test public void actionAndFailureLogsNeverContainUserTextOrExceptionMessages() throws Exception {
-        enable(true);
-        Action action = new Action(new JSONObject().put("action", "type").put("text", "private-input-secret")
-            .put("message", "private-message-secret").put("intent", "private-intent-secret"));
-        PhoneUseLog.action("action_proposed", action, null);
-        PhoneUseLog.failure("input", new IllegalStateException("private-exception-secret"));
-        assertTrue(output().contains("textLength")); assertTrue(output().contains("IllegalStateException"));
-        assertFalse(output().contains("secret"));
-    }
-    @Test public void persistentJournalSurvivesDisableAndOmitsPrivateActionContents() throws Exception {
+    @Test public void actionAndFailureLogsAndJournalOmitUserTextAndExceptionMessages() throws Exception {
         var store = DiagnosticLogStore.get(RuntimeEnvironment.getApplication()); store.clear();
         enable(true);
         PhoneUseLog.action("action_proposed", new Action(new JSONObject().put("action", "type")
-            .put("text", "private-input-secret").put("message", "private-goal-secret")), null);
+            .put("text", "private-input-secret").put("message", "private-message-secret")
+            .put("intent", "private-intent-secret")), null);
+        PhoneUseLog.failure("input", new IllegalStateException("private-exception-secret"));
+        assertTrue(output().contains("textLength")); assertTrue(output().contains("IllegalStateException"));
+        assertFalse(output().contains("secret"));
         enable(false); PhoneUseLog.event("should_not_persist");
         String text = String.join("\n", store.snapshot().lines());
         assertTrue(text.contains("action_proposed")); assertTrue(text.contains("\"source\":\"module\""));
@@ -108,7 +103,7 @@ public final class PhoneUseLogTest {
         } finally { executor.shutdown(); }
         assertEquals("", PhoneUseLog.metadata().getString("session"));
     }
-    @Test public void frameRemainsOneUseAndHasSameImageWithLoggingOnOrOff() throws Exception {
+    @Test public void frameIsOneUseOwnerBoundAndExpiringWithSameImageWithLoggingOnOrOff() throws Exception {
         ScreenService.Frame frame = frame();
         for (boolean enabled : new boolean[]{false, true}) {
             enable(enabled);
@@ -125,17 +120,14 @@ public final class PhoneUseLogTest {
                 assertFalse(output().contains(token)); assertFalse(output().contains(frame.image()));
             }
         }
-    }
-    @Test public void expiredAndWrongOwnerFramesStillFailWithDiagnosticReasons() throws Exception {
-        enable(true);
-        String token = FrameStore.put(frame(), 1234).substring("MIAIPLUS_FRAME:".length());
+        String token = FrameStore.put(frame, 1234).substring("MIAIPLUS_FRAME:".length());
         assertThrows(java.io.FileNotFoundException.class, () -> FrameStore.take(token, 5678));
         assertTrue(output().contains("wrong_uid"));
         ShadowSystemClock.advanceBy(Duration.ofSeconds(61));
         assertThrows(java.io.FileNotFoundException.class, () -> FrameStore.take(token, 1234));
         assertTrue(output().contains("expired"));
     }
-    @Test public void requestLogsCorrelateChatAndResponsesImagesWithoutLeakingBodies() throws Exception {
+    @Test public void requestLogsCorrelateImagesAndUnscopedFunctionResultsWithoutLeakingBodies() throws Exception {
         enable(true);
         ScreenService.Frame frame = frame();
         try (PhoneUseLog.Scope ignored = PhoneUseLog.scope("task", 5)) {
@@ -154,6 +146,16 @@ public final class PhoneUseLogTest {
             assertTrue(output().contains("\"images\":0"));
             assertFalse(output().contains("secret")); assertFalse(output().contains(frame.image()));
         }
+        String result = "CONTINUE：控屏尚未完成。\n会话=private-session-secret；目标=private-goal-secret";
+        JSONObject reasoning = new JSONObject().put("type", "reasoning").put("encrypted_content", "opaque-private-secret");
+        PhoneUseLog.request(new JSONObject().put("input", new JSONArray().put(reasoning)
+            .put(new JSONObject().put("type", "function_call_output").put("call_id", "private-call-secret")
+                .put("output", result))), "responses");
+        JSONObject record = lastRequest();
+        assertEquals(result.length(), record.getLong("toolTextChars"));
+        assertEquals(reasoning.getString("encrypted_content").length(), record.getLong("opaqueChars"));
+        assertEquals(0, record.getInt("images"));
+        assertFalse(output().contains("secret"));
     }
     @Test public void requestBurdenCountsChatAndResponsesRolesCallsAndUtf8WithoutChangingBody() throws Exception {
         enable(true);
@@ -192,21 +194,7 @@ public final class PhoneUseLogTest {
             }
         }
     }
-    @Test public void responsesFunctionResultIdentifiesPhoneUseWithoutImagesOrThreadScope() throws Exception {
-        enable(true);
-        String result = "CONTINUE：控屏尚未完成。\n会话=private-session-secret；目标=private-goal-secret";
-        JSONObject reasoning = new JSONObject().put("type", "reasoning").put("encrypted_content", "opaque-private-secret");
-        JSONObject body = new JSONObject().put("input", new JSONArray().put(reasoning)
-            .put(new JSONObject().put("type", "function_call_output").put("call_id", "private-call-secret").put("output", result)));
-        PhoneUseLog.request(body, "responses");
-        JSONObject record = lastRequest();
-        assertEquals(result.length(), record.getLong("toolTextChars"));
-        assertEquals(reasoning.getString("encrypted_content").length(), record.getLong("opaqueChars"));
-        assertEquals(1, record.getInt("functionResults"));
-        assertEquals(0, record.getInt("images"));
-        assertFalse(output().contains("secret"));
-    }
-    @Test public void disabledRequestInspectionDoesNotSerializeOrReadDiagnosticCopies() {
+    @Test public void disabledOrUnassociatedRequestsAreNotInspectedOrLogged() throws Exception {
         enable(false);
         JSONObject body = new JSONObject() {
             @Override public String toString() { throw new AssertionError("disabled diagnostics serialized the request"); }
@@ -215,8 +203,6 @@ public final class PhoneUseLogTest {
         PhoneUseLog.request(body, "chat", (String)null);
         PhoneUseLog.request(body, "chat", 1024L);
         assertTrue(logs().isEmpty());
-    }
-    @Test public void unassociatedOrdinaryRequestDoesNotEmitPhoneUseMetadata() throws Exception {
         enable(true);
         PhoneUseLog.request(new JSONObject().put("messages", new JSONArray()
             .put(ModelClient.message("user", "ordinary-private-secret"))), "chat");

@@ -26,15 +26,12 @@ public class ConfigTest {
         assertEquals("external", new Config(Map.of("globalModel", false, "planner", "external")).planner);
     }
 
-    @Test public void stepBudgetsKeepDefaultAndClampPersistedValuesToSupportedBounds() {
+    @Test public void stepBudgetAndDisplayGeometryKeepDefaultsAndClampPersistedValues() {
         assertEquals("missing budget", 30, new Config(Map.of()).maxSteps);
         for (int[] budget : new int[][]{{81, 81}, {200, 200}, {0, 1}, {201, 200}}) {
             assertEquals("maxSteps=" + budget[0], budget[1],
                 new Config(Map.of("maxSteps", budget[0])).maxSteps);
         }
-    }
-
-    @Test public void displayGeometryKeepsDefaultsAndNormalizesPersistedCanvas() {
         assertGeometry("missing geometry", new Config(Map.of()), 1080, 1920, 320);
         assertGeometry("custom geometry", new Config(Map.of(
             "displayWidth", 1440, "displayHeight", 3200, "displayDensity", 560)), 1440, 3200, 560);

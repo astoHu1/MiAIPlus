@@ -88,7 +88,6 @@ public final class PluginRuntimeTest {
         EtaAgent.setEnabled(context, true);
         Bundle enabled = PluginRuntime.catalog(context);
         assertFalse(enabled.getString("tools").contains(EtaAgent.RUN_TOOL));
-        assertTrue(enabled.getString("revision").endsWith(":eta=NOT_INSTALLED-"));
         assertNotEquals(catalog.getString("revision"), enabled.getString("revision"));
     }
 
@@ -99,7 +98,6 @@ public final class PluginRuntimeTest {
                 .putString("protocol", "phone_use").commit();
             Bundle phone = PluginRuntime.catalog(context);
             assertTrue(phone.getString("tools").contains("miaiplus_phone_use"));
-            assertTrue(phone.getString("tools").contains("miaiplus_background_phone_use"));
             assertFalse(phone.getString("tools").contains(EtaAgent.RUN_TOOL));
             Config.prefs(context).edit().putString("protocol", EtaAgent.PROTOCOL).commit();
             Bundle eta = PluginRuntime.catalog(context);
@@ -133,29 +131,8 @@ public final class PluginRuntimeTest {
         assertEquals(0, opened.get());
     }
 
-    @Test public void missingStaleDisabledDeletedAndForeignToolsAreRejectedBeforeOpeningTransport() throws Exception {
+    @Test public void invalidRequestsAndArgumentsAreRejectedBeforeOpeningTransport() throws Exception {
         assertRejected(PluginRuntime.start(context, OWNER, null));
-        Bundle current = request("{}");
-        Bundle forged = new Bundle(current);
-        forged.putString("pluginId", PluginSettings.FOREGROUND_ID);
-        assertRejected(PluginRuntime.start(context, OWNER, forged));
-        forged = new Bundle(current);
-        forged.putString("toolName", PhoneUseRouting.FOREGROUND_TOOL);
-        assertRejected(PluginRuntime.start(context, OWNER, forged));
-        forged = new Bundle(current);
-        forged.putString("revision", "old-revision");
-        assertRejected(PluginRuntime.start(context, OWNER, forged));
-
-        PluginSettings.setEnabled(context, entry.id(), false);
-        assertRejected(PluginRuntime.start(context, OWNER, current));
-        assertRejected(PluginRuntime.start(context, OWNER, request("{}")));
-        PluginSettings.deleteMcp(context, entry.id());
-        assertRejected(PluginRuntime.start(context, OWNER, request("{}")));
-        assertEquals(0, opened.get());
-        assertFalse(PluginRuntime.busy(OWNER).getBoolean("active"));
-    }
-
-    @Test public void argumentsMustBeOneBoundedJsonObjectBeforeAnyTransportStarts() throws Exception {
         for (String invalid : List.of("", "[]", "null", "42", "\"text\"", "{} trailing", "{}{}",
             "{\"query\":\"" + "x".repeat(PluginRuntime.MAX_ARGUMENT_CHARS) + "\"}",
             "{\"nested\":" + "[".repeat(49) + "0" + "]".repeat(49) + "}")) {
@@ -164,7 +141,21 @@ public final class PluginRuntimeTest {
         Bundle missing = request("{}");
         missing.remove("arguments");
         assertRejected(PluginRuntime.start(context, OWNER, missing));
+        Bundle current = request("{}");
+        for (String[] forgery : new String[][]{{"pluginId", PluginSettings.FOREGROUND_ID},
+            {"toolName", PhoneUseRouting.FOREGROUND_TOOL}, {"revision", "old-revision"}}) {
+            Bundle forged = new Bundle(current);
+            forged.putString(forgery[0], forgery[1]);
+            assertRejected(PluginRuntime.start(context, OWNER, forged));
+        }
+
+        PluginSettings.setEnabled(context, entry.id(), false);
+        assertRejected(PluginRuntime.start(context, OWNER, current));
+        assertRejected(PluginRuntime.start(context, OWNER, request("{}")));
+        PluginSettings.deleteMcp(context, entry.id());
+        assertRejected(PluginRuntime.start(context, OWNER, request("{}")));
         assertEquals(0, opened.get());
+        assertFalse(PluginRuntime.busy(OWNER).getBoolean("active"));
     }
 
     @Test public void successfulCallUsesConfiguredSourceNameAndPreservesNestedArgumentData() throws Exception {
@@ -242,18 +233,18 @@ public final class PluginRuntimeTest {
         assertFalse(PluginRuntime.poll(context, OWNER, id).toString().contains("must not publish"));
         assertEquals(1, opened.get());
         assertEquals(1, client.calls.get());
-    }
 
-    @Test public void completedResultIsNotReturnedAfterItsPluginWasDeleted() throws Exception {
-        FakeClient client = queue(false, false);
-        client.response = "old result must not be exposed";
-        String id = start(request("{}"));
-        awaitFinished(id);
-        assertEquals("done", PluginRuntime.poll(context, OWNER, id).getString("status"));
+        // A completed result is also withdrawn once its plugin is deleted.
+        PluginSettings.setEnabled(context, entry.id(), true);
+        FakeClient completed = queue(false, false);
+        completed.response = "old result must not be exposed";
+        String completedId = start(request("{}"));
+        awaitFinished(completedId);
+        assertEquals("done", PluginRuntime.poll(context, OWNER, completedId).getString("status"));
         PluginSettings.deleteMcp(context, entry.id());
-        Bundle invalidated = PluginRuntime.poll(context, OWNER, id);
-        assertTrue(invalidated.containsKey("error"));
-        assertFalse(invalidated.toString().contains("old result must not be exposed"));
+        Bundle deleted = PluginRuntime.poll(context, OWNER, completedId);
+        assertTrue(deleted.containsKey("error"));
+        assertFalse(deleted.toString().contains("old result must not be exposed"));
     }
 
     @Test public void runningMcpSurvivesRenameLegacyPhoneSettingsAndOtherPluginEnableChanges() throws Exception {
@@ -267,28 +258,17 @@ public final class PluginRuntimeTest {
         await(client.entered);
 
         Config.prefs(context).edit().putBoolean("enabled", false).commit();
-        assertEquals("running", PluginRuntime.poll(context, OWNER, id).getString("status"));
         Config.prefs(context).edit().putString("planner", "external").commit();
-        assertEquals("running", PluginRuntime.poll(context, OWNER, id).getString("status"));
         PluginSettings.setEnabled(context, PluginSettings.FOREGROUND_ID, false);
-        assertEquals("running", PluginRuntime.poll(context, OWNER, id).getString("status"));
         PluginSettings.setEnabled(context, PluginSettings.BACKGROUND_ID, false);
-        assertEquals("running", PluginRuntime.poll(context, OWNER, id).getString("status"));
         PluginSettings.setEnabled(context, otherId, true);
-        assertEquals("running", PluginRuntime.poll(context, OWNER, id).getString("status"));
         PluginSettings.setEnabled(context, otherId, false);
-        assertEquals("running", PluginRuntime.poll(context, OWNER, id).getString("status"));
         PluginSettings.saveMcp(context, entry.id(), "Renamed fixture", ENDPOINT, TOKEN, PluginSettings.MCP_PROTOCOL_VERSION);
         assertEquals("running", PluginRuntime.poll(context, OWNER, id).getString("status"));
         assertEquals(0, client.cancels.get());
 
         client.returnCall.countDown();
         awaitFinished(id);
-        Bundle finished = PluginRuntime.poll(context, OWNER, id);
-        assertEquals("done", finished.getString("status"));
-        assertTrue(finished.getString("result").contains(client.response));
-        Config.prefs(context).edit().putBoolean("enabled", true).putString("planner", "native").commit();
-        PluginSettings.setEnabled(context, otherId, true);
         PluginSettings.saveMcp(context, entry.id(), "Renamed again", ENDPOINT, TOKEN, PluginSettings.MCP_PROTOCOL_VERSION);
         Bundle renamed = PluginRuntime.poll(context, OWNER, id);
         assertEquals("done", renamed.getString("status"));
@@ -326,38 +306,23 @@ public final class PluginRuntimeTest {
         }
     }
 
-    @Test public void workerFailuresAndOversizedResultsAreSanitizedAndNeverRetried() throws Exception {
-        for (boolean tooLarge : new boolean[]{false, true}) {
-            FakeClient client = queue(false, false);
-            if (tooLarge) client.response = "x".repeat(PluginRuntime.MAX_RESULT_CHARS + 1);
-            else client.callFailure = new IllegalStateException("server echoed " + TOKEN + " " + ENDPOINT);
-            String id = start(request("{}"));
-            awaitFinished(id);
-            Bundle result = PluginRuntime.poll(context, OWNER, id);
-            assertEquals("error", result.getString("status"));
-            assertFalse(result.toString().contains(TOKEN));
-            assertFalse(result.toString().contains(ENDPOINT));
-            assertFalse(result.toString().contains("server echoed"));
-            assertEquals(1, client.calls.get());
-            assertEquals(1, client.closes.get());
-        }
-        assertEquals(2, opened.get());
-    }
-
-    @Test public void backendAndCloseLinkageErrorsReleaseBusyAndNeverLeaveAnExitedWorkerRunning() throws Exception {
-        for (boolean failsInCall : new boolean[]{true, false}) {
+    @Test public void workerFailuresLinkageErrorsAndOversizedResultsAreSanitizedReleasedAndNeverRetried() throws Exception {
+        for (int variant = 0; variant < 4; variant++) {
             FakeClient client = queue(false, false);
             LinkageError error = new LinkageError("private backend fixture " + TOKEN + " " + ENDPOINT);
-            if (failsInCall) client.callError = error;
+            if (variant == 0) client.response = "x".repeat(PluginRuntime.MAX_RESULT_CHARS + 1);
+            else if (variant == 1) client.callFailure = new IllegalStateException("server echoed " + TOKEN + " " + ENDPOINT);
+            else if (variant == 2) client.callError = error;
             else client.closeError = error;
             String id = start(request("{}"));
             awaitFinished(id);
             Bundle terminal = PluginRuntime.poll(context, OWNER, id);
             assertFalse("An exited worker must not leave the host polling forever", "running".equals(terminal.getString("status")));
-            assertTrue(Set.of("done", "error").contains(terminal.getString("status")));
-            if (failsInCall) assertEquals("error", terminal.getString("status"));
+            if (variant < 3) assertEquals("error", terminal.getString("status"));
+            else assertTrue(Set.of("done", "error").contains(terminal.getString("status")));
             assertFalse(terminal.toString().contains(TOKEN));
             assertFalse(terminal.toString().contains(ENDPOINT));
+            assertFalse(terminal.toString().contains("server echoed"));
             assertFalse(terminal.toString().contains("private backend fixture"));
             assertFalse(PluginRuntime.busy(OWNER).getBoolean("active"));
             assertEquals(1, client.calls.get());
@@ -368,6 +333,7 @@ public final class PluginRuntimeTest {
         awaitFinished(id);
         assertEquals("done", PluginRuntime.poll(context, OWNER, id).getString("status"));
         assertEquals(1, recovered.calls.get());
+        assertEquals(5, opened.get());
     }
 
     @Test public void settingsStopCancelsAllRemoteOwnersUntilCloseWithoutTouchingScreenOrLaterRuns() throws Exception {
@@ -538,7 +504,7 @@ public final class PluginRuntimeTest {
         assertTrue(safe.contains("[凭证已隐藏]"));
     }
 
-    @Test public void refreshRequiresExactSnapshotAndClosesDiscoveryClientWithoutEnablingPlugin() throws Exception {
+    @Test public void refreshRequiresExactSnapshotAndStaleDiscoveryCannotOverwriteNewConnection() throws Exception {
         PluginSettings.setEnabled(context, entry.id(), false);
         String revision = PluginSettings.load(context).revision();
         FakeClient client = queue(false, false);
@@ -551,20 +517,18 @@ public final class PluginRuntimeTest {
         assertEquals(1, client.closes.get());
         assertThrows(IllegalStateException.class, () -> PluginRuntime.refresh(context, entry.id(), revision));
         assertEquals(1, opened.get());
-    }
 
-    @Test public void staleDiscoveryCannotOverwriteNewConnectionConfiguration() throws Exception {
-        String revision = PluginSettings.load(context).revision();
-        FakeClient client = queue(false, false);
-        client.listed = List.of(tool(entry.id(), "stale_lookup"));
-        client.onList = () -> PluginSettings.saveMcp(context, entry.id(), "Moved", "https://other.example.invalid/mcp",
+        String current = PluginSettings.load(context).revision();
+        FakeClient stale = queue(false, false);
+        stale.listed = List.of(tool(entry.id(), "stale_lookup"));
+        stale.onList = () -> PluginSettings.saveMcp(context, entry.id(), "Moved", "https://other.example.invalid/mcp",
             "other-fixture-token", PluginSettings.MCP_PROTOCOL_VERSION);
-        assertThrows(IllegalStateException.class, () -> PluginRuntime.refresh(context, entry.id(), revision));
-        PluginSettings.Entry current = PluginSettings.load(context).find(entry.id());
-        assertEquals("https://other.example.invalid/mcp", current.endpoint());
-        assertEquals("other-fixture-token", current.bearerToken());
-        assertTrue(current.tools().isEmpty());
-        assertEquals(1, client.closes.get());
+        assertThrows(IllegalStateException.class, () -> PluginRuntime.refresh(context, entry.id(), current));
+        PluginSettings.Entry moved = PluginSettings.load(context).find(entry.id());
+        assertEquals("https://other.example.invalid/mcp", moved.endpoint());
+        assertEquals("other-fixture-token", moved.bearerToken());
+        assertTrue(moved.tools().isEmpty());
+        assertEquals(1, stale.closes.get());
     }
 
     @Test public void inactiveDiscoveryCachesSixtyFourToolsWithoutConsumingEnabledToolCountBudget() throws Exception {

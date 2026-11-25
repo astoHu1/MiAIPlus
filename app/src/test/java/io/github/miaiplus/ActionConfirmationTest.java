@@ -12,6 +12,9 @@ import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import org.json.JSONArray;
+import org.json.JSONObject;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -23,20 +26,10 @@ import org.robolectric.shadows.ShadowSystemClock;
 @RunWith(RobolectricTestRunner.class)
 @org.robolectric.annotation.Config(sdk = 33, application = Application.class)
 public final class ActionConfirmationTest {
+    private static final String BUTTON = "android.widget.Button [100,100][300,300] enabled=true clickable text=发送\n";
     private BridgeProvider provider;
     private RunState run;
     private FutureTask<Boolean> waiting;
-
-    @Test public void confirmationDescriptionUsesIntentOrActionFallbackAndPreservesSuppliedText() throws Exception {
-        Action action = new Action(new org.json.JSONObject().put("action", "back")
-            .put("requires_confirmation", true).put("message", " \n ").put("intent", "返回订单页"));
-        assertEquals("返回订单页", ActionConfirmation.message(action));
-        action.data.remove("intent");
-        assertEquals("返回上一页", ActionConfirmation.message(action));
-        String message = "确认发送给指定收件人：\n" + "完整操作说明".repeat(50);
-        action.data.put("message", message);
-        assertEquals(message, ActionConfirmation.message(action));
-    }
 
     @Before public void setUp() throws Exception {
         field(ActionConfirmation.class, "pending").set(null, null);
@@ -64,7 +57,137 @@ public final class ActionConfirmationTest {
         field(BridgeProvider.class, "screenTaskActive").setBoolean(null, false);
     }
 
-    @Test public void eachDecisionRequiresMatchingOwnerTaskAndTokenAndCannotBeReplayed() {
+    @Test public void upstreamParsingPreservesCoordinatesLiteralTextAndTerminalActions() throws Exception {
+        Action tap = Action.parseAutoGlm("<think>点击搜索</think><answer>do(action=\"Tap\", element=[500, 125])</answer>");
+        assertEquals("tap", tap.name); assertArrayEquals(new double[]{500,125}, tap.point("element"), .001);
+        assertEquals("finish", Action.parseAutoGlm("finish(message=\"已打开\")").name);
+        Action a = Action.parseAutoGlm("do(action=\"Tap\", element=[1,999], message=\"发送消息\")");
+        assertEquals("发送消息", a.data.getString("message"));
+        assertEquals("take_over", Action.parseAutoGlm("do(action='Take_over', message='请登录')").name);
+        for (String[] sample : new String[][]{
+            {"do(action='Type', text='你好,世界（A=B）')", "你好,世界（A=B）"},
+            {"do(action=\"Type\", text=\"a, [b] \\\"c\\\" = d\")", "a, [b] \"c\" = d"}
+        }) {
+            assertEquals(sample[0], sample[1], Action.parseAutoGlm(sample[0]).data.getString("text"));
+        }
+    }
+
+    @Test public void invalidCoordinatesCodeOrUnknownActionAreRejected() throws Exception {
+        for (String s : new String[]{
+            "do(action='Tap', element=[-1,20])", "do(action='Tap', element=[1001,20])",
+            "do(action='Tap', element=[1])", "do(action='Type', text=__import__('os').system('id'))",
+            "do(action='Type', text='hello'); evil()", "do(action='Type', text='hello' + 'world')",
+            "do(action='Tap', action='Home')", "do(action='Run', command='rm -rf /')",
+            "do(action='Type', text='unterminated)", "do(action='Swipe', start=[1,2])"
+        }) {
+            try { Action.parseAutoGlm(s); fail("Accepted invalid action: " + s); }
+            catch (IllegalArgumentException | org.json.JSONException expected) { }
+        }
+        assertEquals("swipe", new Action(new JSONObject("{\"action\":\"swipe\",\"start\":[0,1000],\"end\":[1000,0]}")).name);
+        try { new Action(new JSONObject("{\"action\":\"launch\"}")); fail(); } catch (IllegalArgumentException expected) { }
+    }
+
+    @Test public void reviewIsBoundToTheConcreteTargetKeepsItsDecisionAndIsConsumedOnce() throws Exception {
+        ActionPermissionReview review = new ActionPermissionReview();
+        Action candidate = candidate();
+        JSONObject challenge = review.issue(candidate, frame(BUTTON));
+        assertTrue(review.pending());
+        assertEquals(BUTTON, review.observation().tree());
+        assertTrue(review.matches(candidate));
+        assertEquals("normalized", challenge.getString("coordinate_space"));
+        assertEquals("allow", review.consume(answerWith(candidate, challenge, "allow"), frame(BUTTON)));
+        assertFalse(review.pending());
+        assertNull(review.observation());
+        assertEquals("ask_user", review.consume(answerWith(candidate, challenge, "allow"), frame(BUTTON)));
+        for (String decision : new String[]{"allow", "ask_user", "deny"}) {
+            ActionPermissionReview fresh = new ActionPermissionReview();
+            Action action = candidate();
+            assertEquals(decision, fresh.consume(answerWith(action, fresh.issue(action, frame(BUTTON)), decision), frame(BUTTON)));
+        }
+        ActionPermissionReview reordering = new ActionPermissionReview();
+        Action original = candidate();
+        JSONObject reorderedChallenge = reordering.issue(original, frame(BUTTON));
+        Action reordered = new Action(new JSONObject().put("risk_level", "sensitive").put("message", original.data.getString("message"))
+            .put("requires_confirmation", true).put("element", new JSONArray("[200.0,200]"))
+            .put("action", "tap").put("intent", "发送草稿"));
+        assertTrue(reordering.matches(reordered));
+        assertEquals("allow", reordering.consume(answerWith(reordered, reorderedChallenge, "allow"), frame(BUTTON
+            + "android.widget.TextView [700,0][1000,80] enabled=true text=新广告\n")));
+    }
+
+    @Test public void changesToCoordinatesMessageOrRiskCannotReuseApproval() throws Exception {
+        for (String name : new String[]{"element", "message", "risk_level", "extra"}) {
+            ActionPermissionReview review = new ActionPermissionReview();
+            Action candidate = candidate();
+            Action answer = answerWith(candidate, review.issue(candidate, frame(BUTTON)), "allow");
+            answer.data.put(name, name.equals("element") ? new JSONArray("[250,200]") : "changed");
+            assertFalse(name, review.matches(answer));
+            assertEquals(name, "ask_user", review.consume(answer, frame(BUTTON)));
+            assertFalse(review.pending());
+        }
+        ActionPermissionReview review = new ActionPermissionReview();
+        Action candidate = candidate();
+        JSONObject challenge = review.issue(candidate, frame(BUTTON));
+        candidate.data.put("message", "发送另一段内容");
+        assertFalse(review.matches(candidate));
+        challenge.getJSONObject("action").put("message", "发送另一段内容");
+        assertFalse(review.matches(candidate));
+    }
+
+    @Test public void missingMalformedForgedExpiredOrReplacedReviewFallsBackToUser() throws Exception {
+        for (String scenario : new String[]{"missing", "wrong_token", "no_reason", "blank_reason", "long_reason", "bad_decision", "extra", "not_string"}) {
+            ActionPermissionReview review = new ActionPermissionReview();
+            Action candidate = candidate();
+            Action answer = answerWith(candidate, review.issue(candidate, frame(BUTTON)), "allow");
+            JSONObject data = answer.data.getJSONObject("permission_review");
+            switch (scenario) {
+                case "missing" -> answer.data.remove("permission_review");
+                case "wrong_token" -> data.put("token", "forged");
+                case "no_reason" -> data.remove("reason");
+                case "blank_reason" -> data.put("reason", " \n ");
+                case "long_reason" -> data.put("reason", "x".repeat(2001));
+                case "bad_decision" -> data.put("decision", "approved");
+                case "extra" -> data.put("other", true);
+                case "not_string" -> data.put("reason", 42);
+            }
+            assertEquals(scenario, "ask_user", review.consume(answer, frame(BUTTON)));
+            assertFalse(scenario, review.pending());
+        }
+        AtomicLong now = new AtomicLong(1_000);
+        ActionPermissionReview timed = new ActionPermissionReview(now::get);
+        Action candidate = candidate();
+        JSONObject challenge = timed.issue(candidate, frame(BUTTON));
+        now.addAndGet(ActionPermissionReview.TIMEOUT_NANOS);
+        assertEquals("ask_user", timed.consume(answerWith(candidate, challenge, "allow"), frame(BUTTON)));
+        JSONObject old = timed.issue(candidate, frame(BUTTON));
+        JSONObject fresh = timed.issue(candidate, frame(BUTTON));
+        assertNotEquals(old.getString("token"), fresh.getString("token"));
+        assertEquals("ask_user", timed.consume(answerWith(candidate, old, "allow"), frame(BUTTON)));
+    }
+
+    @Test public void changedTargetDisplayAuthorizationTextOrSevereRiskCannotUseTheReview() throws Exception {
+        Action candidate = candidate();
+        for (ScreenService.Frame current : new ScreenService.Frame[]{frame(BUTTON.replace("发送", "删除")),
+            new ScreenService.Frame("image", BUTTON, 1000, 1000, "app", 1000, 1000, 1, "background")}) {
+            ActionPermissionReview review = new ActionPermissionReview();
+            JSONObject challenge = review.issue(candidate, frame(BUTTON));
+            assertEquals("ask_user", review.consume(answerWith(candidate, challenge, "allow"), current));
+        }
+        ActionPermissionReview review = new ActionPermissionReview();
+        ScreenService.Frame old = new ScreenService.Frame("image", BUTTON
+            + "android.widget.TextView [600,100][900,300] enabled=true text=获取相机权限\n",
+            1000, 1000, "com.android.permissioncontroller", 1000, 1000, 0, "");
+        ScreenService.Frame current = new ScreenService.Frame("image", old.tree().replace("获取相机权限", "获取麦克风权限"),
+            1000, 1000, "com.android.permissioncontroller", 1000, 1000, 0, "");
+        JSONObject challenge = review.issue(candidate, old);
+        assertEquals("ask_user", review.consume(answerWith(candidate, challenge, "allow"), current));
+        ActionPermissionReview severe = new ActionPermissionReview();
+        Action critical = candidate();
+        critical.data.put("risk_level", "critical");
+        assertEquals("ask_user", severe.consume(answerWith(critical, severe.issue(critical, frame(BUTTON)), "allow"), frame(BUTTON)));
+    }
+
+    @Test public void eachDecisionRequiresMatchingOwnerTaskAndTokenAndCannotBeReplayedOrExpired() {
         for (boolean allow : new boolean[]{true, false}) {
             String scenario = "allow=" + allow;
             ActionConfirmation.Request request = request();
@@ -78,9 +201,6 @@ public final class ActionConfirmationTest {
             assertEquals(scenario, Boolean.valueOf(allow), request.answer());
             assertNotEquals(scenario, request.token, request().token);
         }
-    }
-
-    @Test public void expiryCancellationAndStepDeadlineEachRejectApproval() {
         ActionConfirmation.Request expired = request();
         assertFalse(expired.respond("task-a", run.owner, expired.token, true, expired.expires));
         ActionConfirmation.Request deadline = request();
@@ -97,6 +217,12 @@ public final class ActionConfirmationTest {
 
     @Test public void providerApprovalUnblocksOnlyThePendingActionAndClearsIt() throws Exception {
         ActionConfirmation.Request request = startWaiting("发送这条消息");
+        try {
+            ActionConfirmation.await("提交第二项操作", run);
+            fail("Concurrent confirmation must not replace the pending action");
+        } catch (IllegalStateException expected) {
+            assertSame(request, pending());
+        }
         assertTrue(answer("task-a", request.token, true));
         finishWaiting();
         assertTrue(waiting.get(1, TimeUnit.SECONDS));
@@ -139,19 +265,6 @@ public final class ActionConfirmationTest {
         assertFalse(answer("task-a", request.token, true));
     }
 
-    @Test public void anotherConfirmationCannotReplaceTheActionAlreadyAwaitingUserDecision() throws Exception {
-        ActionConfirmation.Request request = startWaiting("提交第一项操作");
-        try {
-            ActionConfirmation.await("提交第二项操作", run);
-            fail("Concurrent confirmation must not replace the pending action");
-        } catch (IllegalStateException expected) {
-            assertSame(request, pending());
-        }
-        assertTrue(answer("task-a", request.token, true));
-        finishWaiting();
-        assertTrue(waiting.get(1, TimeUnit.SECONDS));
-    }
-
     @Test public void sixtySecondTimeoutCancelsTaskAndRemovesNotificationState() throws Exception {
         ActionConfirmation.Request request = startWaiting("提交本次操作");
         ShadowSystemClock.advanceBy(Duration.ofMillis(ActionConfirmation.TIMEOUT_MS));
@@ -173,17 +286,6 @@ public final class ActionConfirmationTest {
         assertNull(pending());
     }
 
-    @Test public void originalStepDeadlineStillAppliesWhileWaitingForConfirmation() throws Exception {
-        run.deadline = SystemClock.elapsedRealtime() + 1_000;
-        ActionConfirmation.Request request = startWaiting("提交本次操作");
-        ShadowSystemClock.advanceBy(Duration.ofMillis(1_000));
-        assertFalse(answer("task-a", request.token, true));
-        finishWaiting();
-        assertCancelledWait();
-        assertTrue(run.cancelled.get());
-        assertNull(pending());
-    }
-
     @Test public void fullOperationTextIsPublishedOnlyToItsTaskAndOwner() throws Exception {
         String message = "操作".repeat(1_000);
         ActionConfirmation.Request request = startWaiting(message);
@@ -199,7 +301,23 @@ public final class ActionConfirmationTest {
         assertTrue(waiting.get(1, TimeUnit.SECONDS));
     }
 
-    @Test public void emptyOrOverlongOperationTextIsRejectedInsteadOfTruncated() throws Exception {
+    @Test public void originalStepDeadlineStillAppliesWhileWaitingForConfirmation() throws Exception {
+        run.deadline = SystemClock.elapsedRealtime() + 1_000;
+        ActionConfirmation.Request request = startWaiting("提交本次操作");
+        ShadowSystemClock.advanceBy(Duration.ofMillis(1_000));
+        assertFalse(answer("task-a", request.token, true));
+        finishWaiting();
+        assertCancelledWait();
+        assertTrue(run.cancelled.get());
+        assertNull(pending());
+    }
+
+    @Test public void operationTextFallsBackToIntentOrActionAndRejectsEmptyOrOverlongText() throws Exception {
+        Action action = new Action(new JSONObject().put("action", "back")
+            .put("requires_confirmation", true).put("message", " \n ").put("intent", "返回订单页"));
+        assertEquals("返回订单页", ActionConfirmation.message(action));
+        action.data.remove("intent");
+        assertEquals("返回上一页", ActionConfirmation.message(action));
         for (String message : new String[]{null, "", "   ", "操".repeat(2_001)}) {
             try {
                 ActionConfirmation.await(message, run);
@@ -221,6 +339,22 @@ public final class ActionConfirmationTest {
             assertTrue(expected.getMessage().contains("从小爱对话"));
             assertNull(pending());
         }
+    }
+
+    private static Action candidate() throws Exception {
+        return new Action(new JSONObject().put("action", "tap").put("element", new JSONArray("[200,200]"))
+            .put("requires_confirmation", true).put("message", "发送当前草稿给指定联系人").put("risk_level", "sensitive"));
+    }
+
+    private static ScreenService.Frame frame(String tree) {
+        return new ScreenService.Frame("image", tree, 1000, 1000, "app", 1000, 1000, 0, "");
+    }
+
+    private static Action answerWith(Action action, JSONObject challenge, String decision) throws Exception {
+        Action copy = new Action(new JSONObject(action.data.toString()));
+        copy.data.put("permission_review", new JSONObject().put("token", challenge.getString("token"))
+            .put("decision", decision).put("reason", "用户明确要求给该联系人发送当前草稿"));
+        return copy;
     }
 
     private ActionConfirmation.Request request() {

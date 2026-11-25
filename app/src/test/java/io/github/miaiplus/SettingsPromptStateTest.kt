@@ -114,5 +114,11 @@ class SettingsPromptStateTest {
         assertEquals(1, PersonaProfiles(prefs).profiles.size)
         assertFalse(state.deletePersona())
         assertEquals("保留内容", Config(application).customPromptText)
+
+        assertTrue(state.createPersona("私密"))
+        state.updatePersona(text = "已保存的私密内容")
+        assertTrue(state.savePersona())
+        assertTrue(state.deletePersona())
+        assertFalse(prefs.all.toString().contains("已保存的私密内容"))
     }
 }

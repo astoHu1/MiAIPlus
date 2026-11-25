@@ -9,7 +9,7 @@ import static org.junit.Assert.*;
 public class ModelObservationTest {
     private static final String BUTTON = "android.widget.Button [100,100][300,300] window=3 id=submit enabled=true clickable text=提交\n";
 
-    @Test public void onlyKnownClassPrefixesAreShortenedAndAllEvidenceFieldsArePreserved() {
+    @Test public void externalTreeShortensOnlyKnownPrefixesKeepsEveryRowAndPreservesEscapes() {
         String source = BUTTON.repeat(10)
             + "android.view.View [0,0][100,100] window=9 id=overlay enabled=false description=android.widget.Button\\n不是新节点\n"
             + "com.example.android.widget.Button [0,300][300,500] window=3 enabled=true editable focused [password redacted]\n";
@@ -18,6 +18,18 @@ public class ModelObservationTest {
         assertTrue(output.contains("view.View [0,0][100,100] window=9 id=overlay enabled=false description=android.widget.Button\\n不是新节点\n"));
         assertTrue(output.contains("com.example.android.widget.Button [0,300][300,500] window=3 enabled=true editable focused [password redacted]\n"));
         assertFalse(output.contains("模型树已截断"));
+        String row = BUTTON.replace("提交", "否：不得提交😀\\n二\\r三\\\\四");
+        String escaped = ModelObservation.externalTree(frame(row + row));
+        assertEquals(2, escaped.lines().filter(line -> line.startsWith("android.widget.Button")).count());
+        assertTrue(escaped.contains("text=否：不得提交😀\\n二\\r三\\\\四\n"));
+        assertFalse(escaped.contains("\n二"));
+        assertTrue(escaped.endsWith(row));
+        String many = BUTTON.repeat(250);
+        String projected = ModelObservation.externalTree(frame(many));
+        assertTrue(projected.length() > 12000);
+        assertTrue(projected.length() < many.length());
+        assertEquals(250, projected.lines().filter(line -> line.startsWith("widget.Button")).count());
+        assertFalse(projected.contains("模型树已截断"));
     }
 
     @Test public void nativeBudgetKeepsWholeRowsAndCountsOnlyReadButOmittedRows() {
@@ -41,16 +53,13 @@ public class ModelObservationTest {
         assertEquals(source.toString(), frame.tree());
     }
 
-    @Test public void exactBudgetDoesNotDropRowsToReserveAnUnneededTruncationNotice() {
+    @Test public void budgetBoundariesAreExactAndNeverCutALongRow() {
         ScreenService.Frame frame = frame(BUTTON.repeat(3));
         String full = ModelObservation.externalTree(frame);
         assertEquals(full, ModelObservation.tree(frame, full.length()));
         String clipped = ModelObservation.tree(frame, full.length() - 1);
         assertTrue(clipped.length() < full.length());
         assertTrue(clipped.contains("模型树已截断"));
-    }
-
-    @Test public void twelveThousandCharacterBoundaryIsExactAndNeverCutsALongRow() {
         for (int size : new int[]{11999, 12000, 12001}) {
             String source = "custom.Node text=" + "字".repeat(size - "custom.Node text=".length() - 1) + "\n";
             String output = ModelObservation.nativeTree(frame(source));
@@ -63,7 +72,7 @@ public class ModelObservationTest {
         }
     }
 
-    @Test public void anOversizedSingleNodeIsOmittedInsteadOfEmittingPartialMetadataOrEmoji() {
+    @Test public void oversizedRowsAreOmittedWholeWithoutPayingForAnUnneededLegend() {
         String source = BUTTON.replace("提交", "😀\\n\\r\\\\".repeat(2000));
         String output = ModelObservation.nativeTree(frame(source));
         assertTrue(output.length() <= 12000);
@@ -71,24 +80,12 @@ public class ModelObservationTest {
         assertFalse(output.contains("id=submit"));
         assertFalse(output.contains("😀"));
         assertFalse(Character.isHighSurrogate(output.charAt(output.length() - 1)));
-    }
-
-    @Test public void chineseEmojiEscapingAndIdenticalNodesRemainInOriginalOrder() {
-        String row = BUTTON.replace("提交", "否：不得提交😀\\n二\\r三\\\\四");
-        String output = ModelObservation.externalTree(frame(row + row));
-        assertEquals(2, output.lines().filter(line -> line.startsWith("android.widget.Button")).count());
-        assertTrue(output.contains("text=否：不得提交😀\\n二\\r三\\\\四\n"));
-        assertFalse(output.contains("\n二"));
-        assertTrue(output.endsWith(row));
-    }
-
-    @Test public void externalProjectionKeepsAllCollectedRowsRatherThanAdoptingTheNativeWindow() {
-        String source = BUTTON.repeat(250);
-        String output = ModelObservation.externalTree(frame(source));
-        assertTrue(output.length() > 12000);
-        assertTrue(output.length() < source.length());
-        assertEquals(250, output.lines().filter(line -> line.startsWith("widget.Button")).count());
-        assertFalse(output.contains("模型树已截断"));
+        String first = BUTTON.replace("提交", "字".repeat(11800));
+        String clipped = ModelObservation.nativeTree(frame(first + BUTTON.repeat(20)));
+        assertTrue(clipped.startsWith("android.widget.Button"));
+        assertTrue(clipped.contains("模型树已截断"));
+        assertFalse(clipped.contains("省略android.前缀"));
+        assertTrue(clipped.length() <= 12000);
     }
 
     @Test public void unavailableBackgroundTreeIsDistinctFromAClippedModelView() {
@@ -117,15 +114,6 @@ public class ModelObservationTest {
         String output = ModelObservation.externalTree(frame(source));
         assertTrue(output.startsWith(legend));
         assertTrue(output.getBytes(StandardCharsets.UTF_8).length < source.getBytes(StandardCharsets.UTF_8).length);
-    }
-
-    @Test public void clippedNativeTreeDoesNotPayForALegendWhenOnlyOnePrefixWouldBeShown() {
-        String first = BUTTON.replace("提交", "字".repeat(11800));
-        String output = ModelObservation.nativeTree(frame(first + BUTTON.repeat(20)));
-        assertTrue(output.startsWith("android.widget.Button"));
-        assertTrue(output.contains("模型树已截断"));
-        assertFalse(output.contains("省略android.前缀"));
-        assertTrue(output.length() <= 12000);
     }
 
     @Test public void projectionCannotChangeTheFrameOrTheExecutionGuardVerdict() throws Exception {

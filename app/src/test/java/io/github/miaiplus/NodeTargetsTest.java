@@ -10,7 +10,7 @@ public class NodeTargetsTest {
     private static final String BUTTON = "android.widget.Button [100,100][300,300] window=3 id=submit enabled=true clickable text=提交\n";
     private static final Pattern REFERENCE = Pattern.compile(" target=([^ \n]+)");
 
-    @Test public void referencesAndImageCoordinatesResolveToTheSameDisplayPoint() throws Exception {
+    @Test public void referencesResolveToTheVisibleDisplayPointAndKeepRiskMetadata() throws Exception {
         ScreenService.Frame frame = frame(BUTTON);
         NodeTargets targets = NodeTargets.capture(frame);
         for (String action : new String[]{"tap", "double_tap", "long_press"}) {
@@ -31,6 +31,21 @@ public class NodeTargetsTest {
         assertEquals(BUTTON, frame.tree());
         assertTrue(targets.tree().contains("clickable target="));
         assertTrue(targets.tree().contains(" text=提交"));
+
+        ScreenService.Frame offscreen = frame(BUTTON.replace("[100,100][300,300]", "[-100,-200][300,400]"));
+        NodeTargets clipped = NodeTargets.capture(offscreen);
+        point = clipped.normalize(request("tap", reference(clipped.tree())), offscreen).getJSONArray("element");
+        assertEquals("partially offscreen bounds use the visible center", 150, point.getDouble(0), 0.0001);
+        assertEquals(100, point.getDouble(1), 0.0001);
+
+        JSONObject reviewed = request("tap", reference(targets.tree()));
+        reviewed.getJSONObject("action").put("intent", "点击提交").put("risk_level", "sensitive").put("requires_confirmation", true)
+            .put("permission_review", new JSONObject().put("token", "review-token").put("decision", "allow").put("reason", "已确认"));
+        JSONObject resolved = targets.normalize(reviewed, frame);
+        assertEquals("点击提交", resolved.getString("intent"));
+        assertEquals("sensitive", resolved.getString("risk_level"));
+        assertTrue(resolved.getBoolean("requires_confirmation"));
+        assertEquals("review-token", resolved.getJSONObject("permission_review").getString("token"));
     }
 
     @Test public void onlyEnabledInteractiveVisibleNonPasswordNodesGetReferences() {
@@ -44,14 +59,6 @@ public class NodeTargetsTest {
         String tree = NodeTargets.capture(frame(source)).tree();
         assertEquals(1, tree.lines().filter(line -> line.contains(" enabled=true editable target=")).count());
         assertEquals(1, tree.lines().filter(line -> REFERENCE.matcher(metadata(line)).find()).count());
-    }
-
-    @Test public void partiallyOffscreenBoundsUseTheCenterOfTheVisibleIntersection() throws Exception {
-        ScreenService.Frame frame = frame(BUTTON.replace("[100,100][300,300]", "[-100,-200][300,400]"));
-        NodeTargets targets = NodeTargets.capture(frame);
-        JSONArray point = targets.normalize(request("tap", reference(targets.tree())), frame).getJSONArray("element");
-        assertEquals(150, point.getDouble(0), 0.0001);
-        assertEquals(100, point.getDouble(1), 0.0001);
     }
 
     @Test public void identicalNodesHaveDistinctReferencesAndUnlabeledLastRowsRemainUsable() throws Exception {
@@ -108,20 +115,6 @@ public class NodeTargetsTest {
         }
     }
 
-    @Test public void resolvingPreservesRiskReviewAndIntentMetadata() throws Exception {
-        ScreenService.Frame frame = frame(BUTTON);
-        NodeTargets targets = NodeTargets.capture(frame);
-        JSONObject request = request("tap", reference(targets.tree()));
-        JSONObject action = request.getJSONObject("action");
-        action.put("intent", "点击提交").put("risk_level", "sensitive").put("requires_confirmation", true)
-            .put("permission_review", new JSONObject().put("token", "review-token").put("decision", "allow").put("reason", "已确认"));
-        JSONObject resolved = targets.normalize(request, frame);
-        assertEquals("点击提交", resolved.getString("intent"));
-        assertEquals("sensitive", resolved.getString("risk_level"));
-        assertTrue(resolved.getBoolean("requires_confirmation"));
-        assertEquals("review-token", resolved.getJSONObject("permission_review").getString("token"));
-    }
-
     @Test public void resolvedReferencesStillRequireTheOriginalPageGuard() throws Exception {
         ScreenService.Frame frame = frame(BUTTON);
         NodeTargets targets = NodeTargets.capture(frame);
@@ -131,6 +124,28 @@ public class NodeTargetsTest {
                 BUTTON.replace("[100,100][300,300]", "[200,100][400,300]"),
                 BUTTON + "android.view.View [0,0][1000,2000] window=4 enabled=true\n"})
             assertFalse(PageGuard.canExecute(action, frame, frame(changed)));
+    }
+
+    @Test public void observationProvenanceUsesTheSystemWindowOwnerAndItsOwnDisplay() {
+        ScreenService.Frame screenshot = ScreenService.Frame.physical("image with another app's watermark",
+            "android.widget.ImageView text=抖音 前台=com.ss.android.ugc.aweme", 1000, 1000, "com.tencent.mm");
+        String provenance = ModelObservation.provenance(screenshot);
+        assertTrue(provenance, provenance.startsWith("系统观察：前台应用包名=com.tencent.mm；"));
+        assertTrue(provenance, provenance.contains("执行屏幕=foreground；displayId=0"));
+        assertFalse(provenance, provenance.contains("com.ss.android.ugc.aweme"));
+
+        ScreenService.Frame background = ScreenService.Frame.background("image", "", 1000, 1000,
+            500, 500, "com.example.video/.PlayerActivity", 7, "generation");
+        provenance = ModelObservation.provenance(background);
+        assertTrue(provenance, provenance.contains("前台应用包名=com.example.video；"));
+        assertTrue(provenance, provenance.contains("执行屏幕=background；displayId=7"));
+        assertFalse(provenance, provenance.contains(".PlayerActivity"));
+
+        ScreenService.Frame unowned = ScreenService.Frame.physical("image", "com.example.video", 1000, 1000, null);
+        assertEquals("", ModelObservation.foregroundPackage(unowned));
+        provenance = ModelObservation.provenance(unowned);
+        assertTrue(provenance, provenance.startsWith("系统观察：前台应用包名=；"));
+        assertFalse(provenance, provenance.contains("com.example.video"));
     }
 
     private static JSONObject request(String action, String target) throws Exception {

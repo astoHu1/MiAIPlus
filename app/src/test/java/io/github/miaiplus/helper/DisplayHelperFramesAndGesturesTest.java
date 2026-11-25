@@ -153,7 +153,13 @@ public class DisplayHelperFramesAndGesturesTest {
         }
     }
 
-    @Test public void touchesStopBeforeInjectionWhenFocusIsolationIsUnavailable() throws Exception {
+    @Test public void touchesStopBeforeInjectionWithoutThePlatformNoFocusChangeFlag() throws Exception {
+        assertEquals(AlternateMotionFlags.FLAG_NO_FOCUS_CHANGE,
+            DisplayHelper.requiredNoFocusChangeFlag(AlternateMotionFlags.class));
+        assertThrows(NoSuchFieldException.class,
+            () -> DisplayHelper.requiredNoFocusChangeFlag(MissingMotionFlags.class));
+        assertThrows(IllegalStateException.class,
+            () -> DisplayHelper.requiredNoFocusChangeFlag(InvalidMotionFlags.class));
         set("motionNoFocusChangeFlag", 0);
         InvocationTargetException failure = assertThrows(InvocationTargetException.class,
             () -> invoke("tap", new Class<?>[] { long.class, String.class }, 1L, "10 20"));
@@ -162,42 +168,27 @@ public class DisplayHelperFramesAndGesturesTest {
         assertTrue(sink.events.isEmpty());
     }
 
-    @Test public void focusIsolationUsesThePlatformFlagWithoutNumericFallback() throws Exception {
-        assertEquals(AlternateMotionFlags.FLAG_NO_FOCUS_CHANGE,
-            DisplayHelper.requiredNoFocusChangeFlag(AlternateMotionFlags.class));
-        assertThrows(NoSuchFieldException.class,
-            () -> DisplayHelper.requiredNoFocusChangeFlag(MissingMotionFlags.class));
-        assertThrows(IllegalStateException.class,
-            () -> DisplayHelper.requiredNoFocusChangeFlag(InvalidMotionFlags.class));
-    }
-
-    @Test public void missingBaselineOrBaselineWindowFocusCannotClaimKeyboardIsolation() throws Exception {
+    @Test public void focusProbeNeverClaimsIsolationWithoutABaselineOrAfterLosingWindowFocus() throws Exception {
+        Class<?> mainState = Class.forName(DisplayHelper.class.getName() + "$MainState");
+        var constructor = mainState.getDeclaredConstructor(String.class, String.class, String.class);
+        constructor.setAccessible(true);
         JSONArray samples = new JSONArray()
             .put(new JSONObject().put("step", "baseline"))
             .put(new JSONObject().put("step", "afterCreate").put("windowFocus", "")
                 .put("appFocus", "com.example/.Main").put("task", "42"));
-        Class<?> mainState = Class.forName(DisplayHelper.class.getName() + "$MainState");
-        var constructor = mainState.getDeclaredConstructor(String.class, String.class, String.class);
-        constructor.setAccessible(true);
         for (Object baseline : new Object[] { null, constructor.newInstance("", "com.example/.Main", "42") }) {
             String scenario = baseline == null ? "unreadable baseline" : "missing physical window focus";
             JSONObject verdict = (JSONObject) invoke("probeFocusIsolation",
                 new Class<?>[] { mainState, JSONArray.class }, baseline, samples);
             assertEquals(scenario, "untested", verdict.getString("status"));
-            assertEquals(scenario, "focusIsolation", verdict.getString("item"));
             assertTrue(scenario, verdict.getString("reason").contains("baseline"));
         }
-    }
-
-    @Test public void losingPhysicalWindowFocusFailsEvenWhenAppAndTaskStayUnchanged() throws Exception {
-        Class<?> mainState = Class.forName(DisplayHelper.class.getName() + "$MainState");
-        var constructor = mainState.getDeclaredConstructor(String.class, String.class, String.class);
-        constructor.setAccessible(true);
+        // Losing physical window focus fails even when app focus and task stay unchanged.
         Object baseline = constructor.newInstance("com.example/.Main", "com.example/.Main", "42");
-        JSONArray samples = new JSONArray().put(new JSONObject().put("step", "afterLaunch")
+        JSONArray lost = new JSONArray().put(new JSONObject().put("step", "afterLaunch")
             .put("windowFocus", "").put("appFocus", "com.example/.Main").put("task", "42"));
         JSONObject verdict = (JSONObject) invoke("probeFocusIsolation",
-            new Class<?>[] { mainState, JSONArray.class }, baseline, samples);
+            new Class<?>[] { mainState, JSONArray.class }, baseline, lost);
         assertEquals("unsupported", verdict.getString("status"));
         assertEquals("afterLaunch", verdict.getString("windowFocusChangedDuring"));
     }

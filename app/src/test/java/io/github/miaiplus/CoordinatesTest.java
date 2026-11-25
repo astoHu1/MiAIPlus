@@ -6,7 +6,7 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class CoordinatesTest {
-    @Test public void encodedScreenshotAndPhysicalScreenTargetSamePoint() throws Exception {
+    @Test public void imageAndScreenPixelsTargetTheSamePointAndSwipeEndpointsConvert() throws Exception {
         JSONObject image = new JSONObject().put("action", "tap").put("element", new JSONArray("[187.2,793.6]"));
         JSONObject screen = new JSONObject().put("action", "tap").put("element", new JSONArray("[468,1984]"));
         JSONArray a = Coordinates.normalize(image, "image_pixels",1440,3200,576,1280).getJSONArray("element");
@@ -14,8 +14,6 @@ public class CoordinatesTest {
         assertEquals(325,a.getDouble(0),0.0001); assertEquals(620,a.getDouble(1),0.0001);
         assertEquals(a.getDouble(0),b.getDouble(0),0.0001); assertEquals(a.getDouble(1),b.getDouble(1),0.0001);
         assertEquals(187.2,image.getJSONArray("element").getDouble(0),0.0001);
-    }
-    @Test public void normalizedLegacyUnchangedAndSwipeEndpointsConverted() throws Exception {
         JSONObject swipe = new JSONObject("{action:swipe,start:[72,320],end:[216,960]}");
         JSONObject normalized = Coordinates.normalize(swipe,"image_pixels",1440,3200,288,1280);
         assertEquals(250,normalized.getJSONArray("start").getDouble(0),0.0001);
@@ -53,8 +51,6 @@ public class CoordinatesTest {
             assertEquals("unknown_space", invalid.reason);
             assertEquals("unknown", invalid.space);
         }
-    }
-    @Test public void missingRequiredActionPointsAreRecoverableCoordinateErrors() throws Exception {
         JSONObject[] actions = {
             new JSONObject().put("action", "tap"),
             new JSONObject().put("action", "swipe").put("start", new JSONArray("[1,2]")),

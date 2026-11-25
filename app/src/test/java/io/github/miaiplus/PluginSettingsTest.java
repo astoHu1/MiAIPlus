@@ -75,53 +75,18 @@ public class PluginSettingsTest {
         PluginSettings.updateTools(storage.prefs, entry.id(), PluginSettings.load(storage.prefs).revision(), tools);
     }
 
-    @Test public void defaultsPreserveBuiltinBehaviorAndHaveStableRevisionWithoutWriting() {
+    @Test public void builtinDefaultsLoadWithoutWritingAndToggleIndependentlyButCannotBeDeletedOrReplaced() {
         Storage storage = new Storage();
         storage.values.put("enabled", true);
         storage.values.put("endpoint", "https://model.example.com/v1");
-        var first = PluginSettings.load(storage.prefs);
-        var second = PluginSettings.load(storage.prefs);
-        assertEquals(first, second);
-        assertEquals(2, first.entries().size());
-        assertTrue(first.find(PluginSettings.FOREGROUND_ID).enabled());
-        assertTrue(first.find(PluginSettings.BACKGROUND_ID).enabled());
+        var before = PluginSettings.load(storage.prefs);
+        assertEquals(before, PluginSettings.load(storage.prefs));
+        assertEquals(2, before.entries().size());
+        assertTrue(before.find(PluginSettings.FOREGROUND_ID).enabled());
+        assertTrue(before.find(PluginSettings.BACKGROUND_ID).enabled());
         assertEquals(0, storage.commits);
         assertFalse(storage.values.containsKey(PluginSettings.PREFERENCE_KEY));
         assertEquals("https://model.example.com/v1", storage.values.get("endpoint"));
-    }
-
-    @Test public void savesPrivateSnapshotOnceAndKeepsNewMcpDisabledUntilUserEnablesIt() {
-        Storage storage = new Storage();
-        PluginSettings.Entry entry = storage.add(" 服务 A ");
-        assertEquals("服务 A", entry.label());
-        assertFalse(entry.enabled());
-        assertTrue(entry.tools().isEmpty());
-        assertEquals(URL, entry.endpoint());
-        assertEquals("fixture-token", entry.bearerToken());
-        assertEquals(1, storage.commits);
-        assertEquals(entry, PluginSettings.load(storage.prefs).find(entry.id()));
-        assertEquals(1, storage.values.size());
-        assertFalse(entry.toString().contains("fixture-token"));
-        assertFalse(entry.toString().contains(URL));
-    }
-
-    @Test public void olderProtocolIsExplicitlyPersistedWhileDefaultAndUnknownRejectionRemain() {
-        assertFalse(PluginSettings.supportsMcpProtocol(null));
-        assertFalse(PluginSettings.supportsMcpProtocol("2025-03-26"));
-        Storage storage = new Storage();
-        var saved = PluginSettings.saveMcp(storage.prefs, "", "Older MCP", URL, "", "2025-06-18");
-        var entry = saved.entries().get(saved.entries().size() - 1);
-        assertEquals("2025-06-18", PluginSettings.load(storage.prefs).find(entry.id()).protocolVersion());
-        assertFalse(entry.enabled());
-        Map<String, Object> untouched = new HashMap<>(storage.values);
-        assertThrows(IllegalArgumentException.class, () -> PluginSettings.saveMcp(storage.prefs,
-            entry.id(), "Older MCP", URL, "", "2025-03-26"));
-        assertEquals(untouched, storage.values);
-    }
-
-    @Test public void builtinToggleIsIndependentAndCannotBeDeletedOrReplaced() {
-        Storage storage = new Storage();
-        var before = PluginSettings.load(storage.prefs);
         var changed = PluginSettings.setEnabled(storage.prefs, PluginSettings.FOREGROUND_ID, false);
         assertFalse(changed.find(PluginSettings.FOREGROUND_ID).enabled());
         assertTrue(changed.find(PluginSettings.BACKGROUND_ID).enabled());
@@ -136,7 +101,33 @@ public class PluginSettingsTest {
         assertEquals(untouched, storage.values);
     }
 
-    @Test public void discoversToolsOnlyIntoExactSnapshotAndReturnsImmutableLists() {
+    @Test public void savesPrivateSnapshotOnceKeepsNewMcpDisabledAndPersistsExplicitOlderProtocol() {
+        Storage storage = new Storage();
+        PluginSettings.Entry entry = storage.add(" 服务 A ");
+        assertEquals("服务 A", entry.label());
+        assertFalse(entry.enabled());
+        assertTrue(entry.tools().isEmpty());
+        assertEquals(URL, entry.endpoint());
+        assertEquals("fixture-token", entry.bearerToken());
+        assertEquals(1, storage.commits);
+        assertEquals(entry, PluginSettings.load(storage.prefs).find(entry.id()));
+        assertEquals(1, storage.values.size());
+        assertFalse(entry.toString().contains("fixture-token"));
+        assertFalse(entry.toString().contains(URL));
+
+        assertFalse(PluginSettings.supportsMcpProtocol(null));
+        assertFalse(PluginSettings.supportsMcpProtocol("2025-03-26"));
+        var saved = PluginSettings.saveMcp(storage.prefs, "", "Older MCP", URL, "", "2025-06-18");
+        var older = saved.entries().get(saved.entries().size() - 1);
+        assertEquals("2025-06-18", PluginSettings.load(storage.prefs).find(older.id()).protocolVersion());
+        assertFalse(older.enabled());
+        Map<String, Object> untouched = new HashMap<>(storage.values);
+        assertThrows(IllegalArgumentException.class, () -> PluginSettings.saveMcp(storage.prefs,
+            older.id(), "Older MCP", URL, "", "2025-03-26"));
+        assertEquals(untouched, storage.values);
+    }
+
+    @Test public void discoveryWritesOnlyExactSnapshotAndDeletionDropsCredentialsAndInflightDiscovery() {
         Storage storage = new Storage();
         var entry = storage.add("A");
         var snapshot = PluginSettings.load(storage.prefs);
@@ -151,6 +142,14 @@ public class PluginSettingsTest {
         assertThrows(IllegalStateException.class, () -> PluginSettings.updateTools(storage.prefs,
             entry.id(), snapshot.revision(), List.of()));
         assertEquals(untouched, storage.values);
+
+        String revision = PluginSettings.load(storage.prefs).revision();
+        var deleted = PluginSettings.deleteMcp(storage.prefs, entry.id());
+        assertEquals(2, deleted.entries().size());
+        assertFalse(storage.values.toString().contains("fixture-token"));
+        assertThrows(IllegalArgumentException.class, () -> deleted.find(entry.id()));
+        assertThrows(IllegalStateException.class, () -> PluginSettings.updateTools(storage.prefs,
+            entry.id(), revision, List.of(tool(entry.id(), "lookup"))));
     }
 
     @Test public void editsInvalidateDiscoveryOnlyWhenConnectionIdentityChanges() {
@@ -179,18 +178,6 @@ public class PluginSettingsTest {
             entry.id(), before.revision(), List.of(tool(entry.id(), "lookup"))));
     }
 
-    @Test public void deletionDropsCredentialsAndInvalidatesInflightDiscovery() {
-        Storage storage = new Storage();
-        var entry = storage.add("A");
-        String revision = PluginSettings.load(storage.prefs).revision();
-        var deleted = PluginSettings.deleteMcp(storage.prefs, entry.id());
-        assertEquals(2, deleted.entries().size());
-        assertFalse(storage.values.toString().contains("fixture-token"));
-        assertThrows(IllegalArgumentException.class, () -> deleted.find(entry.id()));
-        assertThrows(IllegalStateException.class, () -> PluginSettings.updateTools(storage.prefs,
-            entry.id(), revision, List.of(tool(entry.id(), "lookup"))));
-    }
-
     @Test public void namesAreStableBoundedAndNamespacedAcrossPluginsAndSources() {
         String first = UUID.randomUUID().toString(), second = UUID.randomUUID().toString();
         String name = PluginToolSpec.mcpName(first, "搜索 files/with spaces");
@@ -205,6 +192,19 @@ public class PluginSettingsTest {
         assertEquals(spec, PluginToolSpec.fromJson(spec.toJson()));
         assertFalse(spec.toJson().has("endpoint"));
         assertFalse(spec.toJson().has("bearerToken"));
+
+        String id = UUID.randomUUID().toString(), lookup = PluginToolSpec.mcpName(id, "lookup");
+        for (String schema : List.of("[]", "{}", "{\"type\":\"array\"}", "{\"type\":\"object\"} trailing",
+            "{\"type\":\"object\",\"x\":" + "[".repeat(60) + "0" + "]".repeat(60) + "}")) {
+            assertThrows(IllegalArgumentException.class, () -> new PluginToolSpec(id, "mcp", lookup,
+                "lookup", "Lookup", "", schema, 60000));
+        }
+        assertThrows(IllegalArgumentException.class, () -> new PluginToolSpec(id, "mcp", lookup,
+            "lookup", "Lookup", "x".repeat(8193), "{\"type\":\"object\"}", 60000));
+        for (long timeout : new long[]{0, 300001}) {
+            assertThrows(IllegalArgumentException.class, () -> new PluginToolSpec(id, "mcp", lookup,
+                "lookup", "Lookup", "", "{\"type\":\"object\"}", timeout));
+        }
     }
 
     @Test public void rejectsDuplicateForeignForgedOrTooManyToolsWithoutPartialWrites() {
@@ -227,7 +227,7 @@ public class PluginSettingsTest {
         assertEquals(untouched, storage.values);
     }
 
-    @Test public void enablingCombinedCountOrCharacterOverflowKeepsPreviousRevisionAndStorage() {
+    @Test public void enablingOrUpdatingBeyondCombinedBudgetKeepsPreviousRevisionAndStorage() {
         for (int[] shape : new int[][]{{64, 0}, {10, 6000}}) {
             Storage storage = new Storage();
             var first = storage.add("First");
@@ -244,9 +244,7 @@ public class PluginSettingsTest {
             assertEquals(commits, storage.commits);
             assertFalse(PluginSettings.load(storage.prefs).find(second.id()).enabled());
         }
-    }
-
-    @Test public void updatingEnabledManifestRechecksFinalCatalogBeforeWriting() {
+        // Updating an already-enabled manifest rechecks the final combined catalog before writing.
         Storage storage = new Storage();
         var first = storage.add("First");
         var second = storage.add("Second");
@@ -304,21 +302,6 @@ public class PluginSettingsTest {
         assertEquals("different-fixture-token", next.find(entry.id()).bearerToken());
     }
 
-    @Test public void rejectsInvalidSchemasLengthsAndToolTimeouts() {
-        String id = UUID.randomUUID().toString(), name = PluginToolSpec.mcpName(id, "lookup");
-        for (String schema : List.of("[]", "{}", "{\"type\":\"array\"}", "{\"type\":\"object\"} trailing",
-            "{\"type\":\"object\",\"x\":" + "[".repeat(60) + "0" + "]".repeat(60) + "}")) {
-            assertThrows(IllegalArgumentException.class, () -> new PluginToolSpec(id, "mcp", name,
-                "lookup", "Lookup", "", schema, 60000));
-        }
-        assertThrows(IllegalArgumentException.class, () -> new PluginToolSpec(id, "mcp", name,
-            "lookup", "Lookup", "x".repeat(8193), "{\"type\":\"object\"}", 60000));
-        assertThrows(IllegalArgumentException.class, () -> new PluginToolSpec(id, "mcp", name,
-            "lookup", "Lookup", "", "{\"type\":\"object\"}", 0));
-        assertThrows(IllegalArgumentException.class, () -> new PluginToolSpec(id, "mcp", name,
-            "lookup", "Lookup", "", "{\"type\":\"object\"}", 300001));
-    }
-
     @Test public void endpointValidationPreservesExactPathAndRestrictsPlaintextAndUrlSecrets() {
         for (String url : List.of("https://mcp.example.com/path/", "http://localhost:18765/mcp/",
             "http://127.0.0.1:18765/mcp", "http://192.168.10.2:8000/mcp", "http://10.1.2.3/mcp"))
@@ -335,7 +318,7 @@ public class PluginSettingsTest {
         assertEquals(0, storage.commits);
     }
 
-    @Test public void damagedStorageFailsClosedWithoutReplacingItWithDefaults() throws Exception {
+    @Test public void damagedStorageOrRejectedCommitFailsClosedWithoutReplacingItWithDefaults() throws Exception {
         for (Object malformed : List.of("broken", 1, "{\"version\":1,\"revision\":\"bad\",\"plugins\":[]}")) {
             Storage storage = new Storage();
             storage.values.put(PluginSettings.PREFERENCE_KEY, malformed);
@@ -351,6 +334,10 @@ public class PluginSettingsTest {
         plugins.put(plugins.getJSONObject(0));
         storage.values.put(PluginSettings.PREFERENCE_KEY, root.toString());
         assertThrows(IllegalStateException.class, () -> PluginSettings.load(storage.prefs));
+
+        Storage rejecting = new Storage(); rejecting.rejectCommit = true;
+        assertThrows(IllegalStateException.class, () -> rejecting.add("A"));
+        assertFalse(rejecting.values.containsKey(PluginSettings.PREFERENCE_KEY));
     }
 
     @Test public void concurrentMutationsRetainBothPluginChanges() throws Exception {
@@ -373,11 +360,5 @@ public class PluginSettingsTest {
         assertFalse(result.find(PluginSettings.FOREGROUND_ID).enabled());
         assertFalse(result.find(PluginSettings.BACKGROUND_ID).enabled());
         assertEquals(2, storage.commits);
-    }
-
-    @Test public void unsuccessfulCommitIsReported() {
-        Storage storage = new Storage(); storage.rejectCommit = true;
-        assertThrows(IllegalStateException.class, () -> storage.add("A"));
-        assertFalse(storage.values.containsKey(PluginSettings.PREFERENCE_KEY));
     }
 }

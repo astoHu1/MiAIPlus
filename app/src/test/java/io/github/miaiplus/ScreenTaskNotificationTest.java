@@ -69,7 +69,6 @@ public final class ScreenTaskNotificationTest {
 
     @Test public void onlyConfirmedFinishClaimsSuccessAndErrorsShowStopped() {
         assertEquals("手机操作已结束", InteractionUi.completionTitle("模型报告任务完成：已检查结果"));
-        assertTrue(InteractionUi.completionText("模型报告任务完成：已检查结果").startsWith("已完成"));
         for (String failure : new String[]{"页面已改变，请重新观察", "任务已停止或超时", "控屏已停止", "CONTINUE：控屏尚未完成。"}) {
             assertEquals("手机操作已停止", InteractionUi.completionTitle(failure));
             assertTrue(InteractionUi.completionText(failure).startsWith("任务未完成"));

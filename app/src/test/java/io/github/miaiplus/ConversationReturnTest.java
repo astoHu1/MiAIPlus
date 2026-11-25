@@ -33,7 +33,7 @@ public final class ConversationReturnTest {
         assertFalse(ConversationReturn.matches(null, "osbot.main", "chat-a"));
     }
 
-    @Test public void nestedControlCallsRestoreTheirOwnConversationEvenAfterFailure() {
+    @Test public void nestedLegacyAndFailedCallsRestoreTheOuterConversation() {
         assertNull(ConversationReturn.currentIdentity());
         try (var outer = ConversationReturn.bind(new ExecutionContext("osbot.main::chat-a"))) {
             assertEquals("osbot.main::chat-a", ConversationReturn.currentIdentity());
@@ -45,12 +45,6 @@ public final class ConversationReturnTest {
             } catch (IllegalStateException expected) {
                 assertEquals("osbot.main::chat-a", ConversationReturn.currentIdentity());
             }
-        }
-        assertNull(ConversationReturn.currentIdentity());
-    }
-
-    @Test public void legacyCallDoesNotInheritOuterConversationAndRestoresItAfterwards() {
-        try (var outer = ConversationReturn.bind(new ExecutionContext("osbot.main::chat-a"))) {
             try (var legacy = ConversationReturn.bind(null)) { assertNull(ConversationReturn.currentIdentity()); }
             assertEquals("osbot.main::chat-a", ConversationReturn.currentIdentity());
             try (var blank = ConversationReturn.bind(new ExecutionContext("  "))) { assertNull(ConversationReturn.currentIdentity()); }

@@ -1,10 +1,21 @@
 package io.github.miaiplus;
 
+import android.app.Application;
+import android.os.Bundle;
+import java.util.List;
+import java.util.Map;
 import org.json.JSONObject;
+import org.junit.After;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
 import static org.junit.Assert.*;
 
+@RunWith(RobolectricTestRunner.class)
+@org.robolectric.annotation.Config(sdk = 33, application = Application.class)
 public class ReasoningPolicyTest {
+    @After public void clearCatalog() { ModelsDevCatalog.publish(null); }
+
     @Test public void builtinChoicesFollowKnownModelFamiliesAndNeverInventSwitchesForAliases() {
         assertEquals(java.util.List.of("default", "low", "medium", "high", "xhigh", "max"),
             ReasoningPolicy.choices("openai/gpt-6.1-sol", "responses"));
@@ -23,16 +34,7 @@ public class ReasoningPolicyTest {
             assertEquals(java.util.List.of("default"), ReasoningPolicy.choices(model, "chat"));
         assertEquals(java.util.List.of("default"), ReasoningPolicy.choices("qwen3.8-max", "responses"));
     }
-    @Test public void anthropicUsesModelDefaultEvenForRecognizedOpenAiAliases() throws Exception {
-        var plan = ReasoningPolicy.plan("https://example.com/v1", "gpt-6.1-sol", "anthropic");
-        assertEquals(java.util.List.of("default"), plan.choices());
-        JSONObject body = new JSONObject("{\"enable_thinking\":false,\"reasoning_effort\":\"low\",\"max_tokens\":1024}");
-        plan.apply(body, "gpt-6.1-sol", "anthropic", "high");
-        assertFalse(body.has("enable_thinking"));
-        assertFalse(body.has("reasoning_effort"));
-        assertEquals(1024, body.getInt("max_tokens"));
-    }
-    @Test public void builtinApplyUsesEachProviderWireFormatAndStripsInvalidSampling() throws Exception {
+    @Test public void builtinApplyUsesProviderWireFormatOmitsDefaultsAndIgnoresAnthropic() throws Exception {
         JSONObject response = new JSONObject("{\"enable_thinking\":false,\"reasoning_effort\":\"low\",\"temperature\":0}");
         ReasoningPolicy.apply(response, "gpt-6.1-sol", "responses", "max");
         assertEquals("max", response.getJSONObject("reasoning").getString("effort"));
@@ -57,14 +59,19 @@ public class ReasoningPolicyTest {
         assertEquals("max", body.getString("reasoning_effort")); assertFalse(body.has("enable_thinking"));
         ReasoningPolicy.apply(body, "deepseek-flash", "responses", "none");
         assertEquals("none", body.getJSONObject("reasoning").getString("effort")); assertFalse(body.has("thinking"));
-    }
-    @Test public void defaultAndInvalidSelectionOmitReasoningParameters() throws Exception {
         for (String effort : java.util.List.of("default", "none", "unsupported")) {
-            JSONObject body = new JSONObject("{\"reasoning\":{\"effort\":\"low\"},\"enable_thinking\":true,\"thinking\":{},\"thinking_budget\":500}");
-            ReasoningPolicy.apply(body, "gpt-6.1-sol", "responses", effort);
-            assertFalse(body.has("reasoning")); assertFalse(body.has("enable_thinking"));
-            assertFalse(body.has("thinking")); assertFalse(body.has("thinking_budget"));
+            JSONObject omitted = new JSONObject("{\"reasoning\":{\"effort\":\"low\"},\"enable_thinking\":true,\"thinking\":{},\"thinking_budget\":500}");
+            ReasoningPolicy.apply(omitted, "gpt-6.1-sol", "responses", effort);
+            assertFalse(omitted.has("reasoning")); assertFalse(omitted.has("enable_thinking"));
+            assertFalse(omitted.has("thinking")); assertFalse(omitted.has("thinking_budget"));
         }
+        var anthropicPlan = ReasoningPolicy.plan("https://example.com/v1", "gpt-6.1-sol", "anthropic");
+        assertEquals(java.util.List.of("default"), anthropicPlan.choices());
+        JSONObject anthropic = new JSONObject("{\"enable_thinking\":false,\"reasoning_effort\":\"low\",\"max_tokens\":1024}");
+        anthropicPlan.apply(anthropic, "gpt-6.1-sol", "anthropic", "high");
+        assertFalse(anthropic.has("enable_thinking"));
+        assertFalse(anthropic.has("reasoning_effort"));
+        assertEquals(1024, anthropic.getInt("max_tokens"));
     }
     @Test public void persistenceIsScopedToEndpointModelAndApi() {
         String key = ReasoningPolicy.preferenceKey("https://example.test/v1", "gpt-6.1-sol", "responses");
@@ -74,7 +81,7 @@ public class ReasoningPolicyTest {
         assertNotEquals(key, ReasoningPolicy.preferenceKey("https://example.test/v1", "gpt-6.1-sol", "chat"));
         assertFalse(key.contains("example"));
     }
-    @Test public void wireContractRoundTripPreservesImmutableCapabilities() {
+    @Test public void wireContractRoundTripsImmutablyAndRejectsMalformedOrInventedContracts() throws Exception {
         var mutable = new java.util.ArrayList<>(java.util.List.of("default", "low", "high"));
         var plan = new ReasoningPolicy.Plan(mutable, "standard", true, true);
         mutable.add("max");
@@ -86,8 +93,6 @@ public class ReasoningPolicyTest {
         assertEquals("default", plan.normalize(null));
         var ordinary = new ReasoningPolicy.Plan(java.util.List.of("default"), "default", false, false);
         assertEquals(ordinary, ReasoningPolicy.Plan.decode(ordinary.encode()));
-    }
-    @Test public void malformedOrInventedWireContractsAreRejected() throws Exception {
         String valid = new ReasoningPolicy.Plan(java.util.List.of("default", "high"), "standard", true, true).encode();
         for (String malformed : java.util.List.of("", "{}", "[]", valid + " trailing", " ".repeat(513),
             new JSONObject(valid).put("version", 2).toString(),
@@ -141,5 +146,36 @@ public class ReasoningPolicyTest {
         assertEquals("high", switches.getString("reasoning_effort"));
         deepseek.apply(switches, "new-deepseek-model", "responses", "high");
         assertFalse(switches.has("thinking")); assertEquals("high", switches.getJSONObject("reasoning").getString("effort"));
+    }
+    @Test public void remotePlanSurvivesIpcBoundToIdentityAndMalformedDescriptorFallsBackToBuiltin() throws Exception {
+        ModelsDevCatalog.publish(ModelsDevCatalog.parse("""
+            {"openai":{"id":"openai","npm":"@ai-sdk/openai","models":{
+              "future-model":{"id":"future-model","reasoning":true,"temperature":false,
+                "reasoning_options":[{"type":"effort","values":["low","high"]}]}}}}
+            """));
+        String endpoint = "https://gateway.test/v1";
+        String model = "openai/future-model";
+        Config config = new Config(Map.of("endpoint", endpoint, "model", model, "api", "responses",
+            ReasoningPolicy.preferenceKey(endpoint, model, "responses"), "high"));
+        assertEquals("high", config.reasoning);
+        Bundle bundle = new Bundle();
+        bundle.putString("endpoint", endpoint); bundle.putString("model", model); bundle.putString("api", "responses");
+        ReasoningSettings.attach(bundle, config);
+        ModelsDevCatalog.publish(null);
+        ReasoningPolicy.Plan received = ReasoningSettings.plan(bundle);
+        assertEquals(List.of("default", "low", "high"), received.choices());
+        JSONObject body = new JSONObject().put("temperature", 0);
+        received.apply(body, model, "responses", "high");
+        assertEquals("high", body.getJSONObject("reasoning").getString("effort"));
+        assertFalse(body.has("temperature"));
+        bundle.putString("model", "unrelated-alias");
+        assertEquals(List.of("default"), ReasoningSettings.plan(bundle).choices());
+        bundle.putString("model", model); bundle.putString("api", "chat");
+        assertEquals(List.of("default"), ReasoningSettings.plan(bundle).choices());
+        Bundle builtin = new Bundle(); builtin.putString("model", "gpt-6.1-sol"); builtin.putString("api", "responses");
+        assertEquals(ReasoningPolicy.builtin("gpt-6.1-sol", "responses"), ReasoningSettings.plan(builtin));
+        builtin.putString("reasoningPolicyIdentity", ReasoningPolicy.preferenceKey("", "gpt-6.1-sol", "responses"));
+        builtin.putString("reasoningPolicy", "{broken");
+        assertEquals(ReasoningPolicy.builtin("gpt-6.1-sol", "responses"), ReasoningSettings.plan(builtin));
     }
 }

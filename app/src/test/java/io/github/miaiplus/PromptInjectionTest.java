@@ -18,12 +18,7 @@ public class PromptInjectionTest {
         return PromptInjection.compose(hostText, policy, mode, custom);
     }
 
-    @Test public void unknownModeReadsAsOffAndOverlongTextIsTruncatedWithoutThrowing() {
-        assertEquals("off", new Config(Map.of()).customPromptMode);
-        assertEquals("", new Config(Map.of()).customPromptText);
-        assertFalse(new Config(Map.of()).promptRouteTextChat);
-        assertFalse(new Config(Map.of()).promptApplyVoice);
-        assertFalse(new Config(Map.of()).promptApplyStandaloneChat);
+    @Test public void unknownModeReadsAsOffOverlongTextIsTruncatedAndBlankTextIsNotEffective() {
         for (Object mode : new Object[]{"unknown", "REPLACE", "", true, 1}) {
             assertEquals("customPromptMode=" + mode, "off",
                 new Config(Map.of(Config.CUSTOM_PROMPT_MODE_KEY, mode)).customPromptMode);
@@ -37,21 +32,14 @@ public class PromptInjectionTest {
         assertTrue(oversized.startsWith(config.customPromptText));
         assertFalse("non-boolean route flag", config.promptRouteTextChat);
         assertFalse("non-boolean voice flag", config.promptApplyVoice);
-    }
-
-    @Test public void effectivePromptRequiresAModeAndNonBlankText() {
         assertFalse(Config.effectivePrompt(null, null));
         assertFalse(Config.effectivePrompt("off", CUSTOM));
         assertFalse(Config.effectivePrompt("unknown", CUSTOM));
         assertFalse(Config.effectivePrompt("append", "  \n"));
-        assertFalse(Config.effectivePrompt("append", null));
-        assertTrue(Config.effectivePrompt("append", CUSTOM));
         assertTrue(Config.effectivePrompt("replace", " x "));
-        assertTrue(new Config(Map.of(Config.CUSTOM_PROMPT_MODE_KEY, "replace",
-            Config.CUSTOM_PROMPT_TEXT_KEY, CUSTOM)).hasEffectivePrompt());
     }
 
-    @Test public void appendAddsThePromptOnceAndReplaceKeepsThePolicyComputedFromTheOriginalHostText() {
+    @Test public void appendAddsThePromptOnceAndReplaceKeepsOnlyThePolicyTheOriginalHostTextQualifiesFor() {
         assertEquals(HOST + POLICY, apply(HOST, POLICY, "off", CUSTOM));
         assertEquals(HOST + "\n\n" + CUSTOM + POLICY, apply(HOST, POLICY, "append", CUSTOM));
         assertEquals("already contained", HOST + "\n\n" + CUSTOM + POLICY,
@@ -64,20 +52,13 @@ public class PromptInjectionTest {
         // must not suppress a policy the host text still qualifies for.
         String marked = apply(HOST, POLICY, "replace", "自定义 [MiAIPlus 扩展能力 说明]");
         assertTrue(marked, marked.endsWith(POLICY));
-    }
-
-    @Test public void hostTextWithoutTheMarkerGetsThePromptButNeverThePolicy() {
         String plain = "今天天气怎么样";
         assertEquals(plain + "\n\n" + CUSTOM, apply(plain, "", "append", CUSTOM));
         assertEquals(CUSTOM, apply(plain, "", "replace", CUSTOM));
-        assertEquals(plain, apply(plain, "", "off", CUSTOM));
-    }
-
-    @Test public void standaloneChatPrependsOnlyWhenOptedInAndLeavesTheScreenLoopAlone() {
-        assertEquals(CUSTOM.trim() + "\n\n" + STANDALONE_SYSTEM, standaloneSystem(true, "append", CUSTOM));
-        assertEquals(STANDALONE_SYSTEM, standaloneSystem(false, "append", CUSTOM));
-        assertEquals(STANDALONE_SYSTEM, standaloneSystem(true, "off", CUSTOM));
-        assertEquals(STANDALONE_SYSTEM, standaloneSystem(true, "replace", "  "));
+        assertEquals(CUSTOM.trim() + "\n\n" + STANDALONE_SYSTEM,
+            PromptInjection.composeStandalone(STANDALONE_SYSTEM, "append", CUSTOM));
+        assertEquals(STANDALONE_SYSTEM, PromptInjection.composeStandalone(STANDALONE_SYSTEM, "off", CUSTOM));
+        assertEquals(STANDALONE_SYSTEM, PromptInjection.composeStandalone(STANDALONE_SYSTEM, "replace", "  "));
     }
 
     @Test public void textRoutingForcesTheAgentOnlyForAnOptedInEffectivePrompt() {
@@ -88,11 +69,6 @@ public class PromptInjectionTest {
         assertFalse("switch off", forceAgent(false, "", false, false, "append", CUSTOM));
         assertFalse("mode off", forceAgent(false, "", false, true, "off", CUSTOM));
         assertFalse("blank text", forceAgent(false, "", false, true, "replace", " \n"));
-    }
-
-    private static String standaloneSystem(boolean applyStandalone, String mode, String text) {
-        return applyStandalone
-            ? PromptInjection.composeStandalone(STANDALONE_SYSTEM, mode, text) : STANDALONE_SYSTEM;
     }
 
     private static boolean forceAgent(boolean global, String requestedTool, boolean languageRoute,

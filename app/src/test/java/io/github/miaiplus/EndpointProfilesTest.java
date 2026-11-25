@@ -1,7 +1,10 @@
 package io.github.miaiplus;
 
 import android.content.SharedPreferences;
+import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
+import java.lang.reflect.UndeclaredThrowableException;
 import java.util.HashMap;
 import java.util.Map;
 import org.junit.Test;
@@ -44,7 +47,7 @@ public class EndpointProfilesTest {
         return new EndpointProfiles.Profile(id, name, "https://" + id + ".example.com/v1", key, model, api);
     }
 
-    @Test public void migratesExistingEndpointWithoutLosingCredentialsOrProtocol() {
+    @Test public void migratesExistingEndpointAndFreshInstallKeepsApiFieldsEmpty() {
         Storage storage = new Storage();
         storage.values.putAll(Map.of("endpoint", "https://legacy.example.com/v1", "apiKey", "fixture-key",
             "model", "custom-model", "api", "responses", "planner", "native"));
@@ -58,16 +61,13 @@ public class EndpointProfilesTest {
         storage.save(legacy, false);
         assertEquals(legacy.encode(), new EndpointProfiles(storage.prefs).active().encode());
         assertEquals("native", storage.values.get("planner"));
-    }
-
-    @Test public void freshInstallKeepsApiFieldsEmptyAndAllowsNativeMode() {
-        Storage storage = new Storage();
-        var profile = new EndpointProfiles(storage.prefs).active().validated(false);
+        Storage fresh = new Storage();
+        var profile = new EndpointProfiles(fresh.prefs).active().validated(false);
         assertEquals("", profile.endpoint); assertEquals("", profile.apiKey); assertEquals("", profile.model);
         assertEquals("auto", profile.api);
-        storage.save(profile, false);
-        assertEquals("", storage.values.get("endpoint"));
-        assertEquals("", storage.values.get("apiKey"));
+        fresh.save(profile, false);
+        assertEquals("", fresh.values.get("endpoint"));
+        assertEquals("", fresh.values.get("apiKey"));
     }
 
     @Test public void switchingRestoresCompleteProfilesOnSameOrDifferentEndpointsWithoutChangingOtherSettings() {
@@ -136,7 +136,7 @@ public class EndpointProfilesTest {
         assertEquals(second.model, next.model); assertEquals(second.api, next.api);
     }
 
-    @Test public void invalidProfilesCannotBeActivatedForExternalMode() {
+    @Test public void invalidProfilesAndMalformedStorageAreRejectedWithoutOverwritingCredentials() {
         for (var profile : new EndpointProfiles.Profile[]{EndpointProfiles.Profile.blank("空配置"),
             new EndpointProfiles.Profile("id", " ", "https://example.com/v1", "", "model", "auto"),
             new EndpointProfiles.Profile("id", "A", "http://public.example.com/v1", "", "model", "auto"),
@@ -145,13 +145,45 @@ public class EndpointProfilesTest {
             try { profile.validated(true); fail("Invalid profile accepted"); }
             catch (IllegalArgumentException expected) { }
         }
-    }
-
-    @Test public void malformedStorageIsRejectedWithoutOverwritingCredentials() {
         Storage storage = new Storage();
         storage.values.put("endpointProfiles", "broken"); storage.values.put("apiKey", "preserved-key");
         Map<String, String> before = new HashMap<>(storage.values);
         try { new EndpointProfiles(storage.prefs); fail("Corrupt storage accepted"); }
         catch (IllegalStateException expected) { assertEquals(before, storage.values); }
+    }
+
+    @Test public void endpointAcceptsHttpsAndLanCleartextButRejectsRemoteCleartextAndCredentialUrls() {
+        assertEquals("https://api.example.com/v1", Endpoint.validate("https://api.example.com/v1/"));
+        for (String host : new String[]{"127.0.0.1", "localhost", "[::1]", "10.1.2.3", "192.168.1.1", "172.16.2.1", "172.31.2.1"})
+            assertEquals("http://" + host + ":8000/v1", Endpoint.validate("http://" + host + ":8000/v1"));
+        for (String url : new String[]{"http://api.example.com/v1", "http://10.evil.com/v1", "http://192.168.evil.com/v1",
+            "http://172.32.1.1/v1", "http://10.999.2.1/v1", "https://key@api.example.com/v1", "https://api.example.com/v1?key=secret",
+            "https://api.example.com/v1#secret", "file:///etc/passwd", "api.example.com"}) {
+            try { Endpoint.validate(url); fail("Accepted " + url); } catch (IllegalArgumentException expected) { }
+        }
+    }
+
+    private static final class InvocationTargetError extends Error {
+        InvocationTargetError(Throwable cause) { super(cause); }
+    }
+
+    @Test public void transportKeepsIoFailuresSanitizesConversionFailuresAndNeverMasksFatalErrors() {
+        IOException cancelled = new IOException("stream was reset: CANCEL");
+        IOException disconnect = new java.net.SocketException("connection reset");
+        for (IOException original : new IOException[]{cancelled, disconnect}) {
+            for (Throwable wrapped : new Throwable[]{new InvocationTargetError(original),
+                new UndeclaredThrowableException(new InvocationTargetException(new InvocationTargetError(original)))}) {
+                assertSame(wrapped.getClass().getSimpleName(), original,
+                    assertThrows(IOException.class, () -> TransportBoundary.execute(() -> { throw wrapped; })));
+            }
+        }
+        IOException result = assertThrows(IOException.class, () -> TransportBoundary.execute(() -> {
+            throw new IllegalArgumentException("private request contents");
+        }));
+        assertNull(result.getCause()); assertFalse(result.getMessage().contains("private"));
+        OutOfMemoryError fatal = new OutOfMemoryError();
+        assertSame(fatal, assertThrows(OutOfMemoryError.class, () -> TransportBoundary.execute(() -> {
+            throw new InvocationTargetError(fatal);
+        })));
     }
 }

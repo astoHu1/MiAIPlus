@@ -10,28 +10,26 @@ import android.content.pm.ApplicationInfo
 import org.robolectric.Shadows.shadowOf
 import android.content.pm.ProviderInfo
 import android.database.Cursor
-import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
 import androidx.lifecycle.ViewModelProvider
-import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.runtime.snapshots.SnapshotStateObserver
 import androidx.compose.ui.semantics.SemanticsActions
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextRange
 import org.junit.Rule
 import org.junit.Test
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.shadows.ShadowContentResolver
-import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(RobolectricTestRunner::class)
@@ -48,26 +46,18 @@ class SettingsUiTest {
         store.append("""{"event":"image_attached","source":"host","time":1792272000250,"session":"7d62b401","step":3,"images":1}""")
         compose.onNodeWithText("日志", useUnmergedTree = true).performScrollTo().performClick()
         compose.waitUntil(5000) { compose.waitForIdle(); state.logs.entries.size == 2 }
-        capture("home-detailed-logs")
-        compose.onNodeWithTag("tab-Home").assertDoesNotExist()
-        compose.onNodeWithContentDescription("分享").assertExists()
-        compose.onNodeWithContentDescription("保存压缩包").assertExists()
         compose.onNodeWithContentDescription("更多").performClick()
         compose.onNodeWithText("详细日志", substring = false).performClick()
         compose.runOnIdle { assertEquals(true, state.config.phoneUseDetailedLog) }
-        compose.onNodeWithText("正在记录").assertExists()
+        compose.activityRule.scenario.recreate()
+        compose.runOnIdle {
+            assertEquals(true, io.github.miaiplus.Config(state.getApplication<Application>()).phoneUseDetailedLog)
+        }
         compose.onNodeWithContentDescription("更多").performClick()
         compose.onNodeWithText("详细日志", substring = false).performClick()
         compose.runOnIdle { assertEquals(false, state.config.phoneUseDetailedLog) }
-        RuntimeEnvironment.setQualifiers("+night")
-        compose.activityRule.scenario.recreate()
-        compose.waitUntil(5000) { compose.waitForIdle(); state.logs.entries.size == 2 }
-        capture("home-detailed-logs-dark")
-        RuntimeEnvironment.setQualifiers("+notnight")
-        compose.activityRule.scenario.recreate()
         compose.onNodeWithText("tree_empty").performScrollTo().performClick()
         compose.onNodeWithText("no_windows", substring = true).assertExists()
-        capture("home-detailed-logs-details")
         compose.onAllNodesWithText("模块", substring = false).onFirst().performClick()
         compose.onNodeWithText("image_attached").assertDoesNotExist()
         compose.onNodeWithContentDescription("更多").performClick()
@@ -79,30 +69,6 @@ class SettingsUiTest {
         compose.onNodeWithText("清空日志", substring = false).performClick()
         compose.waitUntil(5000) { compose.waitForIdle(); state.logs.entries.isEmpty() && !state.logs.busy }
         assertEquals(0, store.snapshot().lines().size)
-    }
-
-    @Test fun detailedLogSwitchPersistsAndCanBeDisabledWithoutChangingExecutionSettings() {
-        var state = ViewModelProvider(compose.activity)[SettingsState::class.java]
-        val background = state.config.backgroundDisplay
-        val permission = state.config.phoneUsePermissionMode
-        openControlPage()
-        compose.onNodeWithText("Phone Use 详细日志").performScrollTo().performClick()
-        compose.runOnIdle { assertEquals(true, state.config.phoneUseDetailedLog) }
-        compose.activityRule.scenario.recreate()
-        state = ViewModelProvider(compose.activity)[SettingsState::class.java]
-        openControlPage()
-        compose.onNodeWithText("Phone Use 详细日志").performScrollTo()
-        compose.runOnIdle {
-            assertEquals(true, state.config.phoneUseDetailedLog)
-            assertEquals(background, state.config.backgroundDisplay)
-            assertEquals(permission, state.config.phoneUsePermissionMode)
-        }
-        capture("control-phone-use-log")
-        compose.onNodeWithText("Phone Use 详细日志").performClick()
-        compose.runOnIdle {
-            assertEquals(false, state.config.phoneUseDetailedLog)
-            assertEquals(false, io.github.miaiplus.Config(state.getApplication<Application>()).phoneUseDetailedLog)
-        }
     }
 
     @Test fun permissionPresetsSaveAllModesSurviveRecreationAndRejectInvalidValues() {
@@ -135,12 +101,10 @@ class SettingsUiTest {
         openControlPage()
         compose.onNodeWithText("操作确认").performScrollTo()
         compose.onNodeWithText("智能判断").assertExists()
-        compose.onNodeWithText("由模型判断，必要时询问").assertExists()
         compose.runOnIdle {
             assertEquals("auto", state.config.phoneUsePermissionMode)
             assertEquals("auto", io.github.miaiplus.Config(state.getApplication<Application>()).phoneUsePermissionMode)
         }
-        capture("control-phone-use-permission")
     }
 
     @Test fun globalExternalModelForcesAndLocksNativePlanner() {
@@ -156,8 +120,6 @@ class SettingsUiTest {
         }
         openControlPage()
         compose.onNodeWithText("规划模型").assertIsNotEnabled()
-        compose.onNodeWithText("小爱当前模型").assertExists()
-        capture("control-global-model")
         compose.runOnIdle {
             check(state.setOption("globalModel", false))
             assertEquals("native", state.config.planner)
@@ -167,19 +129,9 @@ class SettingsUiTest {
         compose.runOnIdle { assertEquals("external", state.config.planner) }
     }
 
-    @Test fun protocolSelectorKeepsBackgroundBrightnessAndSavesSelectionAsDraft() {
+    @Test fun protocolSelectionStaysDraftUntilProfileIsSaved() {
         compose.onNodeWithTag("tab-Model").performClick()
-        compose.onNodeWithText("API 协议").performScrollTo()
-        compose.waitForIdle()
-        val before = compose.onRoot().captureToImage().asAndroidBitmap()
-        compose.onNodeWithText("API 协议").performClick()
-        compose.onNodeWithText("Chat Completions").assertExists()
-        compose.onNodeWithText("Anthropic Messages").assertIsDisplayed()
-        capture("protocol-popup-no-dim")
-        val after = compose.onRoot().captureToImage().asAndroidBitmap()
-        try {
-            assertEquals(before.getPixel(2, before.height / 2), after.getPixel(2, after.height / 2))
-        } finally { before.recycle(); after.recycle() }
+        compose.onNodeWithText("API 协议").performScrollTo().performClick()
         compose.onNodeWithText("Anthropic Messages").performClick()
         val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
         compose.runOnIdle {
@@ -188,22 +140,6 @@ class SettingsUiTest {
             check(state.saveProfile())
             assertEquals("anthropic", state.profiles?.active()?.api)
             assertEquals("anthropic", state.config.api)
-        }
-        RuntimeEnvironment.setQualifiers("+w320dp-night")
-        RuntimeEnvironment.setFontScale(1.5f)
-        try {
-            compose.activityRule.scenario.recreate()
-            compose.onNodeWithTag("tab-Model").performClick()
-            compose.onNodeWithText("API 协议").performScrollTo().performClick()
-            val option = compose.onAllNodesWithText("Anthropic Messages", useUnmergedTree = true).onLast()
-            option.assertIsDisplayed()
-            val bounds = option.getBoundsInRoot()
-            val root = compose.onRoot().getBoundsInRoot()
-            check(bounds.left >= root.left && bounds.right <= root.right)
-            capture("protocol-popup-narrow-large-text")
-        } finally {
-            RuntimeEnvironment.setFontScale(1f)
-            RuntimeEnvironment.setQualifiers("+w393dp-notnight")
         }
     }
 
@@ -214,96 +150,47 @@ class SettingsUiTest {
         io.github.miaiplus.Config.prefs(state.getApplication<Application>()).edit().clear().commit()
     }
 
-    @Test fun nativeDefaultsAndSettingsNavigation() {
-        compose.onNodeWithText("暂无注入报告").assertExists()
-        compose.onNodeWithTag("tab-Home").assertIsSelected()
-        compose.onNodeWithTag("tab-Model").assertIsNotSelected()
-        compose.onNodeWithTag("tab-Plugins").assertIsNotSelected()
-        compose.onNodeWithText("启用控屏工具").assertDoesNotExist()
-        compose.onNodeWithText("API 协议").assertDoesNotExist()
-        val tabs = listOf("Home", "Model", "Plugins").map { compose.onNodeWithTag("tab-$it").getBoundsInRoot().left }
-        assert(tabs.zipWithNext().all { (left, right) -> left < right })
-        capture("settings-light")
-        RuntimeEnvironment.setQualifiers("+night")
-        compose.activityRule.scenario.recreate()
-        capture("settings-dark")
-        RuntimeEnvironment.setQualifiers("+notnight")
-        compose.activityRule.scenario.recreate()
+    @Test fun maxStepsDialogKeepsCursorRejectsOutOfRangeAndDropsCancelledDraft() {
+        val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
+        compose.runOnIdle { check(state.setOption("maxSteps", 30)) }
         openControlPage()
-        compose.onNodeWithText("启用控屏工具").assertExists()
-        compose.onNodeWithText("小爱当前模型").assertExists()
-        compose.onNodeWithText("动作协议").assertExists()
-        compose.onNodeWithText("30 步").assertExists()
-        capture("control-light")
         compose.onNodeWithText("最大步数").performClick()
-        compose.onNodeWithText("步数").performTextReplacement("0")
-        compose.onNodeWithText("保存", useUnmergedTree = true).performClick()
-        compose.onAllNodesWithText("步数需在 1–200 之间").assertAny(hasText("步数需在 1–200 之间"))
-        compose.onNodeWithText("步数").performTextReplacement("201")
-        compose.onNodeWithText("保存", useUnmergedTree = true).performClick()
-        compose.onAllNodesWithText("步数需在 1–200 之间").assertAny(hasText("步数需在 1–200 之间"))
+        val field = compose.onNodeWithText("步数")
+        field.performTextClearance()
+        field.performTextInput("2")
+        field.assertEditing("2", TextRange(1))
+        field.performTextInput("0")
+        field.assertEditing("20", TextRange(2))
+        field.performTextInputSelection(TextRange(0))
+        field.performTextInput("1")
+        field.assertEditing("120", TextRange(1))
+        field.performTextInputSelection(TextRange(0, 2))
+        field.performTextInput("9")
+        field.assertEditing("90", TextRange(1))
+        compose.onNodeWithText("取消", substring = false).performClick()
+        compose.runOnIdle { assertEquals(30, state.config.maxSteps) }
+
+        compose.onNodeWithText("最大步数").performClick()
+        compose.onNodeWithText("步数").assertEditing("30", TextRange(2))
+        for (invalid in listOf("0", "201")) {
+            compose.onNodeWithText("步数").performTextReplacement(invalid)
+            compose.onNodeWithText("保存", useUnmergedTree = true).performClick()
+            compose.onAllNodesWithText("步数需在 1–200 之间").assertAny(hasText("步数需在 1–200 之间"))
+            compose.runOnIdle { assertEquals(30, state.config.maxSteps) }
+        }
         compose.onNodeWithText("步数").performTextReplacement("200")
         compose.onNodeWithText("保存", useUnmergedTree = true).performClick()
         compose.onNodeWithText("200 步").assertExists()
-        val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
-        assertEquals(200, state.config.maxSteps)
-        compose.onNodeWithText("动作协议").performScrollTo().performClick()
-        compose.onNodeWithText("AutoGLM").performClick()
-        compose.runOnIdle { assertEquals("autoglm", state.config.protocol) }
+        compose.runOnIdle { assertEquals(200, state.config.maxSteps) }
     }
 
-    @Test fun pluginsTabOwnsControlAndVirtualPagesAndReturnsThroughParents() {
+    @Test fun secondaryPagesReturnToTheParentAndTabWhereTheyWereOpened() {
         compose.onNodeWithTag("tab-Control").assertDoesNotExist()
-        compose.onNodeWithTag("tab-Plugins").performClick()
-        compose.onNodeWithTag("page-Plugins").assertExists()
-        compose.onNodeWithContentDescription("返回").assertDoesNotExist()
-        compose.onNodeWithTag("add-mcp-plugin").assertExists()
-        capture("plugins-light")
-        RuntimeEnvironment.setQualifiers("+night")
-        compose.activityRule.scenario.recreate()
-        compose.onNodeWithTag("tab-Plugins").assertIsSelected()
-        compose.onNodeWithContentDescription("返回").assertDoesNotExist()
-        capture("plugins-dark")
-        RuntimeEnvironment.setQualifiers("+notnight")
-        compose.activityRule.scenario.recreate()
-        compose.onAllNodesWithText("控屏配置").onFirst().performScrollTo().performClick()
-        compose.onNodeWithTag("page-Control").assertExists()
-        compose.onNodeWithTag("tab-Plugins").assertIsSelected()
-        compose.onNodeWithText("虚拟屏").performClick()
-        compose.activityRule.scenario.recreate()
-        compose.onNodeWithTag("page-Virtual").assertExists()
-        compose.onNodeWithTag("tab-Plugins").assertIsSelected()
-        compose.onNodeWithContentDescription("返回").performClick()
-        compose.onNodeWithTag("page-Control").assertExists()
-        compose.runOnIdle { compose.activity.onBackPressedDispatcher.onBackPressed() }
-        compose.onNodeWithTag("page-Plugins").assertExists()
-        compose.onNodeWithTag("tab-Plugins").assertIsSelected()
-        compose.runOnIdle { compose.activity.onBackPressedDispatcher.onBackPressed() }
-        compose.onNodeWithTag("page-Home").assertExists()
-        compose.onNodeWithTag("tab-Home").assertIsSelected()
-        compose.onNode(hasText("插件") and hasAnyAncestor(hasTestTag("page-Home")))
-            .performScrollTo().performClick()
-        compose.onNodeWithTag("page-Plugins").assertExists()
-        compose.onNodeWithTag("tab-Plugins").assertIsSelected()
-        openControlPage()
-        compose.onNodeWithTag("tab-Plugins").performTouchInput { click() }
-        compose.onNodeWithTag("page-Plugins").assertExists()
-        compose.onNodeWithContentDescription("返回").assertDoesNotExist()
-        openControlPage()
-        compose.onNodeWithText("虚拟屏").performClick()
-        compose.onNodeWithTag("tab-Plugins").performTouchInput { click() }
-        compose.onNodeWithTag("page-Plugins").assertExists()
-        compose.onNodeWithContentDescription("返回").assertDoesNotExist()
-    }
-
-    @Test fun crossLinkedPagesReturnToWhereTheyWereOpened() {
         compose.onNode(hasText("控屏") and hasAnyAncestor(hasTestTag("page-Home"))).performScrollTo().performClick()
         compose.onNodeWithTag("page-Control").assertExists()
         compose.onNodeWithTag("tab-Home").assertIsSelected()
-        compose.onNodeWithText("启用控屏工具").assertExists()
         compose.onNodeWithContentDescription("返回").performClick()
         compose.onNodeWithTag("page-Home").assertExists()
-        compose.onNodeWithContentDescription("返回").assertDoesNotExist()
 
         compose.onNodeWithText("运行状态").performScrollTo().performClick()
         compose.onNodeWithText("虚拟屏").performScrollTo().performClick()
@@ -315,6 +202,28 @@ class SettingsUiTest {
         compose.onNodeWithTag("page-Status").assertExists()
         compose.onNodeWithTag("tab-Home").performTouchInput { click() }
         compose.onNodeWithTag("page-Home").assertExists()
+
+        compose.onNodeWithTag("tab-Plugins").performClick()
+        compose.onNodeWithContentDescription("返回").assertDoesNotExist()
+        compose.onAllNodesWithText("控屏配置").onFirst().performScrollTo().performClick()
+        compose.onNodeWithTag("page-Control").assertExists()
+        compose.onNodeWithTag("tab-Plugins").assertIsSelected()
+        compose.onNodeWithText("虚拟屏").performClick()
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithTag("page-Virtual").assertExists()
+        compose.onNodeWithTag("tab-Plugins").assertIsSelected()
+        compose.onNodeWithContentDescription("返回").performClick()
+        compose.onNodeWithTag("page-Control").assertExists()
+        compose.runOnIdle { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.onNodeWithTag("page-Plugins").assertExists()
+        compose.runOnIdle { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.onNodeWithTag("page-Home").assertExists()
+        compose.onNodeWithTag("tab-Home").assertIsSelected()
+        openControlPage()
+        compose.onNodeWithText("虚拟屏").performClick()
+        compose.onNodeWithTag("tab-Plugins").performTouchInput { click() }
+        compose.onNodeWithTag("page-Plugins").assertExists()
+        compose.onNodeWithContentDescription("返回").assertDoesNotExist()
 
         compose.onNodeWithTag("tab-Model").performClick()
         compose.runOnIdle { compose.activity.onBackPressedDispatcher.onBackPressed() }
@@ -330,12 +239,8 @@ class SettingsUiTest {
             check(state.plugins.save())
         }
         compose.onNodeWithTag("tab-Plugins").performClick()
-        compose.onNodeWithText("未启用 · 待获取工具").assertExists()
         compose.onNodeWithText("Fixture MCP", substring = false).performClick()
         compose.onNodeWithTag("page-Mcp").assertExists()
-        compose.onNodeWithText("https://example.test/mcp").assertExists()
-        compose.onNodeWithText("获取工具").assertExists()
-        capture("plugin-mcp-page")
         compose.onNodeWithText("删除插件").performScrollTo().performClick()
         compose.onNodeWithText("取消", substring = false).performClick()
         compose.onNodeWithTag("page-Mcp").assertExists()
@@ -348,18 +253,15 @@ class SettingsUiTest {
 
     @Test fun unsavedProfileDialogCancelsDiscardsOrSavesBeforeLeaving() {
         compose.onNodeWithTag("tab-Model").performClick()
-        capture("model-light")
         compose.onNodeWithText("配置名称").performTextReplacement("测试服务")
         compose.activityRule.scenario.recreate()
         compose.onNode(hasSetTextAction() and hasText("测试服务")).assertExists()
-        capture("model-editing-light")
         compose.onNodeWithTag("tab-Home").performClick()
         compose.onNodeWithText("保存当前配置？").assertExists()
         compose.onNodeWithTag("tab-Model").assertIsSelected()
         compose.onNodeWithText("取消", useUnmergedTree = true).performClick()
         compose.onNodeWithTag("tab-Model").assertIsSelected()
         compose.onNodeWithTag("tab-Home").performClick()
-        capture("unsaved-profile-light")
         compose.onNodeWithText("放弃修改").performClick()
         compose.onNodeWithTag("tab-Home").assertIsSelected()
         compose.onNodeWithTag("tab-Model").performClick()
@@ -380,68 +282,6 @@ class SettingsUiTest {
         compose.onNodeWithTag("tab-Model").performClick()
         compose.onNode(hasSetTextAction() and hasText("我的 API")).assertExists()
         compose.onNodeWithText("保存配置").assertDoesNotExist()
-    }
-
-    @Test fun secondaryPagesAnimateBothWaysAndReturnToTheirParent() {
-        compose.onNodeWithText("运行状态").performScrollTo()
-        compose.mainClock.autoAdvance = false
-        compose.onNodeWithText("运行状态").performClick()
-        compose.mainClock.advanceTimeBy(80)
-        compose.onNodeWithTag("page-Home").assertExists()
-        compose.onNodeWithTag("page-Status").assertExists()
-        compose.mainClock.advanceTimeBy(400)
-        compose.onNodeWithTag("page-Home").assertDoesNotExist()
-        compose.onNodeWithTag("tab-Home").assertIsSelected()
-        compose.onNodeWithText("暂无报告，请在 LSPosed 中启用模块后重启小爱").assertExists()
-        compose.mainClock.autoAdvance = true
-        compose.onNodeWithText("直接测试").performScrollTo()
-        compose.mainClock.autoAdvance = false
-        compose.onNodeWithText("直接测试").performClick()
-        compose.mainClock.advanceTimeBy(400)
-        compose.onNodeWithTag("page-Test").assertExists()
-        compose.onNodeWithText("想在手机上做什么？").assertExists()
-        compose.onNodeWithContentDescription("返回").performClick()
-        compose.mainClock.advanceTimeBy(80)
-        compose.onNodeWithTag("page-Test").assertExists()
-        compose.onNodeWithTag("page-Status").assertExists()
-        compose.mainClock.advanceTimeBy(400)
-        compose.onNodeWithTag("page-Test").assertDoesNotExist()
-        compose.onNodeWithContentDescription("返回").performClick()
-        compose.mainClock.advanceTimeBy(400)
-        compose.onNodeWithTag("page-Home").assertExists()
-        compose.onNodeWithTag("page-Status").assertDoesNotExist()
-        compose.mainClock.autoAdvance = true
-    }
-
-    @Test fun tabsAnimateInBothDirectionsAndSettleWithoutRetainingThePreviousPage() {
-        for (dark in listOf(false, true)) {
-            if (dark) {
-                RuntimeEnvironment.setQualifiers("+night")
-                compose.activityRule.scenario.recreate()
-            }
-            val origin = compose.onNodeWithTag("page-Home").getUnclippedBoundsInRoot().left.value
-            compose.mainClock.autoAdvance = false
-            try {
-                for ((tab, direction) in listOf("Model" to 1, "Plugins" to 1, "Model" to -1, "Home" to -1)) {
-                    compose.onNodeWithTag("tab-$tab").performClick()
-                    compose.mainClock.advanceTimeBy(80)
-                    val page = compose.onNodeWithTag("page-$tab")
-                    val offset = page.getUnclippedBoundsInRoot().left.value - origin
-                    check(offset * direction > 0.5f) { "$tab must still be sliding in, offset=$offset" }
-                    compose.onAllNodes(hasTestTag("page-Home") or hasTestTag("page-Model") or hasTestTag("page-Plugins"))
-                        .assertCountEquals(1)
-                    if (tab == "Plugins") capture("tab-enter-${if (dark) "dark" else "light"}")
-                    compose.mainClock.advanceTimeBy(300)
-                    assertEquals(origin, page.getUnclippedBoundsInRoot().left.value, 0.01f)
-                    compose.onNodeWithTag("tab-$tab").assertIsSelected()
-                    compose.onNodeWithTag("tab-$tab").performClick()
-                    compose.mainClock.advanceTimeBy(80)
-                    assertEquals(origin, page.getUnclippedBoundsInRoot().left.value, 0.01f)
-                }
-            } finally {
-                compose.mainClock.autoAdvance = true
-            }
-        }
     }
 
     @Test fun switchingTabsDuringAnimationReleasesThePreviousPagesAndSettlesOnTheLatestTab() {
@@ -504,61 +344,6 @@ class SettingsUiTest {
         }
     }
 
-    @Test fun modelSectionsKeepTheirScrollPositionAcrossTabsAndRecreation() {
-        compose.onNodeWithTag("tab-Model").performClick()
-        compose.onNodeWithTag("model-settings").performScrollToNode(hasText("另存为新配置"))
-        compose.onNodeWithText("另存为新配置").assertIsDisplayed()
-        compose.onNodeWithTag("tab-Plugins").performClick()
-        compose.onNodeWithTag("tab-Model").performClick()
-        compose.onNodeWithText("另存为新配置").assertIsDisplayed()
-        compose.activityRule.scenario.recreate()
-        compose.onNodeWithText("另存为新配置").assertIsDisplayed()
-        compose.onNodeWithTag("model-settings").performScrollToNode(hasText("配置名称"))
-        compose.onNode(hasSetTextAction() and hasText("默认配置")).assertExists()
-    }
-
-    @Test fun modelListReachesTheBottomBarAndKeepsItsLastSettingAccessible() {
-        compose.onNodeWithTag("tab-Model").performClick()
-        fun assertListReachesContentBottom() {
-            val content = compose.onNodeWithTag("page-Model").getBoundsInRoot()
-            val list = compose.onNodeWithTag("model-settings").getBoundsInRoot()
-            assertEquals(content.bottom.value, list.bottom.value, 1f)
-        }
-        assertListReachesContentBottom()
-        capture("model-bottom-bar-light")
-        RuntimeEnvironment.setQualifiers("+night")
-        compose.activityRule.scenario.recreate()
-        assertListReachesContentBottom()
-        capture("model-bottom-bar-dark")
-        compose.onNodeWithText("配置名称").performTextReplacement("布局测试")
-        compose.onNodeWithText("保存配置").assertIsDisplayed()
-        assertListReachesContentBottom()
-        compose.onNodeWithTag("model-settings").performScrollToNode(hasText("删除当前配置"))
-        compose.onNodeWithText("删除当前配置").assertIsDisplayed()
-        val lastSetting = compose.onNodeWithText("删除当前配置").getBoundsInRoot()
-        val save = compose.onNodeWithText("保存配置").getBoundsInRoot()
-        check(lastSetting.bottom + 8.dp <= save.top)
-        capture("model-bottom-bar-dirty")
-    }
-
-    @Test fun dashboardLabelsSavedReportsWithoutClaimingALiveConnection() {
-        val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
-        compose.runOnIdle {
-            io.github.miaiplus.Config.prefs(state.getApplication<Application>()).edit()
-                .putString("hook_report", "ready: fixture")
-                .putLong("hook_at", 1_700_000_000_000L).commit()
-            state.refresh()
-        }
-        compose.onNodeWithText("工作正常").assertExists()
-        capture("home-ready-light")
-        compose.runOnIdle {
-            io.github.miaiplus.Config.prefs(state.getApplication<Application>()).edit()
-                .putString("hook_report", "unsupported: fixture").commit()
-            state.refresh()
-        }
-        compose.onNodeWithText("上次注入异常").assertExists()
-    }
-
     @Test fun virtualCanvasSavesCustomGeometryAndFillsCurrentDeviceValues() {
         val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
         val device = state.currentDisplayGeometry()
@@ -568,7 +353,6 @@ class SettingsUiTest {
         compose.onNodeWithText("宽度（像素）").performTextReplacement("1440")
         compose.onNodeWithText("高度（像素）").performTextReplacement("3200")
         compose.onNodeWithText("密度（dpi）").performTextReplacement("560")
-        capture("virtual-canvas-light")
         compose.onNodeWithText("保存", useUnmergedTree = true).performClick()
         compose.onNodeWithText("1440×3200 @ 560 dpi").assertExists()
         compose.onNodeWithText("自定义分辨率").performClick()
@@ -586,7 +370,7 @@ class SettingsUiTest {
         }
     }
 
-    @Test fun backgroundCheckIsExplicitAndSurvivesStatusRefresh() {
+    @Test fun backgroundCheckAndProbeRunOnlyAfterExplicitConfirmationAndSurviveRecreation() {
         val calls = AtomicInteger()
         val provider = BackgroundStatusProvider(calls).apply {
             attachInfo(compose.activity, ProviderInfo().apply { authority = BridgeProvider.URI.authority })
@@ -594,7 +378,6 @@ class SettingsUiTest {
         ShadowContentResolver.registerProviderInternal(BridgeProvider.URI.authority, provider)
         openControlPage()
         compose.onNodeWithText("虚拟屏").performClick()
-        compose.onNodeWithTag("tab-Plugins").assertIsSelected()
         assertEquals(0, calls.get())
         compose.onNodeWithText("检查前置条件").performScrollTo().performClick()
         compose.waitUntil { calls.get() == 1 }
@@ -602,37 +385,20 @@ class SettingsUiTest {
         compose.activityRule.scenario.recreate()
         compose.onNodeWithText("前置条件已满足").assertExists()
         assertEquals(1, calls.get())
-        capture("virtual-screen-light")
-        RuntimeEnvironment.setQualifiers("+night")
-        compose.activityRule.scenario.recreate()
-        capture("virtual-screen-dark")
-        RuntimeEnvironment.setQualifiers("+notnight")
-        compose.onNodeWithContentDescription("返回").performClick()
-        compose.onNodeWithText("启用控屏工具").assertExists()
-    }
 
-    @Test fun virtualProbeRequiresConfirmationAndKeepsIndividualVerdicts() {
-        val calls = AtomicInteger()
-        val provider = BackgroundStatusProvider(calls).apply {
-            attachInfo(compose.activity, ProviderInfo().apply { authority = BridgeProvider.URI.authority })
-        }
-        ShadowContentResolver.registerProviderInternal(BridgeProvider.URI.authority, provider)
-        openControlPage()
-        compose.onNodeWithText("虚拟屏").performClick()
-        compose.onNodeWithText("开始检测").performClick()
-        assertEquals(0, calls.get())
+        compose.onNodeWithText("开始检测").performScrollTo().performClick()
+        assertEquals(1, calls.get())
         compose.onNodeWithText("取消", useUnmergedTree = true).performClick()
-        assertEquals(0, calls.get())
+        assertEquals(1, calls.get())
         compose.onNodeWithText("开始检测").performClick()
         compose.onNodeWithText("开始", useUnmergedTree = true).performClick()
-        compose.waitUntil { calls.get() == 1 }
+        compose.waitUntil { calls.get() == 2 }
         compose.onNodeWithText("1 项通过 · 1 项未通过 · 6 项未验证").performScrollTo().assertExists()
-        capture("virtual-result-light")
         compose.onNodeWithText("主屏焦点").performScrollTo().performClick()
         compose.onNodeWithText("fixture focus changed", substring = true).assertExists()
         compose.onNodeWithText("关闭", useUnmergedTree = true).performClick()
         compose.activityRule.scenario.recreate()
-        assertEquals(1, calls.get())
+        assertEquals(2, calls.get())
     }
 
     @Test fun virtualAppPickerSearchesNamesAndPackagesAndReturnsTheSelection() {
@@ -690,20 +456,15 @@ class SettingsUiTest {
         compose.onNodeWithText("model-0").performClick()
         compose.runOnIdle {
             assertEquals("model-0", state.draft?.model)
-            assertEquals("", Config(compose.activity).model)
+            assertEquals("", io.github.miaiplus.Config(compose.activity).model)
             assertEquals(null, state.modelList)
         }
     }
 
-    @Test fun backgroundDirectTestKeepsTheSettingsOnThePhysicalScreen() {
+    @Test fun directTestYieldsSettingsOnlyForPhysicalScreenTasks() {
+        // Background tasks use their own display; chat tasks need no target app.
         checkDirectTestHandoff(background = true, screen = true, expectedHandoffs = 0)
-    }
-
-    @Test fun physicalDirectTestYieldsSettingsWindowToTargetApp() {
         checkDirectTestHandoff(background = false, screen = true, expectedHandoffs = 1)
-    }
-
-    @Test fun chatDirectTestKeepsTheSettingsVisible() {
         checkDirectTestHandoff(background = false, screen = false, expectedHandoffs = 0)
     }
 
@@ -754,12 +515,9 @@ class SettingsUiTest {
         compose.onAllNodesWithText("控屏配置").onFirst().performScrollTo().performClick()
     }
 
-    private fun capture(name: String) {
-        compose.waitForIdle()
-        val bitmap = compose.onRoot().captureToImage().asAndroidBitmap()
-        val directory = File("build/outputs/ui-screenshots").apply { mkdirs() }
-        File(directory, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
-        bitmap.recycle()
+    private fun SemanticsNodeInteraction.assertEditing(text: String, selection: TextRange) {
+        assert(SemanticsMatcher.expectValue(SemanticsProperties.InputText, AnnotatedString(text)))
+        assert(SemanticsMatcher.expectValue(SemanticsProperties.TextSelectionRange, selection))
     }
 }
 

@@ -60,7 +60,7 @@
 ## 验证入口
 
 - `McpClientTest`：假连接验证握手、版本、分页、JSON／SSE、认证、大小限制、脱敏、取消和单次发送。
-- `McpClientWireTest`：桌面 JVM loopback fixture 验证真实 HTTP、UTF-8、headers、分页和失败后不重发。
+- `McpClientTest` 的 `actualHttp*` 用例：桌面 JVM loopback fixture 验证真实 HTTP、UTF-8、headers、分页和失败后不重发。
 - [独立包实机验证](validation/plugin-platform-device-2026-10-28.md)：Android fixture HTTP、小爱实际注册及代理。
 - [Termux 实机验证](validation/termux-mcp-2026-10-28.md)：真实 `termuxgpt/termux-mcp` 0.15.0（commit `48e3e58b3c8c5d66b97e79c0fa6473d126508f46`，AGPL-3.0）的 `2025-06-18` 兼容、Termux UID 命令、文件管道及失败语义。该阶段独立 HOME 用于隔离状态，shell 权限仍属于 Termux UID。
 

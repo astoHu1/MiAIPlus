@@ -23,7 +23,7 @@ import org.robolectric.shadows.ShadowSystemClock;
 public final class InteractionUiTest {
     private static final String RETURN_TOKEN = BuildConfig.APPLICATION_ID + ".RETURN_CONVERSATION";
 
-    @Test public void pendingActionPublishesFullConfirmationDespiteEmptyOrUnchangedPlannerProgress() {
+    @Test public void pendingDecisionFloatsDespiteUnchangedProgressAndClearsControlsAfterItEnds() {
         String message = "确认发送给指定收件人：\n" + "完整操作说明".repeat(50);
         for (String progress : new String[]{"", "点击目标控件"}) {
             Bundle state = new Bundle();
@@ -37,9 +37,7 @@ public final class InteractionUiTest {
             assertTrue("A newly pending decision must bypass unchanged progress", notice.changed(notice.progress, null));
             assertFalse("A delivered decision need not float again on every poll", notice.changed(notice.progress, "action-token"));
         }
-    }
 
-    @Test public void notificationRetriesUnpublishedDecisionAndClearsControlsAfterItEnds() {
         Bundle state = new Bundle();
         state.putString("progress", "等待确认");
         state.putString("action_confirmation", "new-token");

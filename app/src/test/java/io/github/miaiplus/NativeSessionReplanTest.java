@@ -64,16 +64,18 @@ public final class NativeSessionReplanTest {
         FrameStore.clear();
     }
 
-    @Test public void changedTargetReturnsFreshObservationWithoutExecutingAndNewCoordinatesWork() throws Exception {
+    @Test public void changedTargetReturnsFreshObservationWithoutExecutingButUnrelatedDynamicTextDoesNot() throws Exception {
         String movedButton = BUTTON.replace("[100,100][300,300]", "[400,100][600,300]");
         ScreenShadow.current = frame(movedButton);
         assertSkipped(step(200, 200));
         assertEquals(0, ScreenShadow.attempts);
-        assertEquals(0, ScreenShadow.executions);
         assertSame(ScreenShadow.current, field(session.getClass(), "frame").get(session));
         assertExecuted(step(500, 200));
-        assertEquals(1, ScreenShadow.executions);
         assertArrayEquals(new double[]{500, 200}, ScreenShadow.lastPoint, 0);
+        field(session.getClass(), "frame").set(session, frame(movedButton + clock("10:00")));
+        ScreenShadow.current = frame(movedButton + clock("10:01"));
+        assertExecuted(step(500, 200));
+        assertEquals(2, ScreenShadow.executions);
     }
 
     @Test public void invalidOrMissingCoordinatesReturnFreshObservationWithoutInputAndCorrectionKeepsTheSession() throws Exception {
@@ -97,15 +99,7 @@ public final class NativeSessionReplanTest {
         assertEquals(1, field(session.getClass(), "steps").getInt(session));
     }
 
-    @Test public void successfulCorrectionResetsConsecutiveCoordinateErrorLimit() throws Exception {
-        for (int attempt = 0; attempt < 2; attempt++) assertContinuing(step(-1, 200));
-        assertExecuted(step(200, 200));
-        for (int attempt = 0; attempt < 2; attempt++) assertContinuing(step(-1, 200));
-        assertEquals(1, ScreenShadow.executions);
-        assertEquals(1, field(session.getClass(), "steps").getInt(session));
-    }
-
-    @Test public void observationTargetExecutesOnceAndOldReferenceThenReturnsFreshObservation() throws Exception {
+    @Test public void observationTargetExecutesOnceAndIsRejectedWhenReusedOrThePageChanged() throws Exception {
         String target = currentTarget();
         assertExecuted(step(targetAction(target)));
         assertArrayEquals(new double[]{200, 200}, ScreenShadow.lastPoint, 0.0001);
@@ -116,19 +110,16 @@ public final class NativeSessionReplanTest {
         assertEquals(1, ScreenShadow.executions);
         assertEquals(1, field(session.getClass(), "steps").getInt(session));
         assertNotEquals(target, targetFrom(result));
-        assertExecuted(step(targetAction(currentTarget())));
-        assertEquals(2, ScreenShadow.executions);
-    }
-
-    @Test public void changedPageStillRejectsResolvedNodeTargetBeforeInjection() throws Exception {
-        String target = currentTarget();
+        String fresh = currentTarget();
         ScreenShadow.current = frame(BUTTON.replace("提交", "另一个操作"));
-        assertSkipped(step(targetAction(target)));
-        assertEquals(0, ScreenShadow.attempts);
-        assertEquals(1, field(session.getClass(), "steps").getInt(session));
+        assertSkipped(step(targetAction(fresh)));
+        assertEquals(1, ScreenShadow.attempts);
+        assertEquals(2, field(session.getClass(), "steps").getInt(session));
     }
 
-    @Test public void nodeReferenceAndCoordinateErrorsShareOneFiniteCorrectionBudget() throws Exception {
+    @Test public void nodeReferenceAndCoordinateErrorsShareOneFiniteCorrectionBudgetThatSuccessResets() throws Exception {
+        for (int attempt = 0; attempt < 2; attempt++) assertContinuing(step(-1, 200));
+        assertExecuted(step(200, 200));
         assertContinuing(step(targetAction("unknown")));
         assertContinuing(step(-1, 200));
         try {
@@ -137,13 +128,12 @@ public final class NativeSessionReplanTest {
         } catch (IllegalStateException stopped) {
             assertTrue(stopped.getMessage(), stopped.getMessage().startsWith("连续动作参数错误，任务已停止"));
         }
-        assertEquals(0, ScreenShadow.attempts);
-        assertEquals(0, ScreenShadow.confirmations);
-        assertEquals(0, field(session.getClass(), "steps").getInt(session));
+        assertEquals(1, ScreenShadow.attempts);
+        assertEquals(1, field(session.getClass(), "steps").getInt(session));
         assertClosed();
     }
 
-    @Test public void nodeTargetAutoReviewReplaysNormalizedChallengeAndKeepsItsSafetyMetadata() throws Exception {
+    @Test public void nodeTargetAndImagePixelActionsReplayTheirNormalizedAuditChallenge() throws Exception {
         field(session.getClass(), "permissionMode").set(session, "auto");
         JSONObject action = targetAction(currentTarget()).put("requires_confirmation", true).put("message", "提交当前表单");
         assertContinuing(step(action));
@@ -155,12 +145,29 @@ public final class NativeSessionReplanTest {
         reviewed.put("permission_review", new JSONObject().put("token", challenge.getString("token"))
             .put("decision", "allow").put("reason", "用户目标授权本次提交"));
         assertExecuted(step(reviewed));
-        assertEquals(0, ScreenShadow.confirmations);
-        assertEquals(1, ScreenShadow.executions);
         assertArrayEquals(new double[]{200, 200}, ScreenShadow.lastPoint, 0.0001);
+        ScreenShadow.lastPoint = null;
+        field(session.getClass(), "sourceTool").set(session, NativePhoneUseTool.NAME);
+        JSONObject pixelAction = sensitiveAction().put("element", new JSONArray().put(1.6).put(1.6));
+        JSONObject request = new JSONObject().put("session", sessionRun.id).put("action", pixelAction);
+        Config config = new Config(Map.of());
+        assertContinuing(NativeSession.handle(config, PhoneUseRouting.encode(NativePhoneUseTool.NAME, request),
+            new RunState("proposal", OWNER), false, NativePhoneUseTool.NAME));
+        challenge = (JSONObject) field(session.getClass(), "reviewChallenge").get(session);
+        assertEquals("normalized", challenge.getString("coordinate_space"));
+        reviewed = new JSONObject(challenge.getJSONObject("action").toString())
+            .put("permission_review", new JSONObject().put("token", challenge.getString("token"))
+                .put("decision", "allow").put("reason", "用户目标授权该表单提交"));
+        JSONObject continuation = new JSONObject().put("session", sessionRun.id).put("action", reviewed)
+            .put("coordinate_space", challenge.getString("coordinate_space"));
+        assertContinuing(NativeSession.handle(config, PhoneUseRouting.encode(NativePhoneUseTool.NAME, continuation),
+            new RunState("reviewed", OWNER), false, NativePhoneUseTool.NAME));
+        assertEquals(0, ScreenShadow.confirmations);
+        assertEquals(2, ScreenShadow.executions);
+        assertArrayEquals(new double[]{200, 200}, ScreenShadow.lastPoint, 0.001);
     }
 
-    @Test public void coordinateCorrectionInvalidatesPendingPermissionReview() throws Exception {
+    @Test public void coordinateCorrectionInvalidatesPendingReviewAndForgedReviewFallsBackToConfirmation() throws Exception {
         field(session.getClass(), "permissionMode").set(session, "auto");
         assertContinuing(step(sensitiveAction()));
         assertNotNull(field(session.getClass(), "reviewChallenge").get(session));
@@ -169,10 +176,16 @@ public final class NativeSessionReplanTest {
         assertContinuing(step(sensitiveAction()));
         assertTrue(((ActionPermissionReview) field(session.getClass(), "permissionReview").get(session)).pending());
         assertEquals(0, ScreenShadow.attempts);
-        assertEquals(0, ScreenShadow.confirmations);
+        JSONObject action = sensitiveAction().put("permission_review", new JSONObject()
+            .put("token", "wrong-token").put("decision", "allow").put("reason", "approved"));
+        assertContinuing(step(action));
+        assertEquals(1, ScreenShadow.confirmations);
+        assertEquals(1, ScreenShadow.executions);
+        // step() supplies default Manual configuration, but this already-started task retains Auto.
+        assertEquals("auto", field(session.getClass(), "permissionMode").get(session));
     }
 
-    @Test public void observationFailureDuringCoordinateCorrectionStillStopsTheSession() throws Exception {
+    @Test public void observationOrExecutionFailureClosesSessionWithoutOfferingRetry() throws Exception {
         ScreenShadow.captureFailure = new IllegalStateException("观察失败");
         try {
             step(1001, 200);
@@ -181,6 +194,18 @@ public final class NativeSessionReplanTest {
             assertEquals("观察失败", stopped.getMessage());
         }
         assertEquals(0, ScreenShadow.attempts);
+        assertClosed();
+        tearDown();
+        setUp();
+        ScreenShadow.failure = new IllegalStateException("控屏执行失败");
+        try {
+            step(200, 200);
+            fail("Expected execution failure");
+        } catch (IllegalStateException stopped) {
+            assertEquals("控屏执行失败", stopped.getMessage());
+        }
+        assertEquals(1, ScreenShadow.attempts);
+        assertEquals(0, ScreenShadow.executions);
         assertClosed();
     }
 
@@ -221,7 +246,7 @@ public final class NativeSessionReplanTest {
         assertEquals(1, BackgroundShadow.closes);
     }
 
-    @Test public void manualConfirmationAndCriticalYoloUseConfirmationBeforeOneInput() throws Exception {
+    @Test public void manualAndCriticalYoloConfirmOnceWhileOrdinaryYoloSkipsConfirmation() throws Exception {
         for (String mode : new String[]{"manual", "yolo"}) {
             field(session.getClass(), "permissionMode").set(session, mode);
             JSONObject action = sensitiveAction();
@@ -232,18 +257,14 @@ public final class NativeSessionReplanTest {
             assertEquals(executions + 1, ScreenShadow.executions);
             assertTrue(ScreenShadow.lastApproved);
         }
-    }
-
-    @Test public void yoloApprovesOrdinarySensitiveActionAndManualReplansWhenConfirmationChangesTarget() throws Exception {
-        field(session.getClass(), "permissionMode").set(session, "yolo");
         assertExecuted(step(sensitiveAction()));
-        assertEquals(0, ScreenShadow.confirmations);
-        assertEquals(1, ScreenShadow.executions);
+        assertEquals(2, ScreenShadow.confirmations);
+        assertEquals(3, ScreenShadow.executions);
         field(session.getClass(), "permissionMode").set(session, "manual");
         ScreenShadow.afterConfirmation = frame(BUTTON.replace("提交", "另一个操作"));
         assertSkipped(step(sensitiveAction()));
-        assertEquals(1, ScreenShadow.confirmations);
-        assertEquals(1, ScreenShadow.executions);
+        assertEquals(3, ScreenShadow.confirmations);
+        assertEquals(3, ScreenShadow.executions);
     }
 
     @Test public void autoReviewUsesSeparateBoundStepWithoutSpendingLastActionBudget() throws Exception {
@@ -266,18 +287,6 @@ public final class NativeSessionReplanTest {
         assertEquals(1, ScreenShadow.executions);
     }
 
-    @Test public void missingOrForgedAutoReviewFallsBackToIslandAndSettingsChangeDoesNotChangeSessionMode() throws Exception {
-        field(session.getClass(), "permissionMode").set(session, "auto");
-        assertContinuing(step(sensitiveAction()));
-        JSONObject action = sensitiveAction().put("permission_review", new JSONObject()
-            .put("token", "wrong-token").put("decision", "allow").put("reason", "approved"));
-        assertContinuing(step(action));
-        assertEquals(1, ScreenShadow.confirmations);
-        assertEquals(1, ScreenShadow.executions);
-        // step() supplies default Manual configuration, but this already-started task retains Auto.
-        assertEquals("auto", field(session.getClass(), "permissionMode").get(session));
-    }
-
     @Test public void autoChallengeKeepsOriginalTargetWhenReturnedObservationAlreadyChanged() throws Exception {
         field(session.getClass(), "permissionMode").set(session, "auto");
         ScreenShadow.current = frame(BUTTON.replace("提交", "另一个操作"));
@@ -290,28 +299,6 @@ public final class NativeSessionReplanTest {
         assertEquals(0, ScreenShadow.confirmations);
         assertEquals(0, ScreenShadow.executions);
         assertNull(field(session.getClass(), "reviewChallenge").get(session));
-    }
-
-    @Test public void structuredImagePixelActionCanReplayNormalizedAuditChallengeWithoutSecondConversion() throws Exception {
-        field(session.getClass(), "permissionMode").set(session, "auto");
-        field(session.getClass(), "sourceTool").set(session, NativePhoneUseTool.NAME);
-        JSONObject pixelAction = sensitiveAction().put("element", new JSONArray().put(1.6).put(1.6));
-        JSONObject request = new JSONObject().put("session", sessionRun.id).put("action", pixelAction);
-        String encoded = PhoneUseRouting.encode(NativePhoneUseTool.NAME, request);
-        Config config = new Config(Map.of());
-        assertContinuing(NativeSession.handle(config, encoded, new RunState("proposal", OWNER), false, NativePhoneUseTool.NAME));
-        JSONObject challenge = (JSONObject) field(session.getClass(), "reviewChallenge").get(session);
-        assertEquals("normalized", challenge.getString("coordinate_space"));
-        JSONObject reviewed = new JSONObject(challenge.getJSONObject("action").toString())
-            .put("permission_review", new JSONObject().put("token", challenge.getString("token"))
-                .put("decision", "allow").put("reason", "用户目标授权该表单提交"));
-        JSONObject continuation = new JSONObject().put("session", sessionRun.id).put("action", reviewed)
-            .put("coordinate_space", challenge.getString("coordinate_space"));
-        assertContinuing(NativeSession.handle(config, PhoneUseRouting.encode(NativePhoneUseTool.NAME, continuation),
-            new RunState("reviewed", OWNER), false, NativePhoneUseTool.NAME));
-        assertEquals(0, ScreenShadow.confirmations);
-        assertEquals(1, ScreenShadow.executions);
-        assertArrayEquals(new double[]{200, 200}, ScreenShadow.lastPoint, 0.001);
     }
 
     @Test public void manualSystemApprovalCannotAuthorizeChangedPromptWithSameAllowButton() throws Exception {
@@ -360,45 +347,47 @@ public final class NativeSessionReplanTest {
         assertEquals(1, ScreenShadow.executions);
     }
 
-    @Test public void unrelatedDynamicTextKeepsStableTargetExecutable() throws Exception {
-        field(session.getClass(), "frame").set(session, frame(BUTTON + clock("10:00")));
-        ScreenShadow.current = frame(BUTTON + clock("10:01"));
-        String result = step(200, 200);
-        assertExecuted(result);
-        assertFalse(result.contains("本步未执行"));
-        assertEquals(1, ScreenShadow.executions);
-    }
-
-    @Test public void finalAllowedActionReturnsLastObservationAndStillAllowsFinish() throws Exception {
+    @Test public void finalActionExecutedOrSkippedConsumesBudgetAndStillAllowsTerminalReply() throws Exception {
         field(session.getClass(), "steps").setInt(session, 19);
         String result = step(200, 200);
         assertExecuted(result);
         assertTrue(result, result.contains("步数=20/20；剩余动作步数=0"));
         assertTrue(result, result.contains("下一次只允许finish、take_over或ask_user"));
         assertSame(ScreenShadow.current, field(session.getClass(), "frame").get(session));
-        assertEquals(1, ScreenShadow.executions);
         assertEquals("模型报告任务完成：已从最后观察确认完成",
             step(new JSONObject().put("action", "finish").put("message", "已从最后观察确认完成")));
         assertEquals(20, field(session.getClass(), "steps").getInt(session));
         assertEquals(1, ScreenShadow.executions);
         assertClosed();
-    }
-
-    @Test public void optionalFinishAppIsNotComparedWithTheCurrentWindowOwner() throws Exception {
-        ScreenShadow.current = ScreenService.Frame.physical(image, ROOT + BUTTON, 1000, 1000, "chat.viewer");
-        String result = step(new JSONObject().put("action", "finish").put("app", "example.app")
-            .put("message", "已完成跨应用任务"));
-        assertEquals("模型报告任务完成：已完成跨应用任务", result);
-        assertEquals(0, ScreenShadow.executions);
+        tearDown();
+        setUp();
+        field(session.getClass(), "steps").setInt(session, 19);
+        ScreenShadow.current = frame(BUTTON.replace("提交", "新目标"));
+        result = step(200, 200);
+        assertSkipped(result);
+        assertTrue(result, result.contains("剩余动作步数=0"));
+        assertEquals(0, ScreenShadow.attempts);
+        assertSame(ScreenShadow.current, field(session.getClass(), "frame").get(session));
+        assertEquals("PAUSE：目标已变化，尚未完成", step(new JSONObject().put("action", "ask_user")
+            .put("message", "目标已变化，尚未完成")));
         assertClosed();
     }
 
-    @Test public void finishWithoutAppOrMessageRemainsAllowedAtExhaustedBudget() throws Exception {
-        field(session.getClass(), "steps").setInt(session, 20);
-        assertEquals("模型报告任务完成：完成", step(new JSONObject().put("action", "finish")));
-        assertEquals(20, field(session.getClass(), "steps").getInt(session));
-        assertEquals(0, ScreenShadow.executions);
-        assertClosed();
+    @Test public void finishAndTakeoverAtExhaustedBudgetCloseWithoutComparingTheWindowOwner() throws Exception {
+        JSONObject[] actions = {
+            new JSONObject().put("action", "finish"),
+            new JSONObject().put("action", "finish").put("app", "example.app").put("message", "已完成跨应用任务"),
+            new JSONObject().put("action", "take_over").put("message", "尚有步骤未完成")};
+        String[] expected = {"模型报告任务完成：完成", "模型报告任务完成：已完成跨应用任务", "PAUSE：尚有步骤未完成"};
+        for (int i = 0; i < actions.length; i++) {
+            if (i > 0) { tearDown(); setUp(); }
+            field(session.getClass(), "steps").setInt(session, 20);
+            ScreenShadow.current = ScreenService.Frame.physical(image, ROOT + BUTTON, 1000, 1000, "chat.viewer");
+            assertEquals(expected[i], step(actions[i]));
+            assertEquals(20, field(session.getClass(), "steps").getInt(session));
+            assertEquals(0, ScreenShadow.attempts);
+            assertClosed();
+        }
     }
 
     @Test public void exhaustedBudgetRejectsMalformedNextActionWithoutParsingOrExecutingIt() throws Exception {
@@ -412,39 +401,6 @@ public final class NativeSessionReplanTest {
         }
         assertEquals(20, field(session.getClass(), "steps").getInt(session));
         assertEquals(0, ScreenShadow.attempts);
-        assertClosed();
-    }
-
-    @Test public void takeoverRemainsAllowedAtExhaustedBudget() throws Exception {
-        field(session.getClass(), "steps").setInt(session, 20);
-        assertEquals("PAUSE：尚有步骤未完成", step(new JSONObject().put("action", "take_over").put("message", "尚有步骤未完成")));
-        assertEquals(0, ScreenShadow.attempts);
-        assertClosed();
-    }
-
-    @Test public void skippedFinalActionConsumesBudgetAndPreservesLastObservation() throws Exception {
-        field(session.getClass(), "steps").setInt(session, 19);
-        ScreenShadow.current = frame(BUTTON.replace("提交", "新目标"));
-        String result = step(200, 200);
-        assertSkipped(result);
-        assertTrue(result, result.contains("剩余动作步数=0"));
-        assertEquals(0, ScreenShadow.attempts);
-        assertSame(ScreenShadow.current, field(session.getClass(), "frame").get(session));
-        assertEquals("PAUSE：目标已变化，尚未完成", step(new JSONObject().put("action", "ask_user")
-            .put("message", "目标已变化，尚未完成")));
-        assertClosed();
-    }
-
-    @Test public void fatalExecutionFailureClosesSessionWithoutOfferingRetry() throws Exception {
-        ScreenShadow.failure = new IllegalStateException("控屏执行失败");
-        try {
-            step(200, 200);
-            fail("Expected execution failure");
-        } catch (IllegalStateException stopped) {
-            assertEquals("控屏执行失败", stopped.getMessage());
-        }
-        assertEquals(1, ScreenShadow.attempts);
-        assertEquals(0, ScreenShadow.executions);
         assertClosed();
     }
 
