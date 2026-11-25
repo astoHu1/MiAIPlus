@@ -11,15 +11,26 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 class Handler(BaseHTTPRequestHandler):
     native_sessions = {}
+    fixture_thinking = {"type": "thinking", "thinking": "fixture hidden reasoning", "signature": "fixture-signature"}
     def log_message(self, *_):
         pass
 
     def do_GET(self):
-        self.respond({"data": [{"id": "fixture-model"}]})
+        model = "fixture-model"
+        if self.headers.get("anthropic-version"):
+            if (self.headers.get_all("anthropic-version") != ["2023-06-01"]
+                    or self.headers.get_all("x-api-key") != ["test-key"]
+                    or self.headers.get("Authorization") is not None):
+                self.respond({"error": "invalid fixture authentication"}, 400)
+                return
+            model = "fixture-anthropic-model"
+        self.respond({"data": [{"id": model}]})
 
     def respond(self, body, status=200):
         if getattr(self, "use_responses", False) and "choices" in body:
             body = self.response_body(body["choices"][0]["message"])
+        if getattr(self, "use_anthropic", False) and "choices" in body:
+            body = self.anthropic_body(body["choices"][0]["message"])
         data = json.dumps(body, ensure_ascii=False).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -76,11 +87,125 @@ class Handler(BaseHTTPRequestHandler):
             converted["tools"] = [{"type": "function", "function": {k: v for k, v in tool.items() if k != "type"}} for tool in request["tools"]]
         return converted
 
+    @staticmethod
+    def anthropic_body(message):
+        content = []
+        if message.get("content"):
+            content.append({"type": "text", "text": message["content"]})
+        for call in message.get("tool_calls", []):
+            content.append({"type": "tool_use", "id": call["id"], "name": call["function"]["name"],
+                            "input": json.loads(call["function"]["arguments"])})
+        return {"id": "msg_fixture", "type": "message", "role": "assistant", "model": "fixture-anthropic-model",
+                "content": content, "stop_reason": "tool_use" if message.get("tool_calls") else "end_turn",
+                "stop_sequence": None, "usage": {"input_tokens": 100, "output_tokens": 20}}
+
+    @staticmethod
+    def anthropic_parts(content):
+        if isinstance(content, str):
+            return content
+        parts = []
+        for block in content:
+            if block["type"] == "text":
+                parts.append(block)
+            elif block["type"] == "image":
+                source = block["source"]
+                assert source["type"] == "base64" and source["media_type"] == "image/jpeg" and source["data"], "fixture JPEG missing"
+                parts.append({"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + source["data"]}})
+            else:
+                raise AssertionError("unexpected Anthropic content block")
+        return parts if any(p["type"] == "image_url" for p in parts) else "".join(p["text"] for p in parts)
+
+    def anthropic_request(self, request):
+        assert type(request["max_tokens"]) is int and request["max_tokens"] > 0, "Anthropic max_tokens missing"
+        assert not any(k in request for k in ("input", "store", "parallel_tool_calls", "stream_options", "reasoning_effort",
+                                             "enable_thinking", "thinking")), "unexpected protocol fields"
+        messages = []
+        if "system" in request:
+            messages.append({"role": "system", "content": self.anthropic_parts(request["system"])})
+        for message in request["messages"]:
+            role, content = message["role"], message["content"]
+            assert role in ("user", "assistant"), "unsupported Anthropic role"
+            if isinstance(content, str):
+                messages.append({"role": role, "content": content})
+                continue
+            parts, calls = [], []
+            previous_thinking = None
+            for block in content:
+                kind = block["type"]
+                if kind == "tool_result":
+                    assert role == "user" and not parts, "tool_result must precede other user blocks"
+                    result = self.anthropic_parts(block["content"])
+                    if isinstance(result, list):
+                        for part in result:
+                            if part["type"] == "image_url":
+                                messages.append({"role": "user", "content": [part]})
+                        result = "".join(p["text"] for p in result if p["type"] == "text")
+                    messages.append({"role": "tool", "tool_call_id": block["tool_use_id"], "content": result})
+                elif kind == "tool_use":
+                    assert role == "assistant" and isinstance(block["input"], dict), "invalid tool_use input"
+                    if block["name"] == "probe_tool":
+                        assert previous_thinking == self.fixture_thinking, "signed thinking missing from native tool replay"
+                        assert block["input"] == {"marker": "分段参数"}, "fragmented tool input changed during replay"
+                    calls.append({"id": block["id"], "type": "function", "function": {
+                        "name": block["name"], "arguments": json.dumps(block["input"])}})
+                elif kind == "thinking":
+                    assert role == "assistant", "thinking must be an assistant block"
+                    previous_thinking = block
+                else:
+                    parts.append(block)
+            if parts or calls:
+                normalized = {"role": role, "content": self.anthropic_parts(parts)}
+                if calls:
+                    normalized["tool_calls"] = calls
+                messages.append(normalized)
+        converted = {**request, "messages": messages}
+        if "tools" in request:
+            assert request["tool_choice"]["disable_parallel_tool_use"] is True
+            converted["tools"] = [{"type": "function", "function": {"name": tool["name"], "parameters": tool["input_schema"]}}
+                                  for tool in request["tools"]]
+        return converted
+
+    @staticmethod
+    def anthropic_events(body):
+        start = {**body, "content": [], "stop_reason": None, "usage": {"input_tokens": 100, "output_tokens": 1}}
+        yield {"type": "message_start", "message": start}
+        for index, block in enumerate(body["content"]):
+            if block["type"] == "thinking":
+                yield {"type": "content_block_start", "index": index, "content_block": {"type": "thinking", "thinking": ""}}
+                yield {"type": "content_block_delta", "index": index, "delta": {"type": "thinking_delta", "thinking": block["thinking"]}}
+                yield {"type": "content_block_delta", "index": index, "delta": {"type": "signature_delta", "signature": block["signature"]}}
+                yield {"type": "content_block_stop", "index": index}
+                continue
+            if block["type"] == "tool_use":
+                head = {**block, "input": {}}
+                value = json.dumps(block["input"], ensure_ascii=False)
+                delta_type, field = "input_json_delta", "partial_json"
+            else:
+                head = {**block, "text": ""}
+                value = block["text"]
+                delta_type, field = "text_delta", "text"
+            yield {"type": "content_block_start", "index": index, "content_block": head}
+            midpoint = len(value) // 2
+            for fragment in (value[:midpoint], value[midpoint:]):
+                if fragment:
+                    yield {"type": "content_block_delta", "index": index, "delta": {"type": delta_type, field: fragment}}
+            yield {"type": "content_block_stop", "index": index}
+        yield {"type": "ping"}
+        yield {"type": "message_delta", "delta": {"stop_reason": body["stop_reason"], "stop_sequence": None},
+               "usage": {"output_tokens": body["usage"]["output_tokens"]}}
+        yield {"type": "message_stop"}
+
     def do_POST(self):
         try:
-            assert self.path in ("/v1/chat/completions", "/v1/responses"), "wrong completion path"
+            assert self.path in ("/v1/chat/completions", "/v1/responses", "/v1/messages"), "wrong completion path"
             self.use_responses = self.path == "/v1/responses"
-            assert self.headers.get("Authorization") == "Bearer test-key", "missing expected test auth (present=%s, count=%s)" % (self.headers.get("Authorization") is not None, len(self.headers.get_all("Authorization", [])))
+            self.use_anthropic = self.path == "/v1/messages"
+            if self.use_anthropic:
+                assert self.headers.get_all("x-api-key") == ["test-key"], "missing expected Anthropic API key"
+                assert self.headers.get_all("anthropic-version") == ["2023-06-01"], "missing Anthropic API version"
+                assert self.headers.get("Authorization") is None, "Bearer auth on Anthropic request"
+            else:
+                assert self.headers.get("Authorization") == "Bearer test-key", "missing expected test auth (present=%s, count=%s)" % (self.headers.get("Authorization") is not None, len(self.headers.get_all("Authorization", [])))
             session = self.headers.get("x-opencode-session", "")
             assert re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", session), "missing or invalid session header"
             assert len(self.headers.get_all("x-opencode-session", [])) == 1, "duplicate session headers"
@@ -88,9 +213,17 @@ class Handler(BaseHTTPRequestHandler):
             forbidden = ("cookie", "x-xiaomi", "x-mi-", "x-device", "x-osbot", "service-token", "x-model-provider-id")
             assert not any(any(name.lower().startswith(prefix) for prefix in forbidden) for name in self.headers), "Xiaomi account/device headers leaked"
             request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            expected_model = "fixture-model"
+            task = None
             if self.use_responses:
                 request = self.responses_request(request)
-            expected_model = "fixture-responses-model" if self.use_responses else "fixture-model"
+                expected_model = "fixture-responses-model"
+            elif self.use_anthropic:
+                # The first user turn can also carry observation blocks, including a prior screenshot's text.
+                content = next(m["content"] for m in request["messages"] if m["role"] == "user")
+                task = content if isinstance(content, str) else content[0]["text"]
+                request = self.anthropic_request(request)
+                expected_model = "fixture-anthropic-model"
             if request["model"] in ("gpt-6.1-sol", "qwen3.8-max"):
                 expected_model = "gpt-6.1-sol" if self.use_responses else "qwen3.8-max"
                 if self.use_responses:
@@ -110,7 +243,8 @@ class Handler(BaseHTTPRequestHandler):
                 assert not any(k in request for k in ("enable_thinking", "thinking", "temperature", "top_p")), "remote policy fields not applied"
             assert request["model"] == expected_model, "wrong API path for selected fixture model"
             messages = request["messages"]
-            task = next(m["content"] for m in messages if m["role"] == "user")
+            if task is None:
+                task = next(m["content"] for m in messages if m["role"] == "user")
             if task in ("MIAIPLUS_GATE_TEST", "MIAIPLUS_CAPABILITY_TEST", "MIAIPLUS_CAPABILITY_V2_TEST", "MIAIPLUS_ROUTER_TEST"):
                 assert request["model"] == expected_model and request["stream"] is False
                 assert not any(k in request for k in ("rid", "intent_protocol", "routing_profile", "context", "prompt_source"))
@@ -144,7 +278,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.native_sessions[self.path] = session
                     probe = next((t["function"] for t in request["tools"] if t["function"]["name"] == "probe_tool"), None)
                     assert probe is not None and probe["parameters"]["type"] == "object", "native tools lost"
-                    delta = {"tool_calls": [{"index": 0, "id": "probe-call", "type": "function", "function": {"name": "probe_tool", "arguments": "{}"}}]}
+                    arguments = json.dumps({"marker": "分段参数"}, ensure_ascii=False) if self.use_anthropic else "{}"
+                    delta = {"tool_calls": [{"index": 0, "id": "probe-call", "type": "function", "function": {"name": "probe_tool", "arguments": arguments}}]}
                     reason = "tool_calls"
                 else:
                     delta = {"content": "native-stream-ok"}
@@ -153,6 +288,16 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "text/event-stream")
                 self.send_header("Connection", "close")
                 self.end_headers()
+                if self.use_anthropic:
+                    message = {"content": delta.get("content"), "tool_calls": delta.get("tool_calls", [])}
+                    body = self.anthropic_body(message)
+                    if message["tool_calls"]:
+                        body["content"].insert(0, self.fixture_thinking)
+                    for event in self.anthropic_events(body):
+                        self.wfile.write(("event: " + event["type"] + "\ndata: " + json.dumps(event) + "\n\n").encode())
+                        self.wfile.flush()
+                    self.close_connection = True
+                    return
                 if self.use_responses:
                     message = {"role": "assistant", "content": delta.get("content"), "tool_calls": delta.get("tool_calls", [])}
                     response = self.response_body(message)
@@ -182,6 +327,9 @@ class Handler(BaseHTTPRequestHandler):
                 protocol, x, y = match.groups()
                 step = sum(m["role"] == "assistant" for m in messages)
                 observation = messages[-1]["content"]
+                if self.use_anthropic:
+                    # Consecutive user messages become ordered blocks in one Anthropic turn.
+                    observation = observation[-2:]
                 assert observation[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
                 assert sum(isinstance(m.get("content"), list) for m in messages) == 1
                 action = [{"action": "tap", "element": [float(x), float(y)]},

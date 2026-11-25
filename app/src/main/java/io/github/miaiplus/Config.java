@@ -100,5 +100,5 @@ public final class Config {
     public static String validateEndpoint(String endpoint) {
         return Endpoint.validate(endpoint);
     }
-    public String completionsUrl() { return validateEndpoint(endpoint) + ModelProtocol.path(api); }
+    public String completionsUrl() { return ModelProtocol.url(validateEndpoint(endpoint), api); }
 }

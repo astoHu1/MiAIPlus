@@ -8,13 +8,21 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
-/** OpenAI-compatible Responses / Chat Completions transport; no provider default. */
+/** Transport for the independent model loop. */
 public final class ModelClient {
     public static String[] listModels(String endpoint, String key) throws Exception {
-        HttpURLConnection c = (HttpURLConnection)new URL(Config.validateEndpoint(endpoint) + "/models").openConnection();
+        return listModels(endpoint, key, "chat");
+    }
+    public static String[] listModels(String endpoint, String key, String api) throws Exception {
+        String base = Config.validateEndpoint(endpoint);
+        if ("anthropic".equals(api)) {
+            String messages = ModelProtocol.url(base, api);
+            base = messages.substring(0, messages.length() - "/messages".length());
+        }
+        HttpURLConnection c = (HttpURLConnection)new URL(base + "/models").openConnection();
         try {
             c.setInstanceFollowRedirects(false); c.setConnectTimeout(10000); c.setReadTimeout(15000);
-            if (!key.isBlank()) c.setRequestProperty("Authorization", "Bearer " + key);
+            ModelHeaders.provider(api, key).forEach(c::setRequestProperty);
             c.setRequestProperty("User-Agent", ModelHeaders.USER_AGENT);
             if (c.getResponseCode() != 200) throw new IllegalStateException("HTTP " + c.getResponseCode());
             try (InputStream in = c.getInputStream(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
@@ -40,6 +48,7 @@ public final class ModelClient {
             .put("stream", false).put("temperature", 0).put("max_tokens", 2048);
         if (tools != null) body.put("tools", tools).put("tool_choice", "required").put("parallel_tool_calls", false);
         if ("responses".equals(config.api)) body = ModelProtocol.request(body.put("max_tokens", 16384));
+        else if ("anthropic".equals(config.api)) body = AnthropicProtocol.request(body);
         config.reasoningPolicy.apply(body, config.model, config.api, config.reasoning);
         HttpURLConnection c = (HttpURLConnection) new URL(config.completionsUrl()).openConnection();
         run.connection = c;
@@ -50,7 +59,7 @@ public final class ModelClient {
             c.setRequestProperty("Content-Type", "application/json; charset=utf-8");
             c.setRequestProperty("User-Agent", ModelHeaders.USER_AGENT);
             c.setRequestProperty(ModelHeaders.SESSION, ModelHeaders.identifier("run:" + run.id));
-            if (!config.apiKey.isBlank()) c.setRequestProperty("Authorization", "Bearer " + config.apiKey);
+            ModelHeaders.provider(config.api, config.apiKey).forEach(c::setRequestProperty);
             byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
             PhoneUseLog.request(body, config.api, bytes.length);
             c.setFixedLengthStreamingMode(bytes.length);
@@ -71,8 +80,11 @@ public final class ModelClient {
             }
             run.check();
             JSONObject result = new JSONObject(response);
-            return "responses".equals(config.api) ? ModelProtocol.message(result)
-                : result.getJSONArray("choices").getJSONObject(0).getJSONObject("message");
+            return switch (config.api) {
+                case "responses" -> ModelProtocol.message(result);
+                case "anthropic" -> AnthropicProtocol.message(result);
+                default -> result.getJSONArray("choices").getJSONObject(0).getJSONObject("message");
+            };
         } finally { run.connection = null; c.disconnect(); }
     }
 }

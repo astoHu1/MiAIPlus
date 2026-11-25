@@ -174,16 +174,36 @@ class SettingsUiTest {
         val before = compose.onRoot().captureToImage().asAndroidBitmap()
         compose.onNodeWithText("API 协议").performClick()
         compose.onNodeWithText("Chat Completions").assertExists()
+        compose.onNodeWithText("Anthropic Messages").assertIsDisplayed()
         capture("protocol-popup-no-dim")
         val after = compose.onRoot().captureToImage().asAndroidBitmap()
         try {
             assertEquals(before.getPixel(2, before.height / 2), after.getPixel(2, after.height / 2))
         } finally { before.recycle(); after.recycle() }
-        compose.onNodeWithText("Chat Completions").performClick()
+        compose.onNodeWithText("Anthropic Messages").performClick()
         val state = ViewModelProvider(compose.activity)[SettingsState::class.java]
         compose.runOnIdle {
-            assertEquals("chat", state.draft?.api)
+            assertEquals("anthropic", state.draft?.api)
             assertEquals("auto", state.profiles?.active()?.api)
+            check(state.saveProfile())
+            assertEquals("anthropic", state.profiles?.active()?.api)
+            assertEquals("anthropic", state.config.api)
+        }
+        RuntimeEnvironment.setQualifiers("+w320dp-night")
+        RuntimeEnvironment.setFontScale(1.5f)
+        try {
+            compose.activityRule.scenario.recreate()
+            compose.onNodeWithTag("tab-Model").performClick()
+            compose.onNodeWithText("API 协议").performScrollTo().performClick()
+            val option = compose.onAllNodesWithText("Anthropic Messages", useUnmergedTree = true).onLast()
+            option.assertIsDisplayed()
+            val bounds = option.getBoundsInRoot()
+            val root = compose.onRoot().getBoundsInRoot()
+            check(bounds.left >= root.left && bounds.right <= root.right)
+            capture("protocol-popup-narrow-large-text")
+        } finally {
+            RuntimeEnvironment.setFontScale(1f)
+            RuntimeEnvironment.setQualifiers("+w393dp-notnight")
         }
     }
 

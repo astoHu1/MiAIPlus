@@ -29,6 +29,7 @@ public final class DiagnosticEnvironmentTest {
     @Test public void exportClassifiesConfigurationWithoutIncludingPrivateOrUnexpectedValues() throws Exception {
         Config.prefs(context).edit().putString("endpoint", "https://private-host.example")
             .putString("apiKey", "private-secret").putString("model", "private-model")
+            .putString("api", "anthropic")
             .putString("planner", "private-planner").putString("protocol", "private-protocol")
             .putString("hook_report", "probe: private-report").commit();
 
@@ -36,6 +37,7 @@ public final class DiagnosticEnvironmentTest {
         JSONObject config = environment.getJSONObject("config");
         assertEquals("unknown", config.getString("planner"));
         assertEquals("unknown", config.getString("protocol"));
+        assertEquals("anthropic", config.getString("api"));
         assertTrue(config.getBoolean("endpointConfigured"));
         assertTrue(config.getBoolean("modelConfigured"));
         assertTrue(config.getBoolean("apiKeyConfigured"));

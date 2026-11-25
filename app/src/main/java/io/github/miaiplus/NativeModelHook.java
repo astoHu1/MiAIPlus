@@ -373,7 +373,7 @@ public final class NativeModelHook {
         ReasoningPolicy.Plan policy = ReasoningSettings.plan(setting);
         String reasoning = policy.normalize(setting.getString("reasoning", "default"));
         String key = api + ":" + reasoning + ":" + policy.encode();
-        if (!java.util.Set.of("chat", "responses").contains(api)) throw new IllegalArgumentException("未知模型 API 协议");
+        if (!java.util.Set.of("chat", "responses", "anthropic").contains(api)) throw new IllegalArgumentException("未知模型 API 协议");
         if (externalHttp.containsKey(key)) return externalHttp.get(key);
         Object engine = Reflector.getStaticObjectField(Reflector.findClass("io.ktor.client.engine.okhttp.OkHttp", loader), "INSTANCE");
         Object configure = function(loader, client -> {

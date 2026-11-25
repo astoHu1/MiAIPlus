@@ -4,13 +4,26 @@ import io.github.miaiplus.hook.Reflector;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /** Opaque session identifiers: never send native message IDs, prompts or account identifiers. */
 final class ModelHeaders {
     static final String SESSION = "x-opencode-session";
     static final String USER_AGENT = "MiAIPlus/" + BuildConfig.VERSION_NAME;
+    static final String ANTHROPIC_VERSION = "2023-06-01";
     private static final LinkedHashMap<String, String> sessions = new LinkedHashMap<>(16, 0.75f, true);
+
+    static Map<String, String> provider(String api, String key) {
+        if (!"anthropic".equals(api)) return key.isBlank() ? Map.of() : Map.of("Authorization", "Bearer " + key);
+        Map<String, String> headers = new LinkedHashMap<>();
+        headers.put("anthropic-version", ANTHROPIC_VERSION);
+        if (!key.isBlank()) {
+            if (key.startsWith("Bearer ")) headers.put("Authorization", key);
+            else headers.put("x-api-key", key);
+        }
+        return headers;
+    }
 
     static String identifier(String identity) {
         return UUID.nameUUIDFromBytes(("MiAIPlus:" + identity).getBytes(StandardCharsets.UTF_8)).toString();

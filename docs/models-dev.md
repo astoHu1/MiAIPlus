@@ -20,7 +20,7 @@
 
 `reasoning=true` 只表示模型具有推理能力，不能单独推出合法强度。`reasoning_options` 中的 `effort.values` 提供远端允许值；当前识别 `none`、`minimal`、`low`、`medium`、`high`、`xhigh` 和 `max`。空选项、未知值、未知请求形态及非文本模型不被推导为新的可调能力。
 
-远端数据只选择本地已实现的请求方式：OpenAI 兼容 Chat Completions 的 `reasoning_effort`、Responses 的 `reasoning.effort`，以及已识别 Qwen 的 `enable_thinking` 和 DeepSeek 的 `thinking` 扩展。`toggle` 不会被统一翻译成所有供应商通用开关，`budget_tokens` 暂不支持。原生 Anthropic／Gemini 等请求形态仍不属于模块这两种协议的适配范围。采样参数清理及 token 字段转换随解析出的策略一起应用。
+远端数据只选择本地已实现的推理参数：OpenAI 兼容 Chat Completions 的 `reasoning_effort`、Responses 的 `reasoning.effort`，以及已识别 Qwen 的 `enable_thinking` 和 DeepSeek 的 `thinking` 扩展。Anthropic Messages 使用服务端默认推理设置。采样参数清理及 token 字段转换随解析出的策略一起应用。
 
 ## 宿主快照与日志
 

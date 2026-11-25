@@ -9,6 +9,13 @@ public class HookProbeRunner extends Instrumentation {
     private String api = "chat";
     private boolean reasoning, remoteReasoning, focus, launch, conversation, conversationLimits;
     @Override public void onCreate(Bundle b) { super.onCreate(b); api = b.getString("api", "chat"); remoteReasoning = "true".equals(b.getString("remote_reasoning")); reasoning = remoteReasoning || "true".equals(b.getString("reasoning")); focus = "true".equals(b.getString("focus")); launch = "true".equals(b.getString("launch")); conversation = "true".equals(b.getString("conversation_return")); conversationLimits = "true".equals(b.getString("conversation_limits")); start(); }
+    static String fixtureModel(String api) {
+        return switch (api) {
+            case "responses" -> "fixture-responses-model";
+            case "anthropic" -> "fixture-anthropic-model";
+            default -> "fixture-model";
+        };
+    }
     private String probe(String token) throws Exception {
         Config.prefs(getTargetContext()).edit().remove("hook_report").commit();
         Bundle status = new Bundle(); status.putString("stream", "MIAIPLUS_RESTART_XIAOAI " + token + "\n"); sendStatus(1, status);
@@ -103,7 +110,7 @@ public class HookProbeRunner extends Instrumentation {
                 previousCatalog = installRemoteReasoningFixture(); restoreCatalog = true;
             }
             String model = remoteReasoning ? "future-effort-fixture" : reasoning ? ("responses".equals(api) ? "gpt-6.1-sol" : "qwen3.8-max")
-                : ("responses".equals(api) ? "fixture-responses-model" : "fixture-model");
+                : fixtureModel(api);
             prefs.edit().putBoolean("enabled", true).putBoolean("globalModel", true).putString("planner", "native")
                 .putString("api", api).putString("endpoint", "http://127.0.0.1:18765/v1").putString("apiKey", "test-key").putString("model", model)
                 .remove(ReasoningPolicy.preferenceKey("http://127.0.0.1:18765/v1", model, api))

@@ -7,11 +7,26 @@ import org.json.JSONObject;
 public final class ModelProtocol {
     private ModelProtocol() {}
     public static String resolve(String selection, String model) {
-        if ("responses".equals(selection) || "chat".equals(selection)) return selection;
+        if ("responses".equals(selection) || "chat".equals(selection) || "anthropic".equals(selection)) return selection;
         if (!"auto".equals(selection)) throw new IllegalArgumentException("未知模型 API 协议");
         return ReasoningPolicy.canonical(model).startsWith("gpt-6") ? "responses" : "chat";
     }
-    public static String path(String api) { return "responses".equals(api) ? "/responses" : "/chat/completions"; }
+    public static String path(String api) {
+        return switch (api) {
+            case "responses" -> "/responses";
+            case "anthropic" -> "/v1/messages";
+            default -> "/chat/completions";
+        };
+    }
+
+    static String url(String endpoint, String api) {
+        if ("anthropic".equals(api)) {
+            String path = java.net.URI.create(endpoint).getRawPath();
+            if (path.endsWith("/v1/messages")) return endpoint;
+            if (path.endsWith("/v1")) return endpoint + "/messages";
+        }
+        return endpoint + path(api);
+    }
 
     public static JSONObject request(JSONObject chat) throws Exception {
         JSONObject body = new JSONObject().put("model", chat.getString("model"))

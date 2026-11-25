@@ -13,6 +13,10 @@ def adb(*args):
     return subprocess.check_output(['adb', *args], text=True).strip()
 
 
+api = 'anthropic' if '--anthropic' in sys.argv else 'responses' if '--responses' in sys.argv else 'chat'
+if api == 'anthropic' and {'--responses', '--reasoning', '--remote-reasoning'}.intersection(sys.argv):
+    sys.exit('--anthropic selects the Anthropic fixture and its default reasoning policy')
+
 native_background = '--native-background-model' in sys.argv or '--native-background-voice' in sys.argv
 native_video = '--native-foreground-video' in sys.argv
 native_foreground_calculator = '--native-foreground-model' in sys.argv or '--native-foreground-voice' in sys.argv
@@ -40,7 +44,7 @@ process = subprocess.Popen(['adb', 'shell', 'am', 'instrument', '--user', '0', '
     '-e', 'logs', str('--logs' in sys.argv).lower(),
     '-e', 'diagnostics', str('--diagnostics' in sys.argv).lower(),
     '-e', 'speech_policy', str('--speech-policy' in sys.argv).lower(),
-    '-e', 'api', 'responses' if '--responses' in sys.argv else 'chat',
+    '-e', 'api', api,
     '-e', 'reply_actions', str('--reply-actions' in sys.argv or '--reply-actions-chat' in sys.argv or '--reply-actions-current-config' in sys.argv).lower(),
     '-e', 'reply_actions_api', 'chat' if '--reply-actions-chat' in sys.argv else 'responses',
     '-e', 'reply_actions_current_config', str('--reply-actions-current-config' in sys.argv).lower(),

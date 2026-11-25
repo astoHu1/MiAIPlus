@@ -13,6 +13,16 @@ public class ModelProtocolTest {
         assertEquals("chat", ModelProtocol.resolve("chat", "gpt-6.1-sol"));
         assertEquals("/responses", ModelProtocol.path("responses"));
     }
+    @Test public void anthropicIsExplicitAndNormalizesTheMessagesUrl() {
+        assertEquals("anthropic", ModelProtocol.resolve("anthropic", "provider-alias"));
+        assertEquals("chat", ModelProtocol.resolve("auto", "claude-sonnet"));
+        for (String prefix : new String[]{"https://api.anthropic.com", "https://proxy.example/anthropic"}) {
+            for (String suffix : new String[]{"", "/v1", "/v1/messages", "/v1/messages/"}) {
+                assertEquals(prefix + "/v1/messages",
+                    ModelProtocol.url(Endpoint.validate(prefix + suffix), "anthropic"));
+            }
+        }
+    }
     @Test public void convertsVisionToolsAndResultsWithoutChatOnlyParameters() throws Exception {
         JSONObject chat = new JSONObject("""
             {"model":"gpt-6.1-sol","temperature":0,"top_p":1,"max_tokens":8192,"stream":false,

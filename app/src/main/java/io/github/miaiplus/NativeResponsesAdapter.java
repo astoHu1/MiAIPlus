@@ -68,9 +68,15 @@ final class NativeResponsesAdapter {
         Reflector.callMethod(Reflector.callMethod(request, "body"), "writeTo", buffer);
         JSONObject chat = new JSONObject((String)Reflector.callMethod(buffer, "readUtf8"));
         String model = chat.getString("model");
-        String replayIdentity = url + "\n" + model;
-        if ("responses".equals(api)) restore(chat, replayIdentity);
-        JSONObject body = "responses".equals(api) ? ModelProtocol.request(chat) : chat;
+        boolean anthropic = "anthropic".equals(api);
+        boolean convert = anthropic || "responses".equals(api);
+        String replayIdentity = api + "\n" + url + "\n" + model;
+        if (convert) restore(chat, replayIdentity, anthropic);
+        JSONObject body = switch (api) {
+            case "responses" -> ModelProtocol.request(chat);
+            case "anthropic" -> AnthropicProtocol.request(chat);
+            default -> chat;
+        };
         (policy == null ? ReasoningPolicy.builtin(model, api) : policy).apply(body, model, api, reasoning);
         String serialized = body.toString();
         PhoneUseLog.request(body, api, serialized);
@@ -79,8 +85,18 @@ final class NativeResponsesAdapter {
         Object session = Reflector.callMethod(request, "header", ModelHeaders.SESSION);
         if (!(session instanceof String value) || value.isBlank())
             Reflector.callMethod(builder, "header", ModelHeaders.SESSION, java.util.UUID.randomUUID().toString());
-        if ("responses".equals(api))
-            Reflector.callMethod(builder, "url", url.substring(0, url.length() - "/chat/completions".length()) + "/responses");
+        if (convert) {
+            String endpoint = url.substring(0, url.length() - "/chat/completions".length());
+            Reflector.callMethod(builder, "url", ModelProtocol.url(endpoint, api));
+        }
+        if (anthropic) {
+            String authorization = (String)Reflector.callMethod(request, "header", "Authorization");
+            String key = authorization != null && authorization.startsWith("Bearer ") ? authorization.substring(7) : "";
+            Reflector.callMethod(builder, "removeHeader", "Authorization");
+            Reflector.callMethod(builder, "removeHeader", "x-api-key");
+            for (var header : ModelHeaders.provider(api, key).entrySet())
+                Reflector.callMethod(builder, "header", header.getKey(), header.getValue());
+        }
         Object requestBody = Reflector.callStaticMethod(type("gg2.g0"), "create", jsonType(), serialized);
         Reflector.callMethod(builder, "method", "POST", requestBody);
         Reflector.callMethod(builder, "removeHeader", "Content-Length");
@@ -92,7 +108,7 @@ final class NativeResponsesAdapter {
                 "transport", "native_external", "stream", body.optBoolean("stream"),
                 "durationMs", android.os.SystemClock.elapsedRealtime() - sent);
         } catch (RuntimeException unavailable) { PhoneUseLog.failure("native_transport_status", unavailable); }
-        if (!"responses".equals(api) || !Boolean.TRUE.equals(Reflector.callMethod(response, "isSuccessful")))
+        if (!convert || !Boolean.TRUE.equals(Reflector.callMethod(response, "isSuccessful")))
             return trackResponse(response);
         Object originalBody = Reflector.callMethod(response, "body");
         InputStream pending = null;
@@ -100,7 +116,9 @@ final class NativeResponsesAdapter {
             InputStream input = (InputStream)Reflector.callMethod(originalBody, "byteStream");
             Object replacement;
             if (body.optBoolean("stream")) {
-                InputStream translated = track(new ResponsesStream(input, result -> remember(replayIdentity, result)));
+                InputStream translated = track(anthropic
+                    ? new AnthropicStream(input, result -> remember(replayIdentity, result, true))
+                    : new ResponsesStream(input, result -> remember(replayIdentity, result, false)));
                 pending = translated;
                 Object source = Reflector.callStaticMethod(type("zg2.l0"), "source", translated);
                 Object buffered = Reflector.callStaticMethod(type("zg2.l0"), "buffer", source);
@@ -111,13 +129,13 @@ final class NativeResponsesAdapter {
                 try (input; var out = new java.io.ByteArrayOutputStream()) {
                     byte[] bytes = new byte[8192]; int count;
                     while ((count = input.read(bytes)) != -1) {
-                        if (out.size() + count > 2_000_000) throw new java.io.IOException("Responses 响应过大");
+                        if (out.size() + count > 2_000_000) throw new java.io.IOException("模型响应过大");
                         out.write(bytes, 0, count);
                     }
                     result = new JSONObject(out.toString(java.nio.charset.StandardCharsets.UTF_8.name()));
                 }
-                JSONObject completion = ModelProtocol.completion(result);
-                remember(replayIdentity, result);
+                JSONObject completion = anthropic ? AnthropicProtocol.completion(result) : ModelProtocol.completion(result);
+                remember(replayIdentity, result, anthropic);
                 replacement = Reflector.callStaticMethod(type("gg2.i0"), "create", jsonType(), completion.toString());
             }
             Object responseBuilder = Reflector.callMethod(response, "newBuilder");
@@ -163,22 +181,23 @@ final class NativeResponsesAdapter {
             return Reflector.callMethod(builder, "build");
         } catch (Throwable failure) { input.close(); throw failure; }
     }
-    private static String key(String model, JSONArray calls, boolean nativeCalls) throws Exception {
-        JSONArray ids = new JSONArray().put(model);
+    private static String key(String identity, JSONArray calls, boolean nativeCalls, boolean anthropic) throws Exception {
+        JSONArray ids = new JSONArray().put(identity);
         for (int i = 0; i < calls.length(); i++) {
             JSONObject call = calls.getJSONObject(i);
-            if (nativeCalls || "function_call".equals(call.optString("type"))) {
-                JSONObject fn = nativeCalls ? call.getJSONObject("function") : call;
-                ids.put(new JSONArray().put(call.getString(nativeCalls ? "id" : "call_id"))
-                    .put(fn.getString("name")).put(new JSONObject(fn.getString("arguments")).toString()));
-            }
+            if (!nativeCalls && !(anthropic ? "tool_use" : "function_call").equals(call.optString("type"))) continue;
+            JSONObject fn = nativeCalls ? call.getJSONObject("function") : call;
+            JSONObject arguments = !nativeCalls && anthropic ? fn.getJSONObject("input")
+                : new JSONObject(fn.getString("arguments"));
+            ids.put(new JSONArray().put(call.getString(nativeCalls || anthropic ? "id" : "call_id"))
+                .put(fn.getString("name")).put(arguments.toString()));
         }
         return ids.length() == 1 ? null : ids.toString();
     }
-    private static synchronized void remember(String model, JSONObject response) {
+    private static synchronized void remember(String identity, JSONObject response, boolean anthropic) {
         try {
-            JSONArray output = response.getJSONArray("output");
-            String key = key(model, output, false), value = output.toString();
+            JSONArray output = response.getJSONArray(anthropic ? "content" : "output");
+            String key = key(identity, output, false, anthropic), value = output.toString();
             if (key == null || key.length() + value.length() > 1_000_000) return;
             String previous = outputs.put(key, value);
             cachedCharacters += value.length() - (previous == null ? 0 : previous.length()) + (previous == null ? key.length() : 0);
@@ -188,14 +207,14 @@ final class NativeResponsesAdapter {
             }
         } catch (Exception invalid) { /* Missing optional replay must not alter a completed response. */ }
     }
-    private static synchronized void restore(JSONObject chat, String model) throws Exception {
+    private static synchronized void restore(JSONObject chat, String identity, boolean anthropic) throws Exception {
         JSONArray messages = chat.getJSONArray("messages");
         for (int i = 0; i < messages.length(); i++) {
             JSONObject message = messages.getJSONObject(i);
             JSONArray calls = message.optJSONArray("tool_calls");
             if (calls == null || !"assistant".equals(message.optString("role"))) continue;
-            String value = outputs.get(key(model, calls, true));
-            if (value != null) message.put("_responses_output", new JSONArray(value));
+            String value = outputs.get(key(identity, calls, true, anthropic));
+            if (value != null) message.put(anthropic ? AnthropicProtocol.HISTORY : "_responses_output", new JSONArray(value));
         }
     }
 }

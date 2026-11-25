@@ -37,6 +37,7 @@ public final class ReasoningPolicy {
         return new Plan(choices, wire, stripSampling, stripSampling && m.startsWith("gpt-"));
     }
     private static List<String> builtinChoices(String model, String api) {
+        if ("anthropic".equals(api)) return List.of("default");
         String m = canonical(model);
         if (named(m, "gpt-6.1-sol") || named(m, "gpt-6-astra"))
             return List.of("default", "low", "medium", "high", "xhigh", "max");

@@ -57,7 +57,8 @@ public final class DeviceTestRunner extends HookProbeRunner {
     private void configure(String protocol) {
         Config.prefs(getTargetContext()).edit().putBoolean("enabled", true).putBoolean("backgroundDisplay", false).putBoolean("globalModel", false)
             .putString("endpoint", "http://127.0.0.1:18765/v1")
-            .putString("api", transportApi).putString("apiKey", "test-key").putString("model", "responses".equals(transportApi) ? "fixture-responses-model" : "fixture-model").putString("planner", "external").putString("protocol", protocol).putInt("maxSteps", 8).commit();
+            .putString("api", transportApi).putString("apiKey", "test-key").putString("model", fixtureModel(transportApi))
+            .putString("planner", "external").putString("protocol", protocol).putInt("maxSteps", 8).commit();
     }
     private Bundle startJob(String mode, String query) {
         Bundle b = new Bundle(); b.putString("mode", mode); b.putString("query", query);

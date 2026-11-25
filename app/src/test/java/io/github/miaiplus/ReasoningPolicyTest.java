@@ -28,6 +28,15 @@ public class ReasoningPolicyTest {
             assertEquals(java.util.List.of("default"), ReasoningPolicy.choices(model, "chat"));
         assertEquals(java.util.List.of("default"), ReasoningPolicy.choices("qwen3.8-max", "responses"));
     }
+    @Test public void anthropicUsesModelDefaultEvenForRecognizedOpenAiAliases() throws Exception {
+        var plan = ReasoningPolicy.plan("https://example.com/v1", "gpt-6.1-sol", "anthropic");
+        assertEquals(java.util.List.of("default"), plan.choices());
+        JSONObject body = new JSONObject("{\"enable_thinking\":false,\"reasoning_effort\":\"low\",\"max_tokens\":1024}");
+        plan.apply(body, "gpt-6.1-sol", "anthropic", "high");
+        assertFalse(body.has("enable_thinking"));
+        assertFalse(body.has("reasoning_effort"));
+        assertEquals(1024, body.getInt("max_tokens"));
+    }
     @Test public void finalWireBodyUsesCorrectFieldAndClearsStockThinking() throws Exception {
         JSONObject response = new JSONObject("{\"enable_thinking\":false,\"reasoning_effort\":\"low\",\"temperature\":0}");
         ReasoningPolicy.apply(response, "gpt-6.1-sol", "responses", "max");

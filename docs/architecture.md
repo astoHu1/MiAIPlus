@@ -9,7 +9,7 @@ flowchart TD
   U[用户在小爱提出请求] --> D[原生 OSBot Agent / 历史 / 工具调度]
   D <--> M{统一模型入口}
   M <--> O[默认官方模型]
-  M <--> X[可选外部 OpenAI 兼容模型]
+  M <--> X[可选外部 OpenAI 兼容或 Anthropic Messages 模型]
   D --> T[原搜索 / 设置 / 米家等工具]
   D --> C[voiceassist__controlApp Hook]
   C --> P{控屏模式}
@@ -105,7 +105,11 @@ API Key 仅在显式启用全局替换时经 UID 校验 IPC 交给小爱进程�
 
 内部干净 OpenAI 委托使用同步线程重入保护，避免其被再次重定向；保护在原生 Flow 创建后即释放，不抑制其他调用。记忆摘要另走 `ep.j.o` 的非流式请求：同样替换临时模型配置，在同步构造请求期间通过线程局部标记替换 `er.a0.getClient()`，保留原重试、隐私编码、响应解析与协程取消机制；`finally` 对应的 Hook 后置阶段恢复标记。
 
-`ModelProtocol` 按独立的 API 配置选择 Chat Completions 或 Responses；自动模式将 `gpt-6` 前缀路由到 Responses，服务别名可显式选择。`NativeResponsesAdapter` 只安装到模块创建的独立 OkHttp 客户端，把原生 Chat 格式转换为 `/responses`：system/user/assistant 消息、input_text/input_image、扁平 function 工具、function_call 与 function_call_output。这样记忆摘要及路由/gate 的非流式请求也遵循同一选择，而不必替换各自协程、重试和解析代码。转换采用允许字段，丢弃原私有请求字段及 Chat 专用采样参数；显式 `store:false`，保留原可选参数 schema（strict:false），禁并行工具调用。
+`ModelProtocol` 按配置选择 Chat Completions、Responses 或 Anthropic Messages。自动模式将 `gpt-6` 前缀路由到 Responses，其余使用 Chat Completions。`NativeResponsesAdapter` 只安装到模块创建的独立 OkHttp 客户端，负责协议转换，记忆摘要及路由/gate 的非流式请求也遵循同一选择。
+
+Responses 使用 `/responses`，将原生 Chat 格式转换成 `input_text`、`input_image`、扁平 function 工具、`function_call` 与 `function_call_output`。转换采用允许字段，丢弃原私有请求字段及 Chat 专用采样参数，显式设置 `store:false` 与工具 schema 的 `strict:false`，禁用并行工具调用。
+
+Anthropic Messages 使用 `/v1/messages`，接受服务根地址、`/v1` 基础地址或完整 `/v1/messages` 地址。原生流式和非流式调用及 `/v1/models` 均发送 `anthropic-version: 2023-06-01`，默认使用 `x-api-key`，密钥以 `Bearer ` 开头时使用 `Authorization`。转换将系统提示移到顶层 `system`，把图片和函数调用映射为 Anthropic 内容块，工具结果作为用户轮次的 `tool_result` 回传，可携带截图。`AnthropicStream` 逐帧输出文字和保活信号，收到完整 `message_stop` 后才交付工具调用。上游错误、截断和提前 EOF 均使流失败。
 
 `ResponsesStream` 逐帧读取 Responses SSE，文字 delta 即时转为原生流；仅在 response.completed 且完整输出通过检查后释放工具调用及结束事件。failed、incomplete、拒绝和提前 EOF 作为失败，不释放未完成调用。ResponseBody 包装继续使用原网络读取/关闭机制，保留取消与超时。OkHttp/Okio 反射绑定是该精确小爱版本的混淆类名。
 
@@ -113,15 +117,15 @@ API Key 仅在显式启用全局替换时经 UID 校验 IPC 交给小爱进程�
 
 `TransportBoundary` 在整个自定义拦截器边界展开 Xposed/Java 反射与代理包装，保留原始 IOException。否则取消、断连产生的 IOException 被 Xposed 包装成 InvocationTargetError 后，会逃出 OkHttp 异步线程并杀死小爱进程。其他适配异常转为不附带请求内容的 IOException，虚拟机致命错误仍上抛；响应转换失败会关闭原 body。
 
-独立 `ModelClient` 将原始 Responses output 附到内存历史，下轮连同工具结果回传，以保留加密 reasoning 和 assistant phase。原生历史不支持这些字段，网络适配器按服务地址/模型/完整 call_id+工具名+参数组暂存最近输出（最多 64 组、约 200 万字符），命中时回放；超限或进程重启后仅重建函数调用上下文。缓存只在进程内存在，不写盘。独立请求预留 16384 输出 token；GPT-6 原生请求至少 8192，避免沿用小额纯文本预算导致推理耗尽。未完成时仍停止。
+独立 `ModelClient` 将 Responses 的原始 `output` 或 Anthropic 的原始 `content` 附到内存历史，下轮连同工具结果回传，保留模型返回的推理块和工具调用。原生网络适配器按协议、服务地址、模型及完整工具调用组（ID、工具名、参数）暂存最近输出，最多 64 组、约 200 万字符。缓存超限或进程重启后由原生历史重建函数调用上下文。Responses 独立请求预留 16384 输出 token，GPT-6 原生请求至少 8192。
 
-外部 Chat／Responses 请求统一发送 `User-Agent: MiAIPlus/<version>` 和 `x-opencode-session`。独立循环以 RunState 的任务 ID 生成不含原始身份的不透明标识，多步／重试复用。原生 OpenAI 委托按非 SYSTEM 消息 ID 关联会话，重复请求和共享历史保持标识，不以提示词文字分组；最多保留 4096 个消息摘要别名，以支持部分历史裁剪，重载时清理。标识在委托实例绑定，在原生构造请求头时写入，不依赖跨协程 ThreadLocal；Chat／Responses 共用网络层保留它。记忆和 intent 辅助推理分别按原请求 ID 分组，缺少 ID 时为单次请求生成 UUID，不冒用当前前台聊天身份。辅助请求独立分组；历史别名全部被裁剪或淘汰后会建立新标识。
+外部模型推理请求统一发送 `User-Agent: MiAIPlus/<version>` 和 `x-opencode-session`。独立循环以 RunState 的任务 ID 生成不含原始身份的不透明标识，多步／重试复用。原生 OpenAI 委托按非 SYSTEM 消息 ID 关联会话，重复请求和共享历史保持标识，不以提示词文字分组；最多保留 4096 个消息摘要别名，以支持部分历史裁剪，重载时清理。标识在委托实例绑定，在原生构造请求头时写入，不依赖跨协程 ThreadLocal；共用网络层保留它。记忆和 intent 辅助推理分别按原请求 ID 分组，缺少 ID 时为单次请求生成 UUID，不冒用当前前台聊天身份。辅助请求独立分组；历史别名全部被裁剪或淘汰后会建立新标识。
 
 ## OpenCode Go 接入
 
 接入依据：[OpenCode Go 官方文档](https://opencode.ai/docs/go/#where-can-i-use-it)（查阅于 2026-10-18）。要求客户端发送自己的 User-Agent 及对话内稳定的 `x-opencode-session`；会话标识实现见上一节。尚未用真实订阅验收。
 
-当前官网列出的 OpenAI 兼容 Base URL 为 `https://opencode.ai/inference/go/openai/v1`，对应模型按官网选择 Chat Completions 或 Responses，模型名填写服务端的 Model ID。模型列表位于单独的 `https://opencode.ai/inference/go/v1/models`，与模块通用的 Base URL + `/models` 不同，目前可手动填写模型。Anthropic／Gemini 专属协议不属于模块现有两种协议的适配范围。
+OpenAI 兼容 Base URL 为 `https://opencode.ai/inference/go/openai/v1`，对应模型按官网选择 Chat Completions 或 Responses，模型名填写服务端的 Model ID。模型列表位于单独的 `https://opencode.ai/inference/go/v1/models`，可手动填写模型。
 
 ## 独立 intent 请求
 

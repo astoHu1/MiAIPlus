@@ -358,15 +358,19 @@ class SettingsState(application: Application) : AndroidViewModel(application) {
         if (fetching) return
         fetching = true; error = null
         viewModelScope.launch {
+            fun isCurrentSource(): Boolean = draft?.let {
+                it.id == source.id && it.endpoint == source.endpoint && it.apiKey == source.apiKey && it.api == source.api
+            } == true
             try {
-                val models = withContext(Dispatchers.IO) { ModelClient.listModels(source.endpoint, source.apiKey).distinct() }
-                if (draft?.id == source.id && draft?.endpoint == source.endpoint && draft?.apiKey == source.apiKey) {
+                val models = withContext(Dispatchers.IO) {
+                    ModelClient.listModels(source.endpoint, source.apiKey, source.api).distinct()
+                }
+                if (isCurrentSource()) {
                     if (models.isEmpty()) error = "服务未返回模型，可手动填写" else modelList = models
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) {
-                if (draft?.id == source.id && draft?.endpoint == source.endpoint && draft?.apiKey == source.apiKey)
-                    error = "获取失败，请检查服务地址和密钥"
+                if (isCurrentSource()) error = "获取失败，请检查服务地址和密钥"
             }
             finally { fetching = false }
         }

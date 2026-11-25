@@ -12,7 +12,7 @@
 - **后台控屏**：在虚拟屏里执行任务，主屏可以继续使用。需要给 MiAIPlus 授予 root 权限。
 - **MCP 插件**：添加 HTTP MCP 服务，把它的工具交给小爱调用。
 - **Eta Agent**：把多步复杂任务、跨应用操作、深度调研、脚本和日志分析交给本机已安装的 [Eta](https://github.com/Mangi-11/Eta)，使用 Eta 自己配置的模型。
-- **自定义模型**：保存多套模型配置，支持 Responses 和 Chat Completions。
+- **自定义模型**：保存多套模型配置，支持 Responses、Chat Completions 和 Anthropic Messages。
 
 ## 开始使用
 
@@ -51,7 +51,9 @@ MiAIPlus 不修改 Eta，只通过 Eta 的 AgentRuntimeService 接口转发任�
 
 ## 使用自己的模型
 
-在「模型 API」填写服务地址、API 密钥和模型名称，保存后开启「使用外部模型」，再重启小爱或热重载模块。协议可选自动、Responses 或 Chat Completions。控屏所用模型需要支持图片和工具调用。
+在「模型 API」填写服务地址、API 密钥和模型名称，保存后开启「使用外部模型」，再重启小爱或热重载模块。OpenAI 兼容服务可选自动、Responses 或 Chat Completions。Anthropic 兼容服务选「Anthropic Messages」。控屏所用模型需要支持图片和工具调用。
+
+直连 Anthropic 时，服务地址可填 `https://api.anthropic.com` 或 `https://api.anthropic.com/v1`。使用代理时填服务商提供的 Anthropic 地址，通过「从服务选择」或手动填写模型 ID。需要 Bearer 认证的代理，在密钥栏填 `Bearer <令牌>`（含空格）。
 
 语音识别、语音合成及米家等服务仍使用原链路。
 

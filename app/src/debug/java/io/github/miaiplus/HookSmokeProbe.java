@@ -621,7 +621,7 @@ public final class HookSmokeProbe {
         throw new AssertionError("stock mode getter missing");
     }
     private static String transportFailures(ClassLoader loader) throws Exception {
-        for (String api : List.of("chat", "responses")) {
+        for (String api : List.of("chat", "responses", "anthropic")) {
             for (String mode : List.of("reset", "cancel", "invalid")) {
                 io.github.miaiplus.hook.Hooks.log("MiAIPlus transport fixture: " + api + " " + mode);
                 try (var server = new java.net.ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1"))) {
@@ -664,7 +664,7 @@ public final class HookSmokeProbe {
                 }
             }
         }
-        return "PROBE PASS: real native async OkHttp handles reflected cancellation, disconnect and malformed payload for Chat/Responses without process crash";
+        return "PROBE PASS: real native async OkHttp handles reflected cancellation, disconnect and malformed payload for Chat, Responses and Anthropic without process crash";
     }
     private static Object invoke(Object object, String method, Object... args) { return Reflector.callMethod(object, method, args); }
     private static Object message(ClassLoader loader, String role, String text, String callId) {
@@ -739,7 +739,7 @@ public final class HookSmokeProbe {
             null, null, "MIAIPLUS_NATIVE_SYSTEM", null, false, "taiyi", null, false,
             Reflector.newInstance(Reflector.findClass("sm.f", loader)), null, false);
         Object json = Reflector.getStaticObjectField(Reflector.findClass("s92.b", loader), "d");
-        Object schema = invoke(json, "parseToJsonElement", "{\"type\":\"object\",\"properties\":{}}");
+        Object schema = invoke(json, "parseToJsonElement", "{\"type\":\"object\",\"properties\":{\"marker\":{\"type\":\"string\"}}}");
         Object tool = Reflector.newInstance(Reflector.findClass("com.aios.osbot.llm.model.ToolDefinition", loader), "probe_tool", "Native tool schema preservation test", schema);
         List<Object> clients = new ArrayList<>(); clients.add(client);
         Object http = null;
@@ -754,6 +754,7 @@ public final class HookSmokeProbe {
             List<Object> events = collect(loader, transport, List.of(user), List.of(tool), config);
             if (events.stream().noneMatch(e -> e.getClass().getName().equals(HostCompatibility.name("sm.b$f")))) throw new AssertionError("no native tool-call event for " + transport.getClass().getName() + ": " + events);
             assertStreamEnded(events, "TOOL_CALLS");
+            if (!streamText(events).isEmpty()) throw new AssertionError("hidden fixture thinking appeared in native stream text");
             Object called = events.stream().filter(e -> e.getClass().getName().equals(HostCompatibility.name("sm.b$f"))).findFirst().orElseThrow();
             Object nativeCall = Reflector.newInstance(Reflector.findClass("com.aios.osbot.agent.model.ToolCall", loader),
                 invoke(called, "getId"), invoke(called, "getName"), invoke(called, "getArguments"), "probe-result",
@@ -766,11 +767,11 @@ public final class HookSmokeProbe {
                 System.currentTimeMillis(), enumValue(loader, "MessageSource", "CHAT"), null, null, null);
             List<Object> continued = collect(loader, transport,
                 List.of(user, assistant, toolResult), List.of(tool), config);
-            if (continued.stream().noneMatch(e -> e.getClass().getName().equals(HostCompatibility.name("sm.b$d")) && String.valueOf(invoke(e, "getText")).contains("native-roundtrip-ok")))
+            if (!streamText(continued).contains("native-roundtrip-ok"))
                 throw new AssertionError("native tool result/image roundtrip failed for " + transport.getClass().getName() + ": " + continued);
             assertStreamEnded(continued, "STOP");
             List<Object> textEvents = collect(loader, transport, List.of(message(loader, "USER", "MIAIPLUS_NATIVE_STREAM_FINAL", null)), List.of(), config);
-            if (textEvents.stream().noneMatch(e -> e.getClass().getName().equals(HostCompatibility.name("sm.b$d")) && String.valueOf(invoke(e, "getText")).contains("native-stream-ok")))
+            if (!streamText(textEvents).contains("native-stream-ok"))
                 throw new AssertionError("no native text event for " + transport.getClass().getName() + ": " + textEvents);
             assertStreamEnded(textEvents, "STOP");
         }
@@ -1053,6 +1054,13 @@ public final class HookSmokeProbe {
             throw new AssertionError("native stream did not end with one " + reason + " completion");
         if (events.stream().anyMatch(e -> e.getClass().getName().equals(HostCompatibility.name("sm.b$a"))))
             throw new AssertionError("native stream emitted an error before completion");
+    }
+    private static String streamText(List<Object> events) {
+        StringBuilder text = new StringBuilder();
+        for (Object event : events) {
+            if (event.getClass().getName().equals(HostCompatibility.name("sm.b$d"))) text.append(invoke(event, "getText"));
+        }
+        return text.toString();
     }
     private static List<Object> collect(ClassLoader loader, Object client, List<?> messages, List<?> tools, Object config) throws Exception {
         CompletableFuture<Object> started = new CompletableFuture<>();

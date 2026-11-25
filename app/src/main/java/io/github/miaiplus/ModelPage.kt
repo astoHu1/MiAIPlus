@@ -13,8 +13,8 @@ import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 
-private val ApiValues = listOf("auto", "responses", "chat")
-private val ApiLabels = listOf("自动", "Responses", "Chat Completions")
+private val ApiValues = listOf("auto", "responses", "chat", "anthropic")
+private val ApiLabels = listOf("自动", "Responses", "Chat Completions", "Anthropic Messages")
 
 /** Endpoint profiles. Edits stay in a draft until the user saves from the bar above the tabs. */
 @Composable
@@ -52,7 +52,8 @@ internal fun ModelPage(state: SettingsState) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Input("配置名称", draft.name, { state.updateProfile(name = it) })
                     Input("服务地址", draft.endpoint, { state.updateProfile(endpoint = it) }, type = KeyboardType.Uri)
-                    FieldNote("例如 https://api.example.com/v1")
+                    FieldNote(if (draft.api == "anthropic") "例如 https://api.anthropic.com"
+                        else "例如 https://api.example.com/v1")
                     SecretField("API 密钥（选填）", "密钥", draft.apiKey, { state.updateProfile(key = it) },
                         revealKey, { revealKey = it })
                 }
