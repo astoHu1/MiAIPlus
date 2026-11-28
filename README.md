@@ -4,7 +4,7 @@
 
 [下载 APK](https://github.com/astoHu1/MiAIPlus/releases) · [配置界面](docs/settings-ui.md) · [验证记录](docs/validation.md)
 
-需要支持 miclaw 的 HyperOS 3+、支持 API 102 的 LSPosed，以及超级小爱 **8.2.65.4714 或 8.3.30.4420**。
+需要支持 miclaw 的 HyperOS 3+、支持 API 102 的 LSPosed，以及超级小爱 **8.2.65.4714、8.2.66.8912 或 8.3.30.4420**。
 
 ## 能做什么
 

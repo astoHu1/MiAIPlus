@@ -51,6 +51,7 @@
 ## 验证范围
 
 - 近期设备为 Xiaomi／API 37／小爱 8.3.30；Android 13+ 与旧小爱 8.2.65 绑定的支持范围不代表已在这些环境重新验收。
+- 小爱 8.2.66.8912 仅经 APK 符号表比对复用 8.2.65 绑定，未实机验证。
 - 表中分别标注 mock、设备和真实模型证据。复杂多步任务、第三方应用覆盖及长期成功率尚无系统评测；代表性成功与失败见发布基线。
 - 诊断只观察到 [日志说明](phone-use-logging.md) 所列边界；后台能力及故障策略见 [后台虚拟屏](background-display.md)，操作限制见 [权限与连续性](phone-use-permissions.md)。
 - 动态页面与性能方法见 [动态页面实测](phone-use-dynamic-pages.md)、[设置性能](settings-performance.md)。

@@ -24,7 +24,7 @@ flowchart TD
 
 ## 小爱精确版本适配
 
-`HostCompatibility` 同时校验 versionName 与 versionCode，只接受 8.2.65.4714（508002065）和 8.3.30.4420（508003030），按版本选择固定绑定。下文旧混淆名称为 8.2.65 绑定键，`Reflector` 在宿主 ClassLoader 中映射到对应版本名称。
+`HostCompatibility` 同时校验 versionName 与 versionCode，只接受 8.2.65.4714（508002065）、8.2.66.8912（508002066）和 8.3.30.4420（508003030），按版本选择固定绑定；8.2.66 复用 8.2.65 绑定。下文旧混淆名称为 8.2.65 绑定键，`Reflector` 在宿主 ClassLoader 中映射到对应版本名称。
 
 8.3.30 的主要绑定为 `rs.a` PromptBuilder、`dn.c` DynLlmClient、`dn.i/j/b` 三种直接客户端、`hn.k` Taiyi、`fn.a` 模型配置、`sp.j` 记忆、`ur.e0` HTTP getter、`rm1.f0.B/D` 普通文字发送／路由。新模型配置多一个 `sendTopP`，替换时保留原请求的该字段；外部连接仍使用模块独立干净客户端。新版能力分类以 `prompt_source=cloud` 请求小米服务端注入提示；改接外部服务时补充本地 `user_intent`／`required_capabilities` 分类 schema，并移除该私有字段，保留主 Agent 的工具选择与执行边界。
 

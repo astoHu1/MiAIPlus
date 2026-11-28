@@ -14,6 +14,8 @@ public final class HostCompatibility {
     /** Which pinned binding set an installed XiaoAi matches. Pure, so a diagnostic export can ask too. */
     static String profile(String versionName, long versionCode) {
         if (versionCode == 508002065L && "8.2.65.4714".equals(versionName)) return "legacy";
+        // 8.2.66 keeps every 8.2.65 class and member the module uses; host risk checks and call service changed.
+        if (versionCode == 508002066L && "8.2.66.8912".equals(versionName)) return "legacy";
         if (versionCode == 508003030L && "8.3.30.4420".equals(versionName)) return "modern";
         return "unsupported";
     }

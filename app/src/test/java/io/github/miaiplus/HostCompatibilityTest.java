@@ -29,6 +29,8 @@ public class HostCompatibilityTest {
     @Test public void onlyExactVersionNameAndCodeSwitchProfilesAndLegacyBindingsRestore() {
         assertTrue(HostCompatibility.select("8.3.30.4420", 508003030L));
         assertEquals("legacy", HostCompatibility.profile("8.2.65.4714", 508002065L));
+        assertEquals("legacy", HostCompatibility.profile("8.2.66.8912", 508002066L));
+        assertEquals("unsupported", HostCompatibility.profile("8.2.66.8912", 508002065L));
         assertEquals("unsupported", HostCompatibility.profile("8.3.30.4420", 508003031L));
         assertEquals("unsupported", HostCompatibility.profile(null, 0));
         assertTrue("diagnostic lookup does not change active bindings", HostCompatibility.modern());
@@ -46,6 +48,9 @@ public class HostCompatibilityTest {
         assertFalse(HostCompatibility.modern());
         assertFalse(HostCompatibility.select("8.3.30.4420", 508003031L));
         assertFalse(HostCompatibility.select("8.2.65.4714", 508003030L));
+        assertTrue(HostCompatibility.select("8.2.66.8912", 508002066L));
+        assertFalse(HostCompatibility.modern());
+        assertEquals("qm.i", HostCompatibility.name("qm.i"));
         assertFalse(HostCompatibility.select(null, 508003030L));
     }
 
